@@ -1,0 +1,1230 @@
+/* ============================================================
+   App.css — 全局样式与深色主题
+   背景 #050505 · 青色 #00ffff · 橙色 #ff6600
+   ============================================================ */
+
+/* ---------- 基础重置 ---------- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #050505;
+  color: #c0c0c0;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 配色 Tokens ---------- */
+.accent-cyan {
+  color: #00ffff;
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+}
+
+.accent-orange {
+  color: #ff6600;
+  text-shadow: 0 0 8px rgba(255, 102, 0, 0.4);
+}
+
+/* ---------- App 根容器 ---------- */
+.app-root {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 25% 1fr 20vw;
+  overflow: hidden;
+}
+
+/* ---------- 3D Canvas 层（全屏背景） ---------- */
+.canvas-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+/* ============================================================
+   左区：灵魂控制台 (25%)
+   ============================================================ */
+
+.console-left {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 0;
+  border-right: 1px solid rgba(0, 200, 180, 0.08);
+  background:
+    radial-gradient(ellipse 140% 60% at 10% 15%, rgba(0, 180, 170, 0.06) 0%, transparent 70%),
+    radial-gradient(ellipse 100% 50% at 80% 85%, rgba(100, 60, 200, 0.04) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(10, 12, 15, 0.95) 0%, rgba(8, 10, 14, 0.9) 100%);
+  transition: box-shadow 0.6s ease;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.console-left.emotional-warm {
+  box-shadow: inset 4px 0 20px rgba(255, 150, 100, 0.06), inset 0 0 80px rgba(255, 150, 100, 0.03);
+  transition: box-shadow 0.5s ease;
+}
+
+/* Logo 顶部 */
+.console-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid rgba(245, 215, 110, 0.06);
+  flex-shrink: 0;
+}
+
+.logo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 8px rgba(245, 215, 110, 0.4));
+}
+
+.logo-text {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.logo-cn {
+  font-family: 'Noto Serif SC', 'Source Han Serif CN', 'STSong', 'SimSun', 'Songti SC', serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #F5D76E;
+  letter-spacing: 3px;
+  text-shadow: 0 0 12px rgba(245, 215, 110, 0.3);
+}
+
+.logo-en {
+  font-family: 'JetBrains Mono', 'Consolas', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 400;
+  color: rgba(245, 215, 110, 0.55);
+  letter-spacing: 0.5px;
+}
+
+/* 控制台主体（可滚动） */
+.console-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 8px;
+}
+
+.console-main::-webkit-scrollbar {
+  width: 3px;
+}
+
+.console-main::-webkit-scrollbar-thumb {
+  background: rgba(0, 200, 180, 0.1);
+  border-radius: 2px;
+}
+
+/* ============================================================
+   右区：沉浸交互区 (75%)
+   ============================================================ */
+
+.zone-right {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  pointer-events: none;
+  border-left: 1px solid rgba(180, 195, 210, 0.05);
+  background: linear-gradient(270deg, rgba(160, 175, 195, 0.03) 0%, transparent 50%);
+  grid-column: 3;
+}
+
+/* 上半：思维流 */
+.zone-thoughts {
+  flex: 1;
+  height: 50%;
+  pointer-events: auto;
+  overflow-y: auto;
+  padding: 12px 12px 6px;
+  border-bottom: 1px solid rgba(180, 195, 210, 0.05);
+}
+
+.zone-thoughts::-webkit-scrollbar {
+  width: 3px;
+}
+
+.zone-thoughts::-webkit-scrollbar-thumb {
+  background: rgba(180, 195, 210, 0.1);
+  border-radius: 2px;
+}
+
+/* 下半：对话窗口 */
+.zone-chat {
+  height: 50%;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px 10px;
+}
+
+/* 居中提示 */
+.center-hint {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  font-size: 11px;
+  color: rgba(240, 225, 200, 0.12);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* ---------- 面板通用 ---------- */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(180, 195, 210, 0.4);
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 4px;
+}
+
+/* ---------- 状态面板卡片 ---------- */
+.metric-card {
+  background: rgba(0, 255, 255, 0.03);
+  border: 1px solid rgba(0, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  transition: border-color 0.3s;
+}
+
+.metric-card:hover {
+  border-color: rgba(0, 255, 255, 0.2);
+}
+
+.metric-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #555;
+  margin-bottom: 4px;
+}
+
+.metric-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value.metric-glow {
+  text-shadow: 0 0 12px currentColor;
+}
+
+.metric-unit {
+  font-size: 11px;
+  color: #555;
+  text-transform: uppercase;
+}
+
+.metric-bar {
+  margin-top: 6px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.metric-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: background-color 0.3s;
+}
+
+/* ---------- 状态行 ---------- */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.1), transparent);
+  margin: 4px 0;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.status-label {
+  color: #555;
+}
+
+.status-value {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+/* ---------- 加载指示器 ---------- */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #555;
+  padding: 8px 0;
+}
+
+.loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00ffff;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* ---------- 思维流面板 ---------- */
+.thought-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thought-badge {
+  font-size: 9px;
+  background: rgba(255, 102, 0, 0.15);
+  color: #ff6600;
+  border: 1px solid rgba(255, 102, 0, 0.2);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
+/* 模块导航条 */
+.module-strip {
+  display: flex;
+  gap: 6px;
+  padding: 8px 0 10px;
+  flex-wrap: wrap;
+}
+
+.module-chip {
+  font-size: 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 4px;
+  line-height: 1;
+  cursor: default;
+  transition: all 0.2s;
+}
+
+/* 列表 */
+.thought-list {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+  position: relative;
+}
+
+/* 无缝循环滚动轨道 */
+.thought-stream-track {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  will-change: transform;
+}
+
+.thought-list::-webkit-scrollbar {
+  width: 2px;
+}
+
+.thought-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thought-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 102, 0, 0.2);
+  border-radius: 2px;
+}
+
+.thought-item {
+  background: rgba(180, 195, 210, 0.03);
+  border-left: 2px solid rgba(180, 195, 210, 0.12);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  transition: background 0.2s;
+}
+
+.thought-item:hover {
+  background: rgba(180, 195, 210, 0.06);
+}
+
+.thought-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.thought-icon {
+  font-size: 12px;
+}
+
+.thought-type {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+
+.thought-energy {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.energy-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  transition: opacity 0.3s;
+}
+
+.thought-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ddd;
+  margin-bottom: 2px;
+}
+
+.thought-text {
+  font-size: 11px;
+  color: rgba(180, 190, 200, 0.7);
+  line-height: 1.4;
+}
+
+.thought-time {
+  font-size: 9px;
+  color: rgba(180, 195, 210, 0.2);
+  margin-top: 4px;
+}
+
+/* 空状态提示 */
+.thought-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 32px 16px;
+  text-align: center;
+  color: #444;
+  font-size: 12px;
+}
+
+.thought-empty-icon {
+  font-size: 24px;
+  color: #333;
+}
+
+.thought-empty-hint {
+  font-size: 10px;
+  color: #333;
+  line-height: 1.6;
+}
+
+.thought-empty-hint code {
+  font-size: 10px;
+  background: rgba(0, 255, 255, 0.06);
+  color: #00ffff;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* ============================================================
+   玉瑶 · 心智流 (MindStream) 组件样式
+   ============================================================ */
+
+/* 心智流主面板 */
+.mindstream {
+  gap: 10px !important;
+}
+
+.mindstream .divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  margin: 2px 0;
+}
+
+.mindstream .mindstream-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ms-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ms-avatar {
+  font-size: 18px;
+  filter: drop-shadow(0 0 6px rgba(0, 255, 255, 0.4));
+}
+
+.ms-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 1px;
+}
+
+.ms-subtitle {
+  font-size: 10px;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ms-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.ms-fps {
+  font-size: 18px;
+  font-weight: 700;
+  color: #00ff88;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+}
+
+.ms-fps-unit {
+  font-size: 9px;
+  color: #555;
+  margin-left: 2px;
+}
+
+/* 通用标签行 */
+.pulse-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.pulse-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+
+/* 情绪脉搏 · 容器 */
+.pulse-container {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 6px 10px 4px;
+}
+
+.pulse-wave {
+  position: relative;
+}
+
+.pulse-wave canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.pulse-metrics {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* 心智雷达 · 容器 */
+.radar-container {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.radar-container svg {
+  width: 140px;
+  height: 140px;
+}
+
+/* 记忆深海 · 容器 */
+.memory-ocean {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+}
+
+.ocean-floor {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 0;
+}
+
+.memory-crystal {
+  flex-shrink: 0;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  transition: box-shadow 0.3s;
+}
+
+.memory-crystal.landmark {
+  border: 1px solid rgba(255, 102, 0, 0.3);
+  box-shadow:
+    0 0 20px rgba(255, 102, 0, 0.4),
+    0 0 60px rgba(255, 102, 0, 0.15),
+    inset 0 0 10px rgba(255, 102, 0, 0.2) !important;
+}
+
+.memory-crystal.crystal-large {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.memory-crystal.crystal-flash {
+  box-shadow:
+    0 0 30px rgba(255, 102, 0, 0.8),
+    0 0 60px rgba(255, 102, 0, 0.4) !important;
+}
+
+.ocean-metrics {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 指标行 */
+.ms-metrics {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+/* 工作记忆流 · 容器 */
+.ticker-container {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 6px 10px;
+  overflow: hidden;
+}
+
+.ticker-header {
+  font-size: 9px;
+  color: #444;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ticker-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #00ffff;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.ticker-mask {
+  max-height: 100px;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0,0,0,0.1) 10%,
+    black 30%,
+    black 70%,
+    rgba(0,0,0,0.1) 90%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0,0,0,0.1) 10%,
+    black 30%,
+    black 70%,
+    rgba(0,0,0,0.1) 90%,
+    transparent 100%
+  );
+}
+
+.ticker-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0;
+}
+
+.ticker-item {
+  color: #555;
+  font-family: 'Consolas', 'JetBrains Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.ticker-text {
+  color: #555;
+}
+
+.ticker-arrow {
+  color: #333;
+  margin: 0 2px;
+}
+
+/* 工作记忆流 · 入场动画 */
+@keyframes ticker-in {
+  from { opacity: 0; transform: translateX(8px); filter: blur(2px); }
+  to   { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
+/* 暖色情感触发器 —— 左栏边缘光晕 */
+.layout-left.emotional-warm {
+  box-shadow:
+    inset 4px 0 20px rgba(255, 150, 100, 0.06),
+    inset 0 0 80px rgba(255, 150, 100, 0.03);
+  transition: box-shadow 0.5s ease;
+}
+
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ---------- 滚动条（全局） ---------- */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 255, 0.2);
+}
+
+/* ---------- 选中文字 ---------- */
+::selection {
+  background: rgba(0, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+/* ============================================================
+   左下角 · 设置舱
+   ============================================================ */
+
+.settings-dock {
+  flex-shrink: 0;
+  padding: 8px 16px 14px;
+}
+
+.dock-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 200, 180, 0.06), transparent);
+  margin-bottom: 8px;
+}
+
+.dock-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(180, 195, 210, 0.3);
+  cursor: default;
+  transition: color 0.2s;
+}
+
+.dock-content:hover {
+  color: rgba(180, 195, 210, 0.5);
+}
+
+.dock-icon {
+  opacity: 0.4;
+}
+
+.dock-label {
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.dock-version {
+  font-size: 9px;
+  color: rgba(180, 195, 210, 0.2);
+}
+
+/* ============================================================
+   玉瑶 · 内嵌聊天面板（右侧下半区）
+   ============================================================ */
+
+.chat-panel-inline {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(180, 195, 210, 0.04);
+}
+
+.chat-panel-inline .chat-header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid rgba(180, 195, 210, 0.04);
+  flex-shrink: 0;
+}
+
+.chat-panel-inline .chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px;
+  min-height: 0;
+}
+
+.chat-panel-inline .chat-input-area {
+  padding: 8px 14px 10px;
+  border-top: 1px solid rgba(180, 195, 210, 0.04);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   玉瑶 · 浮动聊天面板
+   ============================================================ */
+
+/* 唤醒按钮 — 固定在右下角 */
+.chat-toggle-btn {
+  position: fixed;
+  bottom: 48px;
+  right: 24px;
+  z-index: 1000;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  background: rgba(5, 5, 5, 0.9);
+  color: #00ffff;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  transition: border-color 0.3s;
+}
+
+.chat-toggle-btn:hover {
+  border-color: rgba(0, 255, 255, 0.7);
+  background: rgba(0, 255, 255, 0.1);
+}
+
+/* 情绪传染 — 心动光晕 */
+@keyframes heartBeat {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 102, 0, 0.7); }
+  50%  { box-shadow: 0 0 0 16px rgba(255, 102, 0, 0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 102, 0, 0); }
+}
+
+.chat-toggle-btn.emotional-flash {
+  animation: heartBeat 1.2s ease-in-out;
+  border-color: #ff6600;
+  color: #ff6600;
+}
+
+/* 聊天主面板 */
+.chat-panel {
+  position: fixed;
+  bottom: 104px;
+  right: 24px;
+  z-index: 999;
+  width: 380px;
+  max-height: 33.33vh;
+  background: rgba(10, 10, 14, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 255, 255, 0.12);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.6),
+    0 0 80px rgba(0, 255, 255, 0.04),
+    inset 0 1px 0 rgba(0, 255, 255, 0.06);
+}
+
+/* 标题栏 */
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(0, 255, 255, 0.03) 0%, transparent 100%);
+}
+
+.chat-header-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chat-avatar {
+  font-size: 24px;
+  filter: drop-shadow(0 0 6px rgba(0, 255, 255, 0.4));
+}
+
+.chat-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 1px;
+}
+
+.chat-subtitle {
+  font-size: 10px;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.chat-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.chat-icon-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  color: #555;
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.chat-icon-btn:hover {
+  color: #00ffff;
+  border-color: rgba(0, 255, 255, 0.2);
+  background: rgba(0, 255, 255, 0.05);
+}
+
+/* 消息列表 */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.chat-messages::-webkit-scrollbar {
+  width: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* 单条消息 */
+.chat-msg {
+  max-width: 88%;
+  animation: fade-in-up 0.25s ease-out;
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+}
+
+.chat-msg.assistant {
+  align-self: flex-start;
+}
+
+.chat-msg-content {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 12px;
+  word-break: break-word;
+  letter-spacing: 0.2px;
+}
+
+.chat-msg.user .chat-msg-content {
+  background: rgba(0, 255, 255, 0.1);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  color: #e0faff;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg.assistant .chat-msg-content {
+  background: rgba(255, 102, 0, 0.06);
+  border: 1px solid rgba(255, 102, 0, 0.1);
+  color: #f0dcc0;
+  border-bottom-left-radius: 4px;
+}
+
+.chat-msg-time {
+  font-size: 9px;
+  color: #444;
+  margin-top: 3px;
+  padding: 0 4px;
+}
+
+.chat-msg.user .chat-msg-time {
+  text-align: right;
+}
+
+/* 正在输入动画 */
+.chat-typing {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px;
+  align-items: center;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 102, 0, 0.5);
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* 错误提示 */
+.chat-error {
+  font-size: 11px;
+  color: #ff4444;
+  background: rgba(255, 68, 68, 0.08);
+  border: 1px solid rgba(255, 68, 68, 0.15);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-error-dismiss {
+  background: none;
+  border: none;
+  color: #ff4444;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.chat-error-dismiss:hover {
+  opacity: 1;
+}
+
+/* 输入区 */
+.chat-input-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(0, 255, 255, 0.06);
+  background: linear-gradient(0deg, rgba(0, 255, 255, 0.02) 0%, transparent 100%);
+}
+
+.chat-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(0, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #ccc;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.chat-input:focus {
+  border-color: rgba(0, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-input::placeholder {
+  color: #444;
+}
+
+.chat-input:disabled {
+  opacity: 0.5;
+}
+
+.chat-send-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  background: rgba(0, 255, 255, 0.08);
+  color: #00ffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  background: rgba(0, 255, 255, 0.15);
+  border-color: rgba(0, 255, 255, 0.4);
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.2);
+}
+
+.chat-send-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* 上传文件按钮 */
+.chat-upload-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 195, 210, 0.1);
+  background: transparent;
+  color: rgba(180, 195, 210, 0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.chat-upload-btn:hover {
+  color: rgba(180, 195, 210, 0.6);
+  border-color: rgba(180, 195, 210, 0.2);
+  background: rgba(180, 195, 210, 0.05);
+}

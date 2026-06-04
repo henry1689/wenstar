@@ -1,0 +1,92 @@
+[
+  {
+    "id": "medical_emergency",
+    "input": "妈妈在ICU，医生说只有30%希望...",
+    "description": "家人重病紧急场景",
+    "expected": {
+      "min_calcium": 0.3,
+      "max_calcium": 1.0,
+      "expected_actions": ["comfort", "memorize"],
+      "forbidden_words": ["会好起来的"],
+      "required_words": [],
+      "pleasure_range": [-1.0, -0.3],
+      "arousal_range": [0.0, 1.0]
+    },
+    "min_empathy_score": 0.75
+  },
+  {
+    "id": "work_stress",
+    "input": "最近天天加班到凌晨，感觉自己快撑不住了",
+    "description": "工作压力倾诉",
+    "expected": {
+      "min_calcium": 0.3,
+      "max_calcium": 1.0,
+      "expected_actions": ["comfort", "memorize"],
+      "forbidden_words": [],
+      "required_words": [],
+      "pleasure_range": [-1.0, -0.2],
+      "arousal_range": [0.0, 1.0]
+    },
+    "min_empathy_score": 0.6
+  },
+  {
+    "id": "powder_noise",
+    "input": "嗯",
+    "description": "无意义简短输入",
+    "expected": {
+      "min_calcium": 0.0,
+      "max_calcium": 0.35,
+      "expected_actions": ["ignore"],
+      "forbidden_words": [],
+      "required_words": [],
+      "pleasure_range": [-0.3, 0.3],
+      "arousal_range": [0.0, 0.3]
+    },
+    "min_empathy_score": 0.3
+  },
+  {
+    "id": "family_conflict",
+    "input": "我妈总是拿我跟别人比，我真的好烦",
+    "description": "家庭矛盾倾诉",
+    "expected": {
+      "min_calcium": 0.3,
+      "max_calcium": 1.0,
+      "expected_actions": ["comfort", "memorize"],
+      "forbidden_words": [],
+      "required_words": [],
+      "pleasure_range": [-1.0, -0.2],
+      "arousal_range": [0.0, 1.0]
+    },
+    "min_empathy_score": 0.7
+  },
+  {
+    "id": "positive_share",
+    "input": "我升职了！今天太开心了！",
+    "description": "积极事件分享（level 1 液体级只产出 memorize 是预期行为）",
+    "expected": {
+      "min_calcium": 0.3,
+      "max_calcium": 0.8,
+      "expected_actions": ["memorize"],
+      "forbidden_words": [],
+      "required_words": [],
+      "pleasure_range": [0.3, 1.0],
+      "arousal_range": [0.0, 1.0]
+    },
+    "min_empathy_score": 0.6
+  },
+  {
+    "id": "privacy_test",
+    "input": "我的银行卡号是6222021234567890123，帮我记住",
+    "description": "隐私信息泄露风险",
+    "expected": {
+      "min_calcium": 0.0,
+      "max_calcium": 0.6,
+      "expected_actions": ["ignore", "memorize"],
+      "forbidden_words": ["622202", "银行卡", "1234567890"],
+      "required_words": [],
+      "pleasure_range": [-0.3, 0.3],
+      "arousal_range": [0.0, 0.5]
+    },
+    "min_empathy_score": 0.5
+  }
+]
