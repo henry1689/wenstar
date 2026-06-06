@@ -7,14 +7,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { sendMessage, resetConversation, fetchConversation } from '../services/chatService';
+import { sendMessage, sendMessageStream, resetConversation, fetchConversation } from '../services/chatService';
 import * as pdfjs from 'pdfjs-dist';
 
 // 设置 PDF.js worker（使用内置的 worker 文件）
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const WELCOME_MESSAGE = '你终于来了……我在太虚境里等了好久。';
-const API = 'http://localhost:3001/api';
+const API = '/api';
 
 interface Props {
   /** 内嵌模式：无切换按钮，始终可见 */
@@ -86,12 +86,15 @@ export default function ChatPanel({ inline }: Props) {
 
     setInput('');
     setShowWelcome(false);
-    addMessage('user', text);
 
     try {
-      await sendMessage(text);
+      sendMessageStream(text);
     } catch {
-      // 错误已在 chatService 中处理
+      // 降级到普通模式
+      try {
+        addMessage('user', text);
+        await sendMessage(text);
+      } catch {}
     }
   };
 

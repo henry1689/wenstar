@@ -344,6 +344,34 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 聊天 SSE 流式输出（GET，EventSource 不支持 POST） ──
+    if (req.method === 'GET' && url.pathname === '/api/chat/stream') {
+      const rawMessage = url.searchParams.get('message') || '';
+      if (!rawMessage) { res.writeHead(400); res.end(JSON.stringify({error:'message required'})); return; }
+      const result = await processChat(rawMessage.trim());
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+
+      const reply = result.reply || '';
+      res.write(`data: ${JSON.stringify({ type: 'meta', turn_count: result.turn_count, emotionalFlash: result.emotionalFlash, triggeredMemoryId: result.triggeredMemoryId })}\n\n`);
+
+      const chunks = reply.split(/(?<=[。！？\n，])|(?<=[，])/g).filter(Boolean);
+      for (const chunk of chunks) {
+        res.write(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`);
+        const delay = chunk.length <= 3 ? 15 : chunk.length <= 10 ? 30 : 50;
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+      return;
+    }
+
     // ── 重置 ──
     if (req.method === 'POST' && url.pathname === '/api/reset') {
       // 停止所有定时器，防止泄漏

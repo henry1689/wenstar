@@ -8,8 +8,8 @@
 import { useChatStore } from '../store/chatStore';
 import { pushChatModules } from './thoughtService';
 
-// 直接连接后端（不走 Vite proxy，避免端口不一致问题）
-const API_BASE = 'http://localhost:3001/api';
+// 通过 Vite proxy (/api → localhost:3000) 转发请求
+const API_BASE = '/api';
 
 interface ChatResponse {
   reply: string;
@@ -23,7 +23,41 @@ interface ChatResponse {
   audio_url?: string | null;
 }
 
-/** 发送消息给玉瑶 */
+/** 发送消息给玉瑶（SSE 流式输出） */
+export function sendMessageStream(message: string): void {
+  const store = useChatStore.getState();
+  store.setTyping(true);
+  store.setError(null);
+
+  // 添加用户消息到对话
+  store.addMessage('user', message.trim());
+
+  // SSE 直接连后端 3000 端口（Vite proxy 不支持流式转发）
+  const SSE_BASE = 'http://localhost:3000';
+  const eventSource = new EventSource(`${SSE_BASE}/api/chat/stream?message=${encodeURIComponent(message.trim())}`);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'text') {
+        store.appendStreamMessage(data.content);
+      } else if (data.type === 'meta') {
+        store.setTurnCount(data.turn_count);
+      } else if (data.type === 'done') {
+        store.finalizeStreamMessage();
+        store.setTyping(false);
+        pushChatModules({ turn_count: store.turnCount, emotionalFlash: false });
+        eventSource.close();
+      }
+    } catch {}
+  };
+
+  eventSource.onerror = () => {
+    store.setError('连接中断');
+    store.setTyping(false);
+    eventSource.close();
+  };
+}
 export async function sendMessage(message: string): Promise<ChatResponse> {
   const store = useChatStore.getState();
   store.setTyping(true);
@@ -48,7 +82,7 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     // 播放 TTS 语音
     if (data.audio_url) {
       try {
-        const audioUrl = data.audio_url.startsWith('/') ? `http://localhost:3001${data.audio_url}` : data.audio_url;
+        const audioUrl = data.audio_url.startsWith('/') ? `${API_BASE.replace('/api', '')}${data.audio_url}` : data.audio_url;
         const audio = new Audio(audioUrl);
         audio.volume = 0.8;
         audio.play().catch(() => {});
