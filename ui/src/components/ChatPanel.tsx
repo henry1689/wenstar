@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { sendMessage, sendMessageStream, resetConversation, fetchConversation } from '../services/chatService';
+import { sendMessage, resetConversation, fetchConversation } from '../services/chatService';
 import * as pdfjs from 'pdfjs-dist';
 
 // 设置 PDF.js worker（使用内置的 worker 文件）
@@ -83,19 +83,10 @@ export default function ChatPanel({ inline }: Props) {
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isTyping) return;
-
     setInput('');
     setShowWelcome(false);
-
-    try {
-      sendMessageStream(text);
-    } catch {
-      // 降级到普通模式
-      try {
-        addMessage('user', text);
-        await sendMessage(text);
-      } catch {}
-    }
+    addMessage('user', text);
+    try { await sendMessage(text); } catch { setError('连接失败'); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

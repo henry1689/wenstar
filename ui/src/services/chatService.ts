@@ -82,7 +82,7 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     // 播放 TTS 语音
     if (data.audio_url) {
       try {
-        const audioUrl = data.audio_url.startsWith('/') ? `${API_BASE.replace('/api', '')}${data.audio_url}` : data.audio_url;
+        const audioUrl = data.audio_url.startsWith('/') ? `http://localhost:3001${data.audio_url}` : data.audio_url;
         const audio = new Audio(audioUrl);
         audio.volume = 0.8;
         audio.play().catch(() => {});

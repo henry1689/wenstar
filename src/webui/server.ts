@@ -344,12 +344,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
-    // ── 聊天 SSE 流式输出（GET，EventSource 不支持 POST） ──
+    // ── 聊天 SSE 流式输出（先发头再处理，避免 EventSource 超时） ──
     if (req.method === 'GET' && url.pathname === '/api/chat/stream') {
       const rawMessage = url.searchParams.get('message') || '';
       if (!rawMessage) { res.writeHead(400); res.end(JSON.stringify({error:'message required'})); return; }
-      const result = await processChat(rawMessage.trim());
 
+      // 先发响应头，保持连接不超时
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -357,9 +357,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         'Access-Control-Allow-Origin': '*',
       });
 
+      // 发送 keepalive，让 EventSource 确认连接成功
+      res.write(`: keepalive\n\n`);
+      res.flushHeaders?.();
+
+      // 再处理聊天（LLM 调用约 1.5~2s）
+      const result = await processChat(rawMessage.trim());
       const reply = result.reply || '';
+
+      // 元数据
       res.write(`data: ${JSON.stringify({ type: 'meta', turn_count: result.turn_count, emotionalFlash: result.emotionalFlash, triggeredMemoryId: result.triggeredMemoryId })}\n\n`);
 
+      // 逐块发送文本
       const chunks = reply.split(/(?<=[。！？\n，])|(?<=[，])/g).filter(Boolean);
       for (const chunk of chunks) {
         res.write(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`);
