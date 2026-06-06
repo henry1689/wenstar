@@ -20,6 +20,56 @@ import { fileURLToPath } from 'node:url';
 // ── MD 同步路径 ──
 const __MD_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'knowledge-md');
 
+// ── 知识柜分类路径 ──
+const __KC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'knowledge-cabinet');
+const __KC_DOCS = join(__KC_ROOT, 'docs');
+const __KC_IMG = join(__KC_ROOT, 'images');
+const __KC_VID = join(__KC_ROOT, 'videos');
+const __KC_DATA = join(__KC_ROOT, 'data');
+
+/** source_type → 分类文件夹映射 */
+const CABINET_MAP: Record<string, string> = {
+  txt: 'docs', md: 'docs', text: 'docs', protocol: 'docs', person: 'docs',
+  research: 'docs', query: 'docs', important: 'docs', paste: 'docs',
+  jpg: 'images', jpeg: 'images', png: 'images', gif: 'images',
+  bmp: 'images', webp: 'images', svg: 'images',
+  mp4: 'videos', avi: 'videos', mov: 'videos', mkv: 'videos', webm: 'videos',
+};
+const CABINET_DIRS: Record<string, string> = {
+  docs: __KC_DOCS, images: __KC_IMG, videos: __KC_VID, data: __KC_DATA,
+};
+
+/** 获取安全的文件名 */
+function safeFileName(title: string, sourceType: string): string {
+  const ext = sourceType === 'md' ? '.md'
+    : ['jpg','jpeg','png','gif','bmp','webp','svg'].includes(sourceType) ? '.' + sourceType
+    : sourceType === 'mp4' || sourceType === 'avi' || sourceType === 'mov' || sourceType === 'mkv' || sourceType === 'webm' ? '.' + sourceType
+    : sourceType === 'xlsx' ? '.xlsx' : sourceType === 'xls' ? '.xls'
+    : sourceType === 'csv' ? '.csv' : sourceType === 'pdf' ? '.pdf'
+    : sourceType === 'docx' ? '.docx' : sourceType === 'json' ? '.json'
+    : '.txt';
+  const base = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim().substring(0, 80);
+  return base + ext;
+}
+
+/** 同步条目到知识柜分类文件夹 */
+function syncToCabinet(entry: KnowledgeItem, remove = false): void {
+  try {
+    const folder = CABINET_MAP[entry.source_type] || 'data';
+    const dir = CABINET_DIRS[folder] || __KC_DATA;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const fname = safeFileName(entry.title, entry.source_type);
+    const fpath = join(dir, fname);
+    if (remove) {
+      if (existsSync(fpath)) unlinkSync(fpath);
+      return;
+    }
+    writeFileSync(fpath, entry.content || '', 'utf-8');
+  } catch (err) {
+    console.warn('[KE→KC] 同步失败:', err);
+  }
+}
+
 /** 同步条目到 Markdown 文件 */
 function syncToMd(entry: KnowledgeItem, remove = false): void {
   try {
@@ -165,6 +215,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     );
 
     // 异步分块 + 嵌入（不阻塞返回）
+    syncToCabinet(entry);
     syncToMd(entry);
     indexContent(sqlite, id, params.content).catch(err =>
       console.warn(`[KnowledgeEngine] 索引失败 ${id}:`, err),
@@ -201,6 +252,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     );
     // 同步到 Markdown 文件
     const updated = { ...existing, ...params, updated_at: now, tags: params.tags ?? existing.tags };
+    syncToCabinet(updated);
     syncToMd(updated);
     // 内容变了就重新索引
     if (params.content && params.content !== existing.content) {
@@ -213,6 +265,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
   function remove(id: string): boolean {
     const existing = getById(id);
     if (!existing) return false;
+    syncToCabinet(existing, true); // 删除知识柜文件
     syncToMd(existing, true); // 删除 MD 文件
     sqlite.writeRaw(`DELETE FROM knowledge_base WHERE id=?`, id);
     sqlite.writeRaw(`DELETE FROM knowledge_chunks WHERE kn_id=?`, id);

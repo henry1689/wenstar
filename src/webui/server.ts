@@ -47,6 +47,7 @@ import { TaskAgentEngine, ToolRegistry, calendarTool, reminderTool, noteTool, cr
 import { excelToJson, jsonToExcel, parseFile } from '../app/knowledge/FileUploadService.js';
 import { listKeys, setKey, deleteKey, getKeyValue } from '../app/shared/ApiKeyStorage.js';
 import { SomaticMemory } from '../app/somatic/SomaticMemory.js';
+import { MemoryVault } from '../app/memory-vault/MemoryVault.js';
 import type { SimilarityMode, ScoredMemory } from '../m2/types/index.js';
 import type { SelfModelV1 } from '../m1/types/dna.js';
 import type { ConversationTurn } from '../m5/types/index.js';
@@ -165,11 +166,14 @@ let topicTracker: TopicTracker;
 let m8: M8FusionAdapter;
 let somaticMemory: SomaticMemory;
 let taskAgent: TaskAgentEngine;
+let memoryVault: MemoryVault;
 async function initPipeline(): Promise<void> {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
   encoder = new DNAEncoder(getSelfModel());
   storage = new FusionStorageAdapter(DATA_DIR);
   await storage.initialize();
+  memoryVault = new MemoryVault();
+  await memoryVault.initialize();
   familyGraph = new FamilyGraph(DB_PATH);
   await familyGraph.initialize();
   m4 = new M4Orchestrator(storage, familyGraph);
@@ -210,6 +214,10 @@ async function initPipeline(): Promise<void> {
   if (m6Timer) clearInterval(m6Timer);
   m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000);
   console.log('  自我模型已启动 ✓');
+
+  // 记忆仓每日备份（启动后5分钟首次执行）
+  setTimeout(() => { try { memoryVault?.backup(); } catch {} }, 5 * 60 * 1000);
+  console.log('  记忆仓已启动 ✓');
 
   workingMemory = new WorkingMemory(storage, 50);
   workingMemory.startFlushTimer();
