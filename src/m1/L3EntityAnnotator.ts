@@ -182,24 +182,16 @@ class ChineseSegmenter {
 }
 
 // ──────────────────────────────────────────────
-// 情感极性词表
+// 情感极性词表（从 emotion_lexicon.json 统一加载）
 // ──────────────────────────────────────────────
+import { loadSet } from './LexiconLoader.js';
 
 /**
  * 情感极性词表，用于 phenotype 标注
+ * 统一从 emotion_lexicon.json 加载，与 M3 感知分析器同源
  */
-export const POSITIVE_WORDS = new Set([
-  '开心', '快乐', '幸福', '感动', '兴奋', '满足', '温暖',
-  '甜蜜', '美好', '爱', '喜欢', '棒', '成功', '顺利',
-  '感恩', '感谢', '珍惜',
-]);
-
-export const NEGATIVE_WORDS = new Set([
-  '难过', '伤心', '痛苦', '绝望', '焦虑', '抑郁', '孤独',
-  '失落', '崩溃', '无助', '生气', '愤怒', '烦躁', '郁闷',
-  '讨厌', '恶心', '害怕', '恐惧', '担心', '紧张', '不安',
-  '烦', '累', '难', '差', '糟', '失败', '压力',
-]);
+export const POSITIVE_WORDS = loadSet('emotion_lexicon.json', 'positive_words');
+export const NEGATIVE_WORDS = loadSet('emotion_lexicon.json', 'negative_words');
 
 // ──────────────────────────────────────────────
 // 实体提取器（基于 FMM 分词）

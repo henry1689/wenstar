@@ -417,6 +417,7 @@ async function send(){
     if(!r.ok)throw new Error('HTTP '+r.status);
     const d=await r.json();
     addMsg('a',d.reply);tc.textContent=d.turn_count+' 轮';
+    if(d.audio_url){const ap=new Audio(d.audio_url);ap.volume=0.8;ap.play().catch(e=>console.warn('[Audio] 播放失败:',e));}
     last=d;
     renderM1(d.m1);renderM3(d.m3);renderM4(d.m4);renderM5(d.m5);
     loadM68();

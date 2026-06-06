@@ -59,6 +59,13 @@ export class M6Orchestrator {
 
     // 第3步：叙事层（重大事件）
     if (signal.calcium >= 2) {
+      // 冲突检测后添加
+      const conflictWarnings = this.narrative.detectConflict(
+        `多元感知到强烈信号: ${signal.dimension} ${signal.direction}`
+      );
+      if (conflictWarnings.length > 0) {
+        console.warn('[M6] 叙事冲突:', conflictWarnings);
+      }
       this.narrative.addLayer(
         `多元感知到强烈信号: ${signal.dimension} ${signal.direction}`,
         signal.triggerEvent, signal.calcium

@@ -16,7 +16,7 @@ const DEFAULT_SELF: SelfModelV1 = {
 describe('L3EntityAnnotator — 实体提取', () => {
   it('应提取出家庭成员实体并标注为 family', () => {
     const annotator = new L3EntityAnnotator();
-    const result = annotator.annotate('我妈又唠叨我了', '', DEFAULT_SELF);
+    const result = annotator.annotate('妈妈又唠叨我了', '', DEFAULT_SELF);
     const momEntity = result.entity_genes.find((e) => e.name === '妈妈');
     expect(momEntity).toBeDefined();
     expect(momEntity?.type).toBe('person');
@@ -75,7 +75,7 @@ describe('L3EntityAnnotator — phenotype 标注', () => {
 describe('L3EntityAnnotator — knowledge_type 标注', () => {
   it('家庭成员应标注为 family', () => {
     const annotator = new L3EntityAnnotator();
-    const result = annotator.annotate('我妈做的饭很好吃', '', DEFAULT_SELF);
+    const result = annotator.annotate('妈妈做的饭很好吃', '', DEFAULT_SELF);
     const momEntity = result.entity_genes.find((e) => e.name === '妈妈');
     expect(momEntity?.knowledge_type).toBe('family');
   });

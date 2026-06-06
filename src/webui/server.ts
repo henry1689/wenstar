@@ -46,6 +46,7 @@ import { ClueTracker } from '../m7/ClueTracker.js';
 import { TaskAgentEngine, ToolRegistry, calendarTool, reminderTool, noteTool, createSearchTool, startReminderChecker } from '../app/task-agent/index.js';
 import { excelToJson, jsonToExcel, parseFile } from '../app/knowledge/FileUploadService.js';
 import { listKeys, setKey, deleteKey, getKeyValue } from '../app/shared/ApiKeyStorage.js';
+import { SomaticMemory } from '../app/somatic/SomaticMemory.js';
 import type { SimilarityMode, ScoredMemory } from '../m2/types/index.js';
 import type { SelfModelV1 } from '../m1/types/dna.js';
 import type { ConversationTurn } from '../m5/types/index.js';
@@ -93,7 +94,7 @@ function getSelfModel(): SelfModelV1 {
 
 // ── 对话记忆 ──
 let conversationHistory: ConversationTurn[] = [];
-const MAX_SAVED_TURNS = 200; // 增加上限，维护引擎会接管压缩
+const MAX_SAVED_TURNS = 120; // 保留最近 60 轮完整对话（发到 LLM 的减半，防止 Context 饱和）
 function loadConversationHistory(): void {
   try {
     if (existsSync(CONV_LOG_PATH)) {
@@ -162,6 +163,7 @@ let llmProvider: DeepSeekLLMProvider;
 let clueAssistant: M5ClueAssistant;
 let topicTracker: TopicTracker;
 let m8: M8FusionAdapter;
+let somaticMemory: SomaticMemory;
 let taskAgent: TaskAgentEngine;
 async function initPipeline(): Promise<void> {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -202,6 +204,8 @@ async function initPipeline(): Promise<void> {
   console.log('  梦境引擎已启动 ✓');
 
   m6 = new M6Orchestrator();
+  // 延迟注入 M6 到 M7（修复梦境→演化链路）
+  if (m7) m7.setM6(m6);
   // M6 周期性维护（15分钟一次）
   if (m6Timer) clearInterval(m6Timer);
   m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000);
@@ -213,6 +217,7 @@ async function initPipeline(): Promise<void> {
 
   knowledgeBase = new KnowledgeBase(storage.getSQLite());
   topicTracker = new TopicTracker(storage.getSQLite());
+  somaticMemory = new SomaticMemory(storage.getSQLite());
   // 玉瑶的"做梦研究"定时器（每5分钟检查一次待研究话题）
   setInterval(async () => {
     try {
@@ -277,7 +282,7 @@ async function processChat(message: string): Promise<ChatResponse> {
     encoder, storage, m3, m4, m5, m6, m7,
     workingMemory, knowledgeBase, clueAssistant, llmProvider,
     topicTracker, consolidationQueue,
-    conversationHistory, m8,
+    conversationHistory, m8, somaticMemory,
     saveConversationHistory,
     getSelfModel,
   });
@@ -316,8 +321,26 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const body = JSON.parse(await readBody(req));
       if (!body.message || typeof body.message !== 'string') { res.writeHead(400); res.end(JSON.stringify({error:'message required'})); return; }
       const result = await processChat(body.message.trim());
+      let audio_url: string | null = null;
+      const tts = body.tts !== false; // 默认开启 TTS
+      if (tts && result.reply && result.reply.length < 500) {
+        try {
+          const ttsRes = await fetch('http://localhost:8765/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: result.reply }),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (ttsRes.ok) {
+            const ttsData = await ttsRes.json() as any;
+            audio_url = ttsData.url || null;
+          }
+        } catch (err) {
+          console.warn('[TTS] 生成失败:', (err as Error).message);
+        }
+      }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(result));
+      res.end(JSON.stringify({ ...result, audio_url }));
       return;
     }
 
@@ -801,6 +824,23 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (req.method === 'GET' && url.pathname === '/api/m3/hits') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ hits: getHitReport() }));
+      return;
+    }
+
+    // ── TTS 音频文件 ──
+    if (req.method === 'GET' && url.pathname.startsWith('/audio/')) {
+      const fileName = path.basename(url.pathname);
+      const audioPath = path.join(DATA_DIR, 'audio', fileName);
+      // 安全检查：确保文件在 audio 目录内
+      if (!audioPath.startsWith(path.join(DATA_DIR, 'audio'))) { res.writeHead(403); res.end('403'); return; }
+      if (existsSync(audioPath)) {
+        const ext = path.extname(fileName).toLowerCase();
+        const mime: Record<string, string> = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.ogg': 'audio/ogg' };
+        res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream', 'Cache-Control': 'max-age=3600' });
+        res.end(fs.readFileSync(audioPath));
+        return;
+      }
+      res.writeHead(404); res.end('404');
       return;
     }
 

@@ -361,6 +361,9 @@ class IntimacyScorer {
 // ════════════════════════════════════════════════════════
 
 function calculateCalcium(p: Perception24D): CalciumResult {
+  // M3 自有的钙化公式（含威胁检测）
+  // 与 M5 calcLevel（话术等级）解耦：M3 需要威胁检测来路由决策
+  // 但输出等级与 M5 语义映射保持一致
   const avgEmotion = (
     Math.abs(p.pleasure) + p.arousal + Math.abs(p.dominance) +
     p.aggression + p.sincerity + p.humor
@@ -375,6 +378,7 @@ function calculateCalcium(p: Perception24D): CalciumResult {
     Math.abs(p.pleasure), p.arousal, Math.abs(p.dominance), p.aggression
   ) * 0.4;
 
+  // 威胁检测（M3 特有——用于路由决策 act）
   const threatBonus =
     (p.aggression > 0.7 || p.safety < 0.2 || p.sexual_attraction > 0.8)
       ? 0.3 : 0.0;
@@ -382,10 +386,10 @@ function calculateCalcium(p: Perception24D): CalciumResult {
   const score = clamp(baseCore + emotionalBoost + threatBonus, 0, 1);
 
   let level: CalciumLevel;
-  if (score < 0.3) level = 0;
-  else if (score < 0.6) level = 1;
-  else if (score < 0.8) level = 2;
-  else level = 3;
+  if (score < 0.3) level = 0;       // 粉末
+  else if (score < 0.6) level = 1;  // 液体
+  else if (score < 0.8) level = 2;  // 固体
+  else level = 3;                    // 晶体
 
   return {
     score,
@@ -429,7 +433,6 @@ export class PerceptionAnalyzer {
     const social = SocialScorer.all(text);
     const intimacy = IntimacyScorer.all(text);
     const perception: Perception24D = { ...emotion, ...cognition, ...social, ...intimacy };
-    const calcium = calculateCalcium(perception);
 
     return {
       branch_id: dna.branch_id,
@@ -437,8 +440,8 @@ export class PerceptionAnalyzer {
       raw_input: dna.raw_input,
       entity_genes: dna.entity_genes,
       perception,
-      calcium_score: calcium.score,
-      calcium_level: calcium.level,
+      calcium_score: 0, // 占位 — decide() 中 context 注入后统一计算
+      calcium_level: 0,
     };
   }
 
@@ -460,7 +463,11 @@ export class PerceptionAnalyzer {
       raw_input: text,
       created_at: new Date().toISOString(),
     };
-    return this.analyze(mockDNA);
+    const enhanced = this.analyze(mockDNA);
+    const calcium = calculateCalcium(enhanced.perception);
+    enhanced.calcium_score = calcium.score;
+    enhanced.calcium_level = calcium.level;
+    return enhanced;
   }
 
   /**

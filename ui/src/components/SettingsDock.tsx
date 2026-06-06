@@ -22,6 +22,9 @@ export default function SettingsDock() {
   const [newName, setNewName] = useState('DEEPSEEK_API_KEY');
   const [newLabel, setNewLabel] = useState('DeepSeek API Key');
   const [newValue, setNewValue] = useState('');
+  const [ttsVoices, setTtsVoices] = useState<{id:string;name:string;gender:string;locale:string}[]>([]);
+  const [ttsVoice, setTtsVoice] = useState('zh-CN-XiaoxiaoNeural');
+  const [ttsStatus, setTtsStatus] = useState('');
 
   const loadKeys = async () => {
     try {
@@ -31,6 +34,34 @@ export default function SettingsDock() {
   };
 
   useEffect(() => { if (isOpen) loadKeys(); }, [isOpen]);
+
+  // 加载 TTS 声音列表
+  const loadVoices = async () => {
+    try {
+      const res = await fetch('http://localhost:8765/voices');
+      if (!res.ok) { setTtsStatus('TTS 服务未连接'); return; }
+      const data = await res.json();
+      setTtsVoices(data.voices || []);
+      setTtsVoice(data.current || 'zh-CN-XiaoxiaoNeural');
+      setTtsStatus('在线');
+    } catch { setTtsStatus('TTS 服务未连接'); }
+  };
+  useEffect(() => { if (isOpen) loadVoices(); }, [isOpen]);
+
+  const handleVoiceChange = async (voiceId: string) => {
+    setTtsVoice(voiceId);
+    setTtsStatus('切换中...');
+    try {
+      const res = await fetch('http://localhost:8765/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: voiceId }),
+      });
+      if (res.ok) setTtsStatus('已切换');
+      else setTtsStatus('切换失败');
+    } catch { setTtsStatus('切换失败'); }
+    setTimeout(() => setTtsStatus('在线'), 2000);
+  };
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -231,6 +262,35 @@ export default function SettingsDock() {
                 + 新增 API Key
               </button>
             )}
+
+            {/* ── TTS 声音选择器 ── */}
+            <div style={{
+              marginTop: 10, paddingTop: 8,
+              borderTop: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <div style={{ fontSize: 9, color: 'rgba(180,195,210,0.5)', marginBottom: 6 }}>
+                🎤 TTS 声音
+              </div>
+              <select
+                value={ttsVoice}
+                onChange={e => handleVoiceChange(e.target.value)}
+                style={{
+                  width: '100%', padding: '5px 8px', borderRadius: 6,
+                  border: '1px solid rgba(180,195,210,0.12)',
+                  background: 'rgba(0,0,0,0.3)', color: '#c0c0c0',
+                  fontSize: 9, outline: 'none', fontFamily: 'inherit',
+                }}
+              >
+                {ttsVoices.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.gender} · {v.locale})
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 8, color: ttsStatus, marginTop: 4 }}>
+                {ttsStatus}
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

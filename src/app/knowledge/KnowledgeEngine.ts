@@ -13,6 +13,37 @@ import { chunkText } from './ChunkService.js';
 import { createLocalEmbedding } from './EmbeddingProvider.js';
 import { VectorStore } from './VectorStore.js';
 import { hybridSearch } from './RAGPipeline.js';
+import { writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// ── MD 同步路径 ──
+const __MD_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'knowledge-md');
+
+/** 同步条目到 Markdown 文件 */
+function syncToMd(entry: KnowledgeItem, remove = false): void {
+  try {
+    if (!existsSync(__MD_DIR)) mkdirSync(__MD_DIR, { recursive: true });
+    const fname = entry.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim().substring(0, 80) + '.md';
+    const fpath = join(__MD_DIR, fname);
+    if (remove) {
+      if (existsSync(fpath)) unlinkSync(fpath);
+      return;
+    }
+    const tags = Array.isArray(entry.tags) ? '\n' + entry.tags.map((t: string) => `  - "${t}"`).join('\n') : '';
+    const frontmatter = `---
+id: "${entry.id}"
+title: "${entry.title}"
+type: "${entry.source_type}"
+source_type: "${entry.source_type}"
+created_at: "${entry.created_at}"
+updated_at: "${entry.updated_at}"
+${entry.source_name ? `source_name: "${entry.source_name}"\n` : ''}${entry.file_size ? `file_size: ${entry.file_size}\n` : ''}${tags ? `tags:${tags}\n` : ''}---\n\n`;
+    writeFileSync(fpath, frontmatter + (entry.content || ''), 'utf-8');
+  } catch (err) {
+    console.warn('[KE→MD] 同步失败:', err);
+  }
+}
 
 // ── 模块级单例（跨多次 createKnowledgeEngine 调用持久化） ──
 const vectorStore = new VectorStore();
@@ -134,6 +165,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     );
 
     // 异步分块 + 嵌入（不阻塞返回）
+    syncToMd(entry);
     indexContent(sqlite, id, params.content).catch(err =>
       console.warn(`[KnowledgeEngine] 索引失败 ${id}:`, err),
     );
@@ -167,6 +199,9 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
       JSON.stringify(params.tags ?? existing.tags),
       (params.locked ?? existing.locked) ? 1 : 0, now, id,
     );
+    // 同步到 Markdown 文件
+    const updated = { ...existing, ...params, updated_at: now, tags: params.tags ?? existing.tags };
+    syncToMd(updated);
     // 内容变了就重新索引
     if (params.content && params.content !== existing.content) {
       indexContent(sqlite, id, params.content).catch(() => {});
@@ -174,9 +209,11 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     return true;
   }
 
-  /** 删除（同时清理索引） */
+  /** 删除（同时清理索引 + MD 文件） */
   function remove(id: string): boolean {
-    if (!getById(id)) return false;
+    const existing = getById(id);
+    if (!existing) return false;
+    syncToMd(existing, true); // 删除 MD 文件
     sqlite.writeRaw(`DELETE FROM knowledge_base WHERE id=?`, id);
     sqlite.writeRaw(`DELETE FROM knowledge_chunks WHERE kn_id=?`, id);
     vectorStore.removeByPrefix(id);
@@ -216,12 +253,13 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
       }
     }
 
-    // 3. 如果嵌入可用，走混合搜索
+    // 3. 如果嵌入可用，走混合搜索（但不会覆盖关键词搜索结果）
     if (embedProvider.isAvailable()) {
       ensureIndex(sqlite);
       if (vectorStore.size() > 0) {
         try {
-          return await hybridSearch(trimmed, embedProvider, vectorStore, keywordSearch, limit, emotionalContext);
+          const hybridResults = await hybridSearch(trimmed, embedProvider, vectorStore, keywordSearch, limit, emotionalContext);
+          if (hybridResults.length > 0) return hybridResults;
         } catch (err) {
           console.warn('[KnowledgeEngine] 混合搜索失败，降级:', err);
         }

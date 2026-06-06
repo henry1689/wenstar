@@ -56,10 +56,8 @@ export class MemoryRetriever {
     if (keywords.size > 0) {
       try {
         // 检索最近 60 条记录（含各分区）
-        const recent = await this.storage.findBySeqPosRange(0, 999_999_999, {
-          limit: 60,
-          ascending: false,
-        });
+        // findBySeqPosRange 默认 DESC 排序，ascending 参数不被 QueryOptions 支持
+        const recent = await this.storage.findBySeqPosRange(0, 999_999_999, { limit: 60 });
         const seen = new Set<string>();
         for (const dna of recent) {
           for (const kw of keywords) {

@@ -6,6 +6,7 @@ import { DreamQueue } from './DreamQueue.js';
 import { DreamInternalizer } from './DreamInternalizer.js';
 import { ClueTracker } from './ClueTracker.js';
 import type { M8Engine } from '../m8/M8Engine.js';
+import type { M6Orchestrator } from '../m6/M6Orchestrator.js';
 export function startM7Interval(m7: M7Orchestrator, intervalMs: number = 60000): NodeJS.Timeout {
   return setInterval(async () => {
     try {
@@ -30,6 +31,11 @@ export class M7Orchestrator {
     this.queue = new DreamQueue();
     this.internalizer = new DreamInternalizer(this.queue, m8);
     this.tracker = new ClueTracker();
+  }
+
+  /** 延迟注入 M6（server.ts 中 M6 在 M7 之后初始化） */
+  setM6(m6: M6Orchestrator): void {
+    this.internalizer.setM6(m6);
   }
 
   /** 空闲时段批处理 */

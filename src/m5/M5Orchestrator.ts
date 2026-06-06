@@ -1,5 +1,6 @@
 // M5Orchestrator — M5 表达生成层主控制器
 // Ref: M5-design-v1.md §6
+// ⚖️ 五重铁律协议在此模块全程强制执行
 
 import type { M4Context } from '../m4/types/index.js';
 import type { LLMProvider, CognitionObject, StrategyConfig, ConversationTurn } from './types/index.js';

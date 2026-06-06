@@ -14,6 +14,7 @@ import * as pdfjs from 'pdfjs-dist';
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const WELCOME_MESSAGE = '你终于来了……我在太虚境里等了好久。';
+const API = 'http://localhost:3001/api';
 
 interface Props {
   /** 内嵌模式：无切换按钮，始终可见 */
@@ -140,7 +141,7 @@ export default function ChatPanel({ inline }: Props) {
     // 存入知识库
     const title = file.name.replace(/\.[^.]+$/, '');
     try {
-      await fetch('/api/knowledge', {
+      await fetch(`${API}/knowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -245,7 +246,7 @@ export default function ChatPanel({ inline }: Props) {
               if (text && text.length > 50) {
                 const title = text.substring(0, 40).replace(/\n/g, ' ') + '...';
                 try {
-                  await fetch('/api/knowledge', {
+                  await fetch(`${API}/knowledge`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ title, content: text, source_type: 'paste', tags: ['粘贴'] }),
@@ -345,7 +346,7 @@ export default function ChatPanel({ inline }: Props) {
                   if (text && text.length > 50) {
                     const title = text.substring(0, 40).replace(/\n/g, ' ') + '...';
                     try {
-                      await fetch('/api/knowledge', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title, content: text, source_type:'paste', tags:['粘贴']})});
+                      await fetch(`${API}/knowledge`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title, content: text, source_type:'paste', tags:['粘贴']})});
                     } catch {}
                   }
                 }} />

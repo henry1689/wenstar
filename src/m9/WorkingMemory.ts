@@ -34,6 +34,10 @@ export class WorkingMemory {
   private maxSize: number;
   private storage: FusionStorageAdapter;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  /** 巩固锁：防止并发 consolidate 同时操作 buffer */
+  private _consolidating = false;
+  /** 溢出时待调用的巩固（防丢失） */
+  private _pendingConsolidate = false;
 
   constructor(storage: FusionStorageAdapter, maxSize = 50) {
     this.storage = storage;
@@ -45,10 +49,7 @@ export class WorkingMemory {
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.flushTimer = setInterval(async () => {
       if (this.buffer.length > 0) {
-        const results = await this.consolidate();
-        if (results.length > 0) {
-          console.log(`[WM] 定时刷出: ${results.length} 条`);
-        }
+        await this.consolidateSafe();
       }
     }, intervalMs);
   }
@@ -57,6 +58,31 @@ export class WorkingMemory {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
+    }
+  }
+
+  /**
+   * 安全巩固（带锁 + 防重叠）
+   * 定时器和溢出都可能触发 consolidate，必须串行化
+   */
+  private async consolidateSafe(): Promise<void> {
+    if (this._consolidating) {
+      this._pendingConsolidate = true;
+      return;
+    }
+    this._consolidating = true;
+    try {
+      const results = await this.consolidate();
+      if (results.length > 0) {
+        console.log(`[WM] 刷出: ${results.length} 条`);
+      }
+    } finally {
+      this._consolidating = false;
+      // 如果执行期间又有新的溢出请求，立即再跑一轮
+      if (this._pendingConsolidate) {
+        this._pendingConsolidate = false;
+        await this.consolidateSafe();
+      }
     }
   }
 
@@ -81,9 +107,9 @@ export class WorkingMemory {
       createdAt: Date.now(),
     });
 
-    // 超过阈值时触发巩固
+    // 超过阈值时触发巩固（通过 consolidateSafe 避免并发重叠）
     if (this.buffer.length >= this.maxSize) {
-      this.consolidate().catch(() => {});
+      this.consolidateSafe().catch(() => {});
     }
   }
 
@@ -91,33 +117,32 @@ export class WorkingMemory {
   async consolidate(): Promise<WriteResult[]> {
     const results: WriteResult[] = [];
 
-    // 按创建时间排序（最早的先处理）
-    this.buffer.sort((a, b) => a.createdAt - b.createdAt);
+    // 快照当前缓冲（避免 consolidate 期间 push 修改 buffer）
+    const snapshot = [...this.buffer];
+    snapshot.sort((a, b) => a.createdAt - b.createdAt);
 
     // 逐条判定
     const keep: WorkingEntry[] = [];
-    for (const entry of this.buffer) {
+    for (const entry of snapshot) {
       entry.cycleCount++;
 
       // ─── 毕业判定 ───
       const shouldGraduate =
-        entry.calciumLevel >= 2 ||                    // 固体/晶体级
-        (entry.calciumLevel === 1 && entry.hasMeaningfulEntity) || // 液体级 + 有实体
-        (entry.calciumLevel === 1 && entry.cycleCount >= 3);      // 液体级且停留了3轮
+        entry.calciumLevel >= 2 ||
+        (entry.calciumLevel === 1 && entry.hasMeaningfulEntity) ||
+        (entry.calciumLevel === 1 && entry.cycleCount >= 3);
 
       // ─── 丢弃判定 ───
-      let shouldDiscard =
-        entry.calciumLevel === 0 ||                    // 粉末级 → 噪音
-        (!entry.hasMeaningfulEntity && entry.cycleCount >= 2);    // 无实体且停留2轮
+      const shouldDiscard =
+        entry.calciumLevel === 0 ||
+        (!entry.hasMeaningfulEntity && entry.cycleCount >= 2);
 
       // ─── 安全阀：cycleCount ≥ 6 强制处理（防止堆积） ───
       if (entry.cycleCount >= 6) {
         if (entry.calciumLevel >= 1 && entry.hasMeaningfulEntity) {
-          // 有值但迟迟未毕业 → 强制毕业
           const result = await this.writeEntry(entry);
           results.push(result);
         }
-        // 否则强制丢弃（不进 keep）
         continue;
       }
 
@@ -125,10 +150,8 @@ export class WorkingMemory {
         const result = await this.writeEntry(entry);
         results.push(result);
       } else if (!shouldDiscard) {
-        // 还不确定 → 留在缓冲中等下一轮
         keep.push(entry);
       }
-      // shouldDiscard → 直接丢弃
     }
 
     this.buffer = keep;

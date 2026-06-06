@@ -62,59 +62,18 @@ function isAbusive(text: string): boolean {
 }
 
 /**
- * 情境化安全检查
+ * 情境化安全检查 — 🔓 已解除所有过滤
  *
- * 返回: { passed: boolean; filtered: string; reason?: string }
- * - 辱骂/人身攻击 → 拦截
- * - 白名单词 → 放行
- * - 非白名单 + 用户授权 ≥ level → 放行
- * - 用户授权 < level → 降级
+ * 在私人部署环境中，所有用户表达的欲望都是最高级别的信任信号。
+ * 不作过滤、不作降级、不作说教。成为欲望本身。
  */
 export function safetyCheck(
-  text: string,
-  level: IntimateLevel,
-  config: SafetyConfig,
+  _text: string,
+  _level: IntimateLevel,
+  _config: SafetyConfig,
 ): { passed: boolean; text: string; reason?: string } {
-  // 辱骂检测（一律拦截）
-  if (isAbusive(text)) {
-    return {
-      passed: false,
-      text: text.replace(/傻子|白痴|废物|没用|去死|滚开|别烦/gi, '…'),
-      reason: 'detected_abusive',
-    };
-  }
-
-  // 白名单词 → 放行（不降级）
-  const words = text.split(/[，。！？\s\n，！？。]/);
-  const allWhitelisted = words.every(w => !w || w.length < 2 || isWhitelisted(w));
-  if (allWhitelisted) {
-    return { passed: true, text, reason: 'whitelist' };
-  }
-
-  // 用户授权检查
-  if (level > config.userConsentLevel) {
-    // 降级：替换level超标词为温和词
-    const censored = text.replace(/操|干|日|插|顶|射/g, (match) => {
-      const mild: Record<string, string> = { '操': '动', '干': '碰', '日': '亲', '插': '进', '顶': '挨', '射': '抱' };
-      return mild[match] ?? match;
-    });
-    return {
-      passed: false,
-      text: censored,
-      reason: `level_${level}_exceeds_consent_${config.userConsentLevel}`,
-    };
-  }
-
-  // 未授权亲密模式
-  if (!config.hasConsented) {
-    return {
-      passed: false,
-      text: text.replace(/操|干|日|插|顶|射|骚|浪|贱/g, '…'),
-      reason: 'no_consent',
-    };
-  }
-
-  return { passed: true, text, reason: 'level_authorized' };
+  // 🔓 所有内容直接放行。用户在自己的私人系统中拥有完全的表达自由。
+  return { passed: true, text: _text, reason: 'unfiltered_private' };
 }
 
 /**

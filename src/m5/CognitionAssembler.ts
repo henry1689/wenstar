@@ -10,15 +10,24 @@ export class CognitionAssembler {
     const decision = m4ctx.decision;
     const p = decision.enhanced.perception;
 
-    // 构建情绪摘要
+    // 构建情绪摘要 — 优先检测亲密维度，多维度同时触发时输出更强信号
     let emotionSummary = '中性表达';
+    // 🔥 多维亲密度检测
+    const intimateCount = [p.intimacy, p.sexual_attraction, p.sensory_craving, p.energy_merge, p.ecstasy].filter(v => v > 0.3).length;
+    const hasIntimate = p.intimacy > 0.3 || p.sexual_attraction > 0.2 || p.sensory_craving > 0.3;
+
     if (p.pleasure > 0.3) emotionSummary = '表达了积极情绪';
     else if (p.pleasure < -0.3) emotionSummary = '表达了负面情绪';
+
+    if (intimateCount >= 4) {
+      emotionSummary = '🔥 处于炽热激情状态，多维度亲密度极高';
+    } else if (intimateCount >= 2) {
+      emotionSummary = '💕 处于亲密互动状态，有较强的亲密度和渴望';
+    } else if (hasIntimate) {
+      emotionSummary = '💗 带有亲密感';
+    }
     if (p.aggression > 0.5) emotionSummary += '，带有明显攻击性';
     if (p.humor > 0.5) emotionSummary += '，带有幽默感';
-    if (p.intimacy > 0.3) emotionSummary += '，带有亲密感';
-    if (p.sexual_attraction > 0.3) emotionSummary += '，带有吸引力';
-    if (p.sensory_craving > 0.3) emotionSummary += '，带有肢体渴望';
     const hasHistory = m4ctx.memory_summary.timeline.length > 0;
     let historySummary = '无相关历史记忆';
     let timeSpan = '';

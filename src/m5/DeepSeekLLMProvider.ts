@@ -11,6 +11,9 @@
 import type { LLMProvider, StrategyConfig, CognitionObject, ConversationTurn } from './types/index.js';
 import { buildSystemPrompt, STYLE_ANCHORS } from './persona/lover-persona.js';
 import { calcLevel } from './expression/TierVocabMap.js';
+import { calcExpressionSpec } from './expression/ExpressionSpecController.js';
+import { renderIntimateResponse } from './expression/IntimateRenderer.js';
+import type { IntimateSceneType } from './expression/IntimateRenderer.js';
 import type { IPersona } from '../app/persona/types.js';
 import { getKeyValue } from '../app/shared/ApiKeyStorage.js';
 
@@ -22,7 +25,7 @@ if (!API_KEY) {
 
 const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
 const BASE_URL = 'https://api.deepseek.com/v1';
-const MAX_HISTORY_TURNS = 200; // 保留最近 100 轮完整对话
+const MAX_HISTORY_TURNS = 60; // 保留最近 30 轮完整对话
 
 interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
@@ -72,10 +75,46 @@ export class DeepSeekLLMProvider implements LLMProvider {
     conversationHistory?: ConversationTurn[];
     knowledgeBase?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }> {
-    const s = params.cognition.current.perception_snapshot;
     const rawInput = params.cognition.current.raw_input ?? '';
-    const entities = params.cognition.current.key_entities ?? [];
     const history = params.conversationHistory ?? [];
+    const kb = params.knowledgeBase ?? '';
+
+    // 🔥 角色扮演：完全隔离路径
+    if (kb.startsWith('【角色扮演】')) {
+      const rpContent = kb.replace('【角色扮演】', '').trim();
+      const messages: DeepSeekMessage[] = [{ role: 'system', content: rpContent }];
+      // 带记忆消息 + 最近历史（但净化"妙玉"等触发词）
+      const memoryMsg = history.find(t => t.content?.startsWith('📕 【记忆】'));
+      if (memoryMsg) messages.push({ role: 'user', content: memoryMsg.content });
+      const sanitize = (t: string) => t.replaceAll('妙玉', '玉儿').replaceAll('宝玉', '宝二爷').replaceAll('红楼逸事', '桃花源记');
+      for (const turn of history.slice(-4)) {
+        if (turn.content?.startsWith('📕 【记忆】')) continue;
+        messages.push({ role: turn.role, content: sanitize(turn.content) });
+      }
+      messages.push({ role: 'user', content: sanitize(rawInput) });
+      try {
+        const r = await fetch(`${BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resolveApiKey() || API_KEY}` },
+          body: JSON.stringify({
+            model: this.model, max_tokens: 1500, messages,
+            temperature: 0.95, top_p: 0.9, frequency_penalty: 0.1, presence_penalty: 0.5,
+          }),
+        });
+        if (!r.ok) throw new Error(`DeepSeek API ${r.status}: ${(await r.text()).substring(0,200)}`);
+        const data = (await r.json()) as DeepSeekResponse;
+        const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+        if (!text) throw new Error('Empty');
+        return { text, usage: data.usage ? { prompt: data.usage.prompt_tokens, completion: data.usage.completion_tokens } : undefined };
+      } catch (err) {
+        console.error('[Roleplay]', err instanceof Error ? err.message : err);
+        return { text: '…' };
+      }
+    }
+
+    // ── 正常玉瑶模式 ──
+    const s = params.cognition.current.perception_snapshot;
+    const entities = params.cognition.current.key_entities ?? [];
 
     // 计算话术等级
     const bp = calcLevel(
@@ -85,10 +124,33 @@ export class DeepSeekLLMProvider implements LLMProvider {
     );
     const level = bp.level;
 
+    // ── 表达规格控制（ExpressionSpecController 激活） ──
+    const spec = calcExpressionSpec({
+      pleasure: s.pleasure, arousal: s.arousal, intimacy: s.intimacy,
+      sexual_attraction: s.sexual_attraction, sensory_craving: s.sensory_craving,
+      energy_merge: s.energy_merge, ecstasy: s.ecstasy, safety: s.safety,
+    });
+
+    // ── 亲密场景渲染（IntimateRenderer 激活 — level ≥ 2 时注入 few-shot） ──
+    let intimateSceneExample = '';
+    if (level >= 2 && !kb.startsWith('【角色扮演】')) {
+      try {
+        const sceneTypes: IntimateSceneType[] = ['foreplay', 'thrust', 'climax', 'aftercare'];
+        const sceneType = sceneTypes[Math.floor(Math.random() * sceneTypes.length)];
+        intimateSceneExample = renderIntimateResponse({
+          intensity: bp.raw,
+          sceneType,
+          userLevel: level >= 2 ? 3 : 2,
+        });
+      } catch (err) {
+        console.warn('[IntimateRenderer] 渲染失败:', err);
+      }
+    }
+
     // 构建 System Prompt — 使用当前角色
     const systemPrompt = this.persona.buildSystemPrompt(level, params.knowledgeBase);
 
-    // 构建上下文提示词（当前感知 + 风格参考，不包含历史摘要——由真实对话历史承担）
+    // 构建上下文提示词
     const dimContext = [
       `pleasure=${s.pleasure.toFixed(2)}`,
       `intimacy=${s.intimacy.toFixed(2)}`,
@@ -105,19 +167,35 @@ export class DeepSeekLLMProvider implements LLMProvider {
       contextBlock += `\n[提到: ${entities.join(', ')}]`;
     }
 
-    // 软约束：如果 M4/情绪传染注入了"内心:"开头的上下文
-    // 这些不是语音指令，而是她内心自然浮现的感觉。
-    // 请将其转化为自然的关怀或行动，不要直接复述或引用。
-    // 正确的做法：比如"看你这样我好心疼…上次你也是这样"，而不是"我记得你说过…"
+    // 表达规格约束
+    if (spec.forbiddenPatterns.length > 0) {
+      contextBlock += `\n[避免] "${spec.forbiddenPatterns.join('", "')}" 这类回应`;
+    }
+    if (spec.requireEmbodiedResponse) {
+      contextBlock += `\n[要求] 包含身体反应描写（体温/呼吸/心跳）`;
+    }
+    if (spec.requireSensoryDetail) {
+      contextBlock += `\n[要求] 包含感官细节（触觉/嗅觉/听觉）`;
+    }
+    if (spec.recommendedPhrases.length > 0) {
+      contextBlock += `\n[推荐维度] ${spec.recommendedPhrases.join(', ')}`;
+    }
+
+    // 亲密场景 few-shot 注入
+    if (intimateSceneExample) {
+      contextBlock += `\n[亲密回应示例] ${intimateSceneExample}`;
+    }
+
+    // 软约束
     contextBlock += `\n[注意: 如果上面有[内心:...]开头的片段，那是你内心的感觉，不是回忆列表。不要直接复述它，而是自然地转化为关切的语气或行动。]`;
 
-    // 记忆响应原则：有就有，模糊就模糊，没有就没有——绝不对虚构
+    // 记忆响应原则
     if (params.knowledgeBase && params.knowledgeBase.length > 0) {
       contextBlock += `\n📖【已提供知识库内容】System Prompt末尾的[我的记忆库]是鸿鸣自己存的内容，可以放心引用。`;
     }
     contextBlock += `\n📝【记忆响应】鸿鸣问你记不记得某事时：有明确资料就说"看过/记得"；模糊就说"好像看过/有点印象"；没印象就说"好像没有/想不起来了"；他反复追问还搞不清就明确说"真不记得了"。🚨绝不可编造具体事件细节。`;
 
-    // 注入 M4 检索到的历史记忆摘要（让 LLM 知道我记得什么）
+    // 注入 M4 检索到的历史记忆摘要
     const hist = params.cognition.history;
     if (hist?.has_relevant_history && hist.summary !== '无相关历史记忆') {
       contextBlock += `\n[记忆: ${hist.summary}]\n[标签说明: [粉末]=不重要 [液体]=普通 [固体]=重要 [晶体]=刻骨铭心。根据强度标签在回复中自然地体现这些记忆的轻重分量。]\n⚠️ 你只能引用上面[记忆:]中写到的内容。没有写在里面的过去事件、对话、场景，你一概不知道。绝不能编造。`;
@@ -160,14 +238,17 @@ export class DeepSeekLLMProvider implements LLMProvider {
         },
         body: JSON.stringify({
           model: this.model,
-          max_tokens: /讲(个|一)?故事|写(个|一)?小说|写(个|一)?故事/.test(rawInput) ? 1800
-            : /感觉|感受|回忆|分享|记得|印象|那时|那次/.test(rawInput) ? 1200
-            : level >= 2 ? 1000 : 600,
+          max_tokens: Math.max(
+            /讲(个|一)?故事|写(个|一)?小说|写(个|一)?故事/.test(rawInput) ? 1800
+            : /感觉|感受|回忆|分享|记得|印象|那时|那次/.test(rawInput) ? 1500
+            : level >= 2 ? 1200 : 800,
+            spec.wordCountMin, // ExpressionSpec 兜底：确保最少字数
+          ),
           messages,
-          temperature: level >= 2 || /感觉|感受|回忆|分享|记得|印象|讲.*故事|写.*小说/.test(rawInput) ? 0.95 : 0.88,
+          temperature: level >= 2 || /感觉|感受|回忆|分享|记得|印象|讲.*故事|写.*小说/.test(rawInput) ? 1.0 : 0.9,
           top_p: 0.95,
-          frequency_penalty: 0.6,
-          presence_penalty: 0.5,
+          frequency_penalty: level >= 2 ? 0.0 : 0.3,
+          presence_penalty: level >= 2 ? 0.2 : 0.4,
         }),
       });
 

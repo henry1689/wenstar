@@ -17,7 +17,7 @@ export interface KnowledgeItem {
 }
 
 /** 获取知识库列表 */
-export async function fetchKnowledgeList(limit = 20): Promise<KnowledgeItem[]> {
+export async function fetchKnowledgeList(limit = 100): Promise<KnowledgeItem[]> {
   const res = await fetch(`${API_BASE}/knowledge?limit=${limit}`);
   if (!res.ok) throw new Error(`Knowledge list error: ${res.status}`);
   const data = await res.json();
@@ -26,7 +26,7 @@ export async function fetchKnowledgeList(limit = 20): Promise<KnowledgeItem[]> {
 
 /** 搜索知识库 */
 export async function searchKnowledge(keyword: string): Promise<KnowledgeItem[]> {
-  const res = await fetch(`${API_BASE}/knowledge?search=${encodeURIComponent(keyword)}&limit=10`);
+  const res = await fetch(`${API_BASE}/knowledge?search=${encodeURIComponent(keyword)}&limit=50`);
   if (!res.ok) throw new Error(`Knowledge search error: ${res.status}`);
   const data = await res.json();
   return data.items || [];

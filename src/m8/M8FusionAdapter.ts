@@ -13,6 +13,7 @@ import type {
   YearRingEntry, M8StorageStatus, ScarTag, PerceptionSnapshot,
   SimulatedPhysiologicalSnapshot,
 } from './types/index.js';
+import { derivePhysiologicalSnapshot, physiologicalCosineSimilarity, calculateCompositeScore, calculateEntryWeight } from './PhysiologicalDeriver.js';
 
 export class M8FusionAdapter implements M8Engine {
   private storage: FusionStorageAdapter;
@@ -22,9 +23,11 @@ export class M8FusionAdapter implements M8Engine {
   }
 
   // ── 写入：晋升一条记忆为地标 ──
+  // ⚠️ 当前实现有逻辑缺陷：它用当前感知检索过去的记忆来晋升，而非晋升当前对话。
+  // 已由 chat.ts 中的实时晋升（calcium_level>=3 时直接 promoteToLandmark 当前分支）替代。
+  // 保留此方法供未来"梦境沉淀后批量晋升"场景使用。
 
   async write(params: WriteParams): Promise<WriteResponse> {
-    // 通过情感检索找到最匹配的记忆，标记为地标
     const results = this.storage.findByEmotionalSimilarity({
       current_perception: params.perception,
       similarity_mode: 'balanced',
@@ -57,22 +60,44 @@ export class M8FusionAdapter implements M8Engine {
     const sqlite = this.storage.getSQLite();
     const entries: ClueSearchResultEntry[] = [];
 
-    // 1. 关键词搜索非地标记忆（地标可能为空）
+    // 1. 关键词搜索非地标记忆
     const queryText = params.user_clue ?? params.original_query ?? '';
     if (queryText) {
       const recent = sqlite.findBySeqPosRange(0, 999_999_999, 50);
       const lowerQ = queryText.toLowerCase();
       for (const mem of recent) {
         if (mem.raw_input.toLowerCase().includes(lowerQ)) {
+          const perceptionSnap: PerceptionSnapshot = {
+            pleasure: mem.perception.pleasure, arousal: mem.perception.arousal,
+            intimacy: mem.perception.intimacy, sexual_attraction: mem.perception.sexual_attraction ?? 0,
+            sensory_craving: mem.perception.sensory_craving ?? 0, energy_merge: mem.perception.energy_merge ?? 0,
+            ecstasy: mem.perception.ecstasy ?? 0, safety: mem.perception.safety ?? 0.5,
+          };
+          const physioSnap = derivePhysiologicalSnapshot(perceptionSnap);
+          let physiologicalScore = 0.3;
+          if (params.current_physiological_state) {
+            physiologicalScore = physiologicalCosineSimilarity(physioSnap, params.current_physiological_state);
+          }
+          const entryWeight = calculateEntryWeight(mem.recall_count, mem.last_recalled_at, mem.created_at);
+          const clueWords = lowerQ.split(/[\s,，、]/);
+          const hits = clueWords.filter(w => mem.raw_input.toLowerCase().includes(w));
+          const clueScore = Math.min(1, hits.length / Math.max(1, clueWords.length));
+          const semanticScore = mem.raw_input.toLowerCase().includes(lowerQ.substring(0, 4)) ? 0.6 : 0.3;
+          const composite = calculateCompositeScore(clueScore, semanticScore, physiologicalScore, entryWeight);
+          const yearEntry = this.toYearRingEntry({
+            id: mem.id, created_at: mem.created_at,
+            snippet: mem.raw_input.substring(0, 60),
+            calcium: mem.calcium_score, pleasure: mem.perception.pleasure,
+            intimacy: mem.perception.intimacy, narrative_tag: undefined,
+          });
+          yearEntry.simulated_physiological_snapshot = physioSnap;
+          yearEntry.perception_snapshot = perceptionSnap;
+          yearEntry.recall_count = mem.recall_count;
+          yearEntry.last_recalled_at = mem.last_recalled_at;
           entries.push({
-            entry: this.toYearRingEntry({
-              id: mem.id, created_at: mem.created_at,
-              snippet: mem.raw_input.substring(0, 60),
-              calcium: mem.calcium_score, pleasure: mem.perception.pleasure,
-              intimacy: mem.perception.intimacy, narrative_tag: undefined,
-            }),
-            clue_match_score: 0.8, semantic_score: 0.5,
-            physiological_score: 0.3, composite_score: mem.calcium_score,
+            entry: yearEntry,
+            clue_match_score: clueScore, semantic_score: semanticScore,
+            physiological_score: physiologicalScore, composite_score: composite,
           });
         }
       }
@@ -82,9 +107,28 @@ export class M8FusionAdapter implements M8Engine {
     const landscape = this.storage.getEmotionalLandscape();
     for (const p of landscape.peaks) {
       if (!entries.some(e => e.entry.sensory_anchor === p.snippet?.substring(0, 20))) {
+        const perceptionSnap: PerceptionSnapshot = {
+          pleasure: p.pleasure, arousal: 0.3,
+          intimacy: p.intimacy, sexual_attraction: 0,
+          sensory_craving: 0, energy_merge: 0,
+          ecstasy: 0, safety: 0.5,
+        };
+        const physioSnap = derivePhysiologicalSnapshot(perceptionSnap);
+        let physiologicalScore = 0.5;
+        if (params.current_physiological_state) {
+          physiologicalScore = physiologicalCosineSimilarity(physioSnap, params.current_physiological_state);
+        }
+        const entryWeight = calculateEntryWeight(0, null, p.created_at);
+        const clueScore = params.user_clue ? 0.5 : 0;
+        const semanticScore = 0.5;
+        const composite = calculateCompositeScore(clueScore, semanticScore, physiologicalScore, entryWeight);
+        const yearEntry = this.toYearRingEntry(p);
+        yearEntry.simulated_physiological_snapshot = physioSnap;
+        yearEntry.perception_snapshot = perceptionSnap;
         entries.push({
-          entry: this.toYearRingEntry(p), clue_match_score: 0.5,
-          semantic_score: 0.5, physiological_score: 0.5, composite_score: p.calcium,
+          entry: yearEntry,
+          clue_match_score: clueScore, semantic_score: semanticScore,
+          physiological_score: physiologicalScore, composite_score: composite,
         });
       }
     }

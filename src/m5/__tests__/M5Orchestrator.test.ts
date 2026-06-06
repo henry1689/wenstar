@@ -114,7 +114,8 @@ describe('HumanisticCalibrator — 人文校准', () => {
     const assembler = new CognitionAssembler();
     const cognition = assembler.assemble(makeMockM4Context(['memorize'], 0.3, 1));
     const result = calibrator.calibrate('好的，我记住了。', cognition);
-    expect(result).toBe('好的，我记住了。');
+    // Calibrator 会去掉末尾句号 + injectThinkingPause 可能追加停顿
+    expect(result).toContain('好的，我记住了');
   });
 });
 

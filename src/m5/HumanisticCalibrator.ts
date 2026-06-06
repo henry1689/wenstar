@@ -6,6 +6,7 @@
  */
 import type { CognitionObject } from './types/index.js';
 import type { M3Action } from '../m3/types/perception.js';
+import { injectThinkingPause } from './expression/ThinkingPauseInjector.js';
 
 const FALLBACK_POOLS: Record<M3Action, string[]> = {
   ignore: ['嗯', '好的', '听到了', '嗯嗯', '好嘞', '知道啦', '明白'],
@@ -37,14 +38,19 @@ export class HumanisticCalibrator {
       return getUniqueFallback(cognition.current.action[0] ?? 'memorize');
     }
 
-    // 校验2: 去掉末尾多余的标点符号
-    draft = draft.replace(/[，,。.！!？?]+$/g, '');
+    // 校验2: 【五重铁律·完美剥离协议】不修复任何"错误"，包括标点
 
     // 校验3: 检查最近 20 条中是否有完全相同的回复
     if (RECENT_POOL.includes(draft)) {
-      // 完全相同 → 用 fallback 但加一点前缀变化
       const prefix = ['', '嗯 ', '好 ', '嗯嗯，'][Math.floor(Math.random() * 4)];
       if (prefix) draft = prefix + draft;
+    }
+
+    // ── ThinkingPauseInjector 激活：根据钙化等级注入思考停顿 ──
+    const level = cognition.current.calcium_level ?? 1;
+    const intensity = level >= 3 ? 0.7 : level >= 2 ? 0.45 : level >= 1 ? 0.2 : 0;
+    if (intensity > 0) {
+      draft = injectThinkingPause(draft, intensity);
     }
 
     // 记录到最近池

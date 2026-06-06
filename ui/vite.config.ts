@@ -7,6 +7,8 @@ export default defineConfig({
 
   // 开发模式下将 /api/* 请求代理到 Hermes 后端（玉瑶 · 太虚境）
   server: {
+    port: 5174,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

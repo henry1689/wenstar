@@ -9,6 +9,7 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useNeuralStore } from '../store/neuralStore';
+import { useChatStore } from '../store/chatStore';
 import { GROUP_COLORS } from '../types/neural';
 
 /* ============================================================
@@ -20,6 +21,16 @@ function NeuralScene() {
   const mousePosition = useNeuralStore((s) => s.mousePosition);
   const mouseInView = useNeuralStore((s) => s.mouseInView);
   const interactionRadius = useNeuralStore((s) => s.interactionRadius);
+
+  // 🔥 Read emotional intensity from chat
+  const m3Data = useChatStore((s) => (s as any).m3Data || null);
+  const pleasure = m3Data?.quadrant1?.find((d: any) => d.key === 'pleasure')?.value || 0;
+  const arousal = m3Data?.quadrant1?.find((d: any) => d.key === 'arousal')?.value || 0;
+  const intimacy = m3Data?.quadrant3?.find((d: any) => d.key === 'intimacy')?.value || 0;
+  const ecstasy = m3Data?.quadrant4?.find((d: any) => d.key === 'ecstasy')?.value || 0;
+  const exciteLevel = Math.min(1, Math.abs(pleasure) * 0.6 + arousal * 0.5 + intimacy * 0.5 + ecstasy * 0.6);
+  const warmth = Math.min(1, (Math.max(0, pleasure) + intimacy + ecstasy) / 1.5);
+  const warmMix = new THREE.Color(1, 0.4 + warmth * 0.3, 0.15 + (1 - warmth) * 0.15);
 
   const { viewport } = useThree();
 
@@ -132,7 +143,8 @@ function NeuralScene() {
       const energy = pd.energies[i];
 
       // --- 呼吸效果：正弦波驱动位置偏移和缩放 ---
-      const breath = 1 + 0.06 * Math.sin(t * 0.23 + phase) * (0.5 + energy * 0.5);
+      const breathSpeed = 0.15 + exciteLevel * 1.2;
+      const breath = 1 + (0.04 + exciteLevel * 0.08) * Math.sin(t * breathSpeed + phase) * (0.5 + energy * 0.5);
 
       // 目标位置 = 基线位置 * 呼吸因子
       const targetX = pd.basePositions[i3] * breath;
@@ -155,8 +167,8 @@ function NeuralScene() {
       }
 
       // --- 弹性动力学 ---
-      const damping = 0.92;
-      const spring = 0.04;
+      const damping = 0.92 - exciteLevel * 0.04;
+      const spring = 0.04 + exciteLevel * 0.08;
       pd.velocities[i3] = (pd.velocities[i3] + (targetX - posArray[i3]) * spring + forceX) * damping;
       pd.velocities[i3 + 1] = (pd.velocities[i3 + 1] + (targetY - posArray[i3 + 1]) * spring + forceY) * damping;
       pd.velocities[i3 + 2] = (pd.velocities[i3 + 2] + (targetZ - posArray[i3 + 2]) * spring + forceZ) * damping;
@@ -168,10 +180,17 @@ function NeuralScene() {
       // --- 粒子颜色：随能量和呼吸变化 ---
       const group = pd.groups[i];
       const hexColor = new THREE.Color(GROUP_COLORS[group] || '#00ffff');
-      const brightness = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(t * 0.17 + phase));
-      colorArray[i3] = hexColor.r * brightness;
-      colorArray[i3 + 1] = hexColor.g * brightness;
-      colorArray[i3 + 2] = hexColor.b * brightness;
+      const brightness = 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * (0.15 + exciteLevel * 0.5) + phase));
+      if (warmth > 0.1) {
+        const warm = new THREE.Color(warmMix).lerp(hexColor, 1 - warmth);
+        colorArray[i3] = warm.r * brightness;
+        colorArray[i3 + 1] = warm.g * brightness;
+        colorArray[i3 + 2] = warm.b * brightness;
+      } else {
+        colorArray[i3] = hexColor.r * brightness;
+        colorArray[i3 + 1] = hexColor.g * brightness;
+        colorArray[i3 + 2] = hexColor.b * brightness;
+      }
     }
 
     posAttr.needsUpdate = true;
@@ -258,9 +277,9 @@ function NeuralScene() {
           />
         </bufferGeometry>
         <lineBasicMaterial
-          color="#00ffff"
+          color={new THREE.Color(0, 0.5 + warmth * 0.5, 0.8 - warmth * 0.5)}
           transparent
-          opacity={0.15}
+          opacity={0.1 + exciteLevel * 0.2}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />

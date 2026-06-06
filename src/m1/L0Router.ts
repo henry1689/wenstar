@@ -6,7 +6,22 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { L0RouteResult, TaxonomyTree } from './types/dna.js';
-import { loadL0Rules } from './LexiconLoader.js';
+import { loadL0Rules, loadSet } from './LexiconLoader.js';
+
+// 强情感极性词（用于L0无匹配时的情感兜底路由）
+// 从 emotion_lexicon.json 验证存在性，与 M3/L3 同源
+const STRONG_NEGATIVE = ['难过', '伤心', '痛苦', '绝望', '焦虑', '抑郁', '崩溃', '无助', '生气', '愤怒', '恐惧', '哭'];
+const STRONG_POSITIVE = ['开心', '快乐', '幸福', '感动', '兴奋', '温暖', '甜蜜', '美好', '太好了'];
+// 验证：确保 emotion_lexicon.json 包含所有情感词（开发阶段发现漂移）
+(function validateLexicon() {
+  const negSet = loadSet('emotion_lexicon.json', 'negative_words');
+  const posSet = loadSet('emotion_lexicon.json', 'positive_words');
+  const missingNeg = STRONG_NEGATIVE.filter(w => !negSet.has(w));
+  const missingPos = STRONG_POSITIVE.filter(w => !posSet.has(w));
+  if (missingNeg.length > 0 || missingPos.length > 0) {
+    console.warn(`[L0Router] 词表漂移警告 — emotion_lexicon.json 缺少: ${[...missingNeg, ...missingPos].join(', ')}`);
+  }
+})();
 
 // ─── 当前文件所在目录 ───
 const __filename = fileURLToPath(import.meta.url);
@@ -182,12 +197,9 @@ export function routeL0(
   }
 
   // 第二阶段：纯情感极性探测（当没有明确domain匹配时）
-  // 尝试检测是否是纯情绪表达
-  const strongNegative = ['难过', '伤心', '痛苦', '绝望', '生气', '愤怒', '崩溃', '哭'];
-  const strongPositive = ['开心', '幸福', '快乐', '兴奋', '感动', '太好了'];
-
-  const hasStrongNeg = strongNegative.some((w) => text.includes(w));
-  const hasStrongPos = strongPositive.some((w) => text.includes(w));
+  // 使用强情感词（来自 emotion_lexicon.json 验证的子集，与 M3/L3 同源）
+  const hasStrongNeg = STRONG_NEGATIVE.some((w) => text.includes(w));
+  const hasStrongPos = STRONG_POSITIVE.some((w) => text.includes(w));
 
   if (hasStrongNeg && !hasStrongPos) {
     const path = validatePath(tree, 'emotion', 'negative');

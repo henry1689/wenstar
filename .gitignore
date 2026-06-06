@@ -1,32 +1,28 @@
-# Dependencies
-node_modules/
 
 # Build output
-dist/
-
-# Runtime data
-data/
-*.tmp
-
-# IDE
-.idea/
-.vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-.vs/
-
-# OS
-.DS_Store
-Thumbs.db
-
+# Dependencies
 # Environment
+# IDE
+# Logs
+# OS
+# Runtime data
+*.log
+*.njsproj
+*.ntvs*
+*.sln
+*.suo
+*.sw?
+*.tmp
+.DS_Store
 .env
 .env.local
-
-# Logs
-*.log
-npm-debug.log*
+.idea/
 .sandbox-data/
+.vs/
+.vscode/
+Thumbs.db
+data/
+dist/
+node_modules/
+npm-debug.log*
+voxcpm2/

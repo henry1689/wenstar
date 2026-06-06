@@ -8,7 +8,8 @@
 import { useChatStore } from '../store/chatStore';
 import { pushChatModules } from './thoughtService';
 
-const API_BASE = '/api';
+// 直接连接后端（不走 Vite proxy，避免端口不一致问题）
+const API_BASE = 'http://localhost:3001/api';
 
 interface ChatResponse {
   reply: string;
@@ -19,6 +20,7 @@ interface ChatResponse {
   m5: any;
   emotionalFlash?: boolean;
   triggeredMemoryId?: string | null;
+  audio_url?: string | null;
 }
 
 /** 发送消息给玉瑶 */
@@ -31,7 +33,7 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: message.trim() }),
+      body: JSON.stringify({ message: message.trim(), tts: true }),
     });
 
     if (!res.ok) {
@@ -43,8 +45,19 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     store.addMessage('assistant', data.reply);
     store.setTyping(false);
 
+    // 播放 TTS 语音
+    if (data.audio_url) {
+      try {
+        const audioUrl = data.audio_url.startsWith('/') ? `http://localhost:3001${data.audio_url}` : data.audio_url;
+        const audio = new Audio(audioUrl);
+        audio.volume = 0.8;
+        audio.play().catch(() => {});
+      } catch {}
+    }
+
     // 将 M1-M5 分析结果注入思维流
     pushChatModules(data);
+    if (data.m3) useChatStore.getState().setM3Data(data.m3);
 
     // 情绪传染 flash
     if (data.emotionalFlash) {

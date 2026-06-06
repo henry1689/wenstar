@@ -17,11 +17,13 @@ interface NeuralStore {
   fps: number;
   particleCount: number;
   connectionCount: number;
+  somaticIntensity: number;
 
   // 动作
   setNeuralData: (data: NeuralData) => void;
   setMousePosition: (x: number, y: number) => void;
   setMouseInView: (inView: boolean) => void;
+  setSomaticIntensity: (val: number) => void;
   setFps: (fps: number) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -84,6 +86,7 @@ export const useNeuralStore = create<NeuralStore>((set) => ({
   fps: 0,
   particleCount: 0,
   connectionCount: 0,
+  somaticIntensity: 0,
 
   backendHealth: null,
   setBackendHealth: (health) => set({ backendHealth: health }),
@@ -98,6 +101,7 @@ export const useNeuralStore = create<NeuralStore>((set) => ({
 
   setMousePosition: (x, y) => set({ mousePosition: { x, y } }),
   setMouseInView: (inView) => set({ mouseInView: inView }),
+  setSomaticIntensity: (val) => set({ somaticIntensity: val }),
   setFps: (fps) => set({ fps }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error, isLoading: false }),

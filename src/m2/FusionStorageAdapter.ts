@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DNA } from '../m1/types/dna.js';
+import type { DNA, LeafZone } from '../m1/types/dna.js';
 import type { Perception24D } from '../m3/types/perception.js';
 import type { WriteResult, ReadResult, QueryOptions, StorageStatus } from './types/index.js';
 import { SQLiteAdapter } from './SQLiteAdapter.js';
@@ -232,7 +232,7 @@ export class FusionStorageAdapter {
       seq_pos: record.seq_pos,
       locus_path: record.locus_path,
       taxonomy_version: '1.0',
-      leaf_zone: record.leaf_zone as any,
+      leaf_zone: record.leaf_zone as LeafZone,
       ref: `seq_${String(record.seq_pos).padStart(6, '0')}`,
       entity_genes: record.entity_genes,
       raw_input: record.raw_input,

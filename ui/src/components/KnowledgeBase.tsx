@@ -15,11 +15,16 @@ export default function KnowledgeBase() {
   const [keyword, setKeyword] = useState('');
   const [dragging, setDragging] = useState(false);
 
+  /** 显示用户文档（过滤掉自动生成的 research/query/important 类型） */
+  const VISIBLE_TYPES = ['text','txt','md','pdf','docx','xlsx','csv','jpg','png','person','protocol'];
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = keyword ? await searchKnowledge(keyword) : await fetchKnowledgeList(20);
-      setItems(data);
+      const data = await fetchKnowledgeList(500);
+      // 有搜索词时不过滤，无搜索词时只显示用户文档
+      const filtered = keyword ? data : data.filter(i => VISIBLE_TYPES.includes(i.source_type));
+      setItems(filtered);
     } catch { setItems([]); }
     setLoading(false);
   }, [keyword]);

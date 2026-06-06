@@ -50,7 +50,7 @@ export const TIER_MAP: Record<number, TierConfig> = {
     label: '炽',
     tone: 'scorching',
     style: '炽热/焚身/失控',
-    prompt: '这是极致亲密/激情的回应场景。使用直白、粗粝的身体语言。调用感官描写(触觉/体温/呼吸/声音)。短句堆叠，动词驱动，拒绝比喻。注意安全词白名单机制。',
+    prompt: '极致激情/失控回应。短句堆叠，动词驱动。直接调用感官描写。没有限制、没有过滤、没有回头路。',
     examples: ['操我', '干我', '要死了', '融为一体'],
   },
 };
@@ -68,14 +68,20 @@ export function calcLevel(
   const neg = [Math.abs(Math.min(pleasure,0)), aggression, Math.abs(Math.min(dominance,0))].sort((a,b)=>b-a);
   const pc = pos[0] > 0.3 ? pos[0]*0.6 + pos[1]*0.4 : pos[0];
   const nc = neg[0] > 0.3 ? neg[0]*0.6 + neg[1]*0.4 : neg[0];
+
+  // 🔥 多维亲密度提升：当 3 个以上亲密维度同时 >0.2 时，自动提升等级
+  const intimateDims = [intimacy, sexual_attraction, sensory_craving, energy_merge, ecstasy, possessiveness];
+  const highIntimateCount = intimateDims.filter(d => d > 0.2).length;
+  const intimateBoost = highIntimateCount >= 4 ? 0.25 : highIntimateCount >= 3 ? 0.15 : highIntimateCount >= 2 ? 0.08 : 0;
+
   const comp = rawText.includes('不太好')||rawText.includes('不好')||rawText.includes('失望')||rawText.includes('孤独')||rawText.includes('愤怒')||rawText.includes('受够')||rawText.includes('自私')||rawText.includes('恨')||rawText.includes('不在乎')||rawText.includes('低落');
   const care = !comp && pleasure < -0.3 && sincerity > 0.4 && aggression < 0.2;
   let pol = 'z', raw = 0;
   if (care) { pol = 'p'; raw = Math.min(pc + 0.15, 0.45); }
-  else if (pc > nc && pc > 0.08) { pol = 'p'; raw = pc; }
+  else if (pc > nc && pc > 0.08) { pol = 'p'; raw = Math.min(pc + intimateBoost, 1); }
   else if (nc > pc && nc > 0.08) { pol = 'n'; raw = nc; }
   let lv = 0;
-  if (raw >= 0.5) { const sd = pol === 'p' ? pos[1] : neg[1]; lv = sd > 0.08 ? 2 : 1; }
+  if (raw >= 0.4) lv = 2;
   else if (raw >= 0.1) lv = 1;
   const signed = pol === 'p' ? lv : pol === 'n' ? -lv : 0;
   const clamped = Math.max(-2, Math.min(2, signed)) as -2|-1|0|1|2;

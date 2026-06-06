@@ -43,6 +43,7 @@ export interface ChatContext {
   consolidationQueue: ConsolidationQueue;
   conversationHistory: ConversationTurn[];
   m8: M8FusionAdapter;
+  somaticMemory?: any;
   saveConversationHistory: () => void;
   getSelfModel: () => SelfModelV1;
 }
@@ -163,6 +164,16 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[EmotionContagion] 检索失败:', err); }
 
+    // 躯体上下文注入（SomaticMemory → LLM 上下文 — 五重铁律协议③）
+    try {
+      if (ctx.somaticMemory) {
+        const somaticContext = ctx.somaticMemory.getActiveSomaticContext();
+        if (somaticContext) {
+          enrichedHistory.push({ role: 'assistant', content: `[躯体感知: ${somaticContext}]` });
+        }
+      }
+    } catch (err) { console.warn('[SomaticContext] 注入失败:', err); }
+
     // 知识库检索
     let knowledgeBaseText = '';
     try {
@@ -274,6 +285,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     ctx.conversationHistory.push({ role: 'assistant', content: reply });
     ctx.saveConversationHistory();
 
+    // 躯体感知记录（SomaticMemory — 五重铁律协议③）
+    try {
+      if (ctx.somaticMemory) {
+        ctx.somaticMemory.record(message);
+      }
+    } catch (err) { console.warn('[Somatic] 记录失败:', err); }
+
     const cl = decision.enhanced.calcium_level;
     const allDims: any[] = [];
     for (const [key, meta] of Object.entries(PERC_LABELS)) {
@@ -306,9 +324,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       const needs = ctx.topicTracker.getTopicsNeedingResearch();
       if (needs.length > 0) {
         const keyword = needs[0];
-        researchTopic(keyword, ctx.storage.getSQLite()).then(result => {
-          if (result) { ctx.topicTracker.markResearched(keyword, result.entryId); console.log(`[DreamResearch] ✅ 研究了「${keyword}」`); }
-        }).catch(err => console.warn(`[DreamResearch] 研究失败:`, err));
+        // 跳过亲密/脏话关键词（避免"操死""弄坏"等污染知识库）
+        const intimateSkip = ['操','干','日','插','顶','舔','吸','咬','揉','捏','掐','摸','吻','骚','浪','奶','鸡','肉','屌','阴','淫','湿','水','抱','贴','蹭','扭','喘'];
+        if (!intimateSkip.some(w => keyword.includes(w))) {
+          researchTopic(keyword, ctx.storage.getSQLite()).then(result => {
+            if (result) { ctx.topicTracker.markResearched(keyword, result.entryId); console.log(`[DreamResearch] ✅ 研究了「${keyword}」`); }
+          }).catch(err => console.warn('[DreamResearch] 失败:', err));
+        }
       }
     } catch (err) { console.warn('[TopicTracker] 失败:', err); }
 

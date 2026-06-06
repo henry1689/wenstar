@@ -63,9 +63,12 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
 
     let frame = 0;
     let animId: number;
+    let smoothArousal = arousal || 0;
 
     const draw = () => {
-      frame += 0.008; // 原速1/3
+      frame += 0.008;
+      smoothArousal += ((arousal || 0) - smoothArousal) * ((arousal || 0) > smoothArousal ? 0.08 : 0.007);
+      const ea = Math.max(0.15, smoothArousal);
 
       // 每帧平滑过渡颜色
       const t = 0.04;
@@ -77,8 +80,10 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
       const baseY = HEIGHT / 2;
-      const amplitude = Math.max(5, (arousal || 0.3) * 22);
-      const freq = active ? 0.05 : 0.03;
+      const ampScale = 0.5 + ea * 2.8;
+      const amplitude = Math.max(8, ampScale * 22);
+      const freqBase = 0.02 + ea * 0.08;
+      const freq = active ? freqBase * 1.5 : freqBase;
 
       // 计算拖尾点
       const lastX = WIDTH;
@@ -90,7 +95,7 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       if (trail.length > TRAIL_LENGTH) trail.shift();
 
       // ① arousal 边缘红光：当唤醒度 > 0.7 时叠加
-      const intense = arousal > 0.7;
+      const intense = ea > 0.4;
       if (intense) {
         ctx.beginPath();
         ctx.moveTo(0, baseY);
@@ -119,7 +124,7 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       ctx.strokeStyle = color + '44';
       ctx.lineWidth = 8;
       ctx.shadowColor = color;
-      ctx.shadowBlur = intense ? 50 : 30;
+      ctx.shadowBlur = intense ? 70 : 30;
       ctx.stroke();
 
       // ② 主波（核心能量管）

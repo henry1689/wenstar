@@ -53,7 +53,7 @@ export class ConsolidationQueue {
 
       let promoted = 0;
       for (const candidate of candidates) {
-        if (candidate.calcium_score >= 0.45 && candidate.effective_strength > 0.2) {
+        if (candidate.calcium_score >= 0.25 && candidate.effective_strength > 0.2) {
           const success = sqlite.promoteToLandmark(
             candidate.id,
             candidate.calcium_score >= 0.7 ? '重要时刻' : '日常印记',
