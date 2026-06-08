@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>仿生智脑 · 景幻监控台</title>
+<style>
+  :root {
+    --bg: #1a1b26;
+    --card: #24253a;
+    --border: #2f3048;
+    --text: #c9d1d9;
+    --text-dim: #6e7b8a;
+    --accent: #7aa2f7;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --gold: #e6b450;
+    --diamond: #9b6bff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  /* ── 头部 ── */
+  .header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    margin-bottom: 24px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-size: 22px; font-weight: 600;
+    background: linear-gradient(135deg, var(--accent), var(--diamond));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .header .sub {
+    font-size: 13px; color: var(--text-dim);
+    margin-top: 4px; -webkit-text-fill-color: var(--text-dim);
+  }
+  .header .time {
+    font-size: 13px; color: var(--text-dim); text-align: right;
+  }
+
+  /* ── 网格 ── */
+  .grid { display: grid; gap: 16px; margin-bottom: 20px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+  /* ── 卡片 ── */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card-title {
+    font-size: 12px; color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 8px;
+  }
+  .card-value {
+    font-size: 28px; font-weight: 700; margin-bottom: 4px;
+  }
+  .card-sub {
+    font-size: 12px; color: var(--text-dim);
+  }
+
+  /* ── 服务指示器 ── */
+  .service-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .service-row:last-child { border-bottom: none; }
+  .service-name { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .service-name .icon { font-size: 16px; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 10px;
+    font-size: 12px; font-weight: 500;
+  }
+  .badge-ok { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-warn { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .badge-err { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-off { background: rgba(110,123,138,0.15); color: var(--text-dim); }
+
+  /* ── 统计格子 ── */
+  .stat-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat-item {
+    flex: 1; min-width: 100px; text-align: center;
+    padding: 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+  }
+  .stat-item .num { font-size: 24px; font-weight: 700; }
+  .stat-item .label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+  /* ── 事件列表 ── */
+  .event-item {
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .event-item:last-child { border-bottom: none; }
+  .event-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    margin-top: 6px; flex-shrink: 0;
+  }
+  .event-body { flex: 1; }
+  .event-type {
+    font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .event-facts { font-size: 14px; margin: 2px 0; }
+  .event-meta { font-size: 12px; color: var(--text-dim); }
+  .event-tag {
+    display: inline-block; padding: 1px 8px; border-radius: 4px;
+    font-size: 11px; background: rgba(122,162,247,0.1); color: var(--accent);
+    margin-right: 4px;
+  }
+
+  /* ── 空状态 ── */
+  .empty {
+    text-align: center; padding: 32px 0;
+    color: var(--text-dim); font-size: 14px;
+  }
+
+  /* ── 操作栏 ── */
+  .actions {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .btn {
+    padding: 8px 18px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); font-size: 13px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover {
+    border-color: var(--accent); background: rgba(122,162,247,0.08);
+  }
+  .btn-primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .btn-primary:hover { opacity: 0.85; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    padding: 12px 20px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    font-size: 13px; opacity: 0; transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 768px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🏛️ 景幻监控台</h1>
+    <div class="sub">仿生智脑 · Bionic Cognitive Engine · v1.1</div>
+  </div>
+  <div class="time">
+    <div id="clock"></div>
+    <div style="font-size:12px;margin-top:4px">
+      上次刷新: <span id="lastRefresh">-</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── 服务健康 ── -->
+<div class="grid grid-3">
+  <div class="card">
+    <div class="card-title">🔌 API 状态</div>
+    <div id="apiStatus" class="card-value">检查中...</div>
+    <div class="card-sub">仿生智脑服务</div>
+  </div>
+  <div class="card">
+    <div class="card-title">🐘 数据库</div>
+    <div id="dbStatus" class="card-value">检查中...</div>
+    <div class="card-sub">PostgreSQL 16</div>
+  </div>
+  <div class="card">
+    <div class="card-title">🔍 向量库</div>
+    <div id="qdrantStatus" class="card-value">检查中...</div>
+    <div class="card-sub">Qdrant · 24D 情感向量</div>
+  </div>
+</div>
+
+<!-- ── 三库统计 ── -->
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-title">📦 三库统计</div>
+    <div class="stat-grid" id="vaultStats">
+      <div class="stat-item">
+        <div class="num" id="alluvialCount">-</div>
+        <div class="label">砂金库 ⛏️</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" id="goldCount">-</div>
+        <div class="label">金库 📚</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" id="diamondCount">-</div>
+        <div class="label">黑钻库 💎</div>
+      </div>
+      <div class="stat-item">
+        <div class="num" id="totalCount">-</div>
+        <div class="label">总计</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⚙️ 服务详情</div>
+    <div id="serviceDetails">
+      <div class="service-row">
+        <span class="service-name">🐳 API</span>
+        <span id="detailApi" class="badge badge-off">检查中</span>
+      </div>
+      <div class="service-row">
+        <span class="service-name">🐘 PostgreSQL</span>
+        <span id="detailDb" class="badge badge-off">检查中</span>
+      </div>
+      <div class="service-row">
+        <span class="service-name">🔍 Qdrant</span>
+        <span id="detailQdrant" class="badge badge-off">检查中</span>
+      </div>
+      <div class="service-row">
+        <span class="service-name">📦 MinIO</span>
+        <span id="detailMinio" class="badge badge-off">未检查</span>
+      </div>
+      <div class="service-row">
+        <span class="service-name">⚡ Redis</span>
+        <span id="detailRedis" class="badge badge-off">未检查</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 操作栏 ── -->
+<div class="actions">
+  <button class="btn btn-primary" onclick="refreshAll()">🔄 刷新</button>
+  <button class="btn" onclick="triggerRefine()">🧠 手动提炼</button>
+</div>
+
+<!-- ── 黑钻事件 ── -->
+<div class="card" style="margin-bottom:20px">
+  <div class="card-title">💎 黑钻事件 · 精选歌单</div>
+  <div id="diamondList">
+    <div class="empty">加载中...</div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 核心
+// ═══════════════════════════════════════════════════════════════
+
+const API = 'http://localhost:7200/api/v1';
+
+async function fetchJSON(url, opts = {}) {
+  const resp = await fetch(url, {
+    headers: { 'Accept': 'application/json', ...opts.headers },
+    ...opts,
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+// ── 刷新 ——
+
+async function refreshAll() {
+  document.getElementById('lastRefresh').textContent = new Date().toLocaleTimeString('zh-CN');
+  await Promise.all([
+    refreshHealth(),
+    refreshStats(),
+    refreshDiamonds(),
+  ]);
+}
+
+// ── 健康检查 ——
+
+async function refreshHealth() {
+  const apiEl = document.getElementById('apiStatus');
+  const dbEl = document.getElementById('dbStatus');
+  const qdEl = document.getElementById('qdrantStatus');
+  const detailApi = document.getElementById('detailApi');
+  const detailDb = document.getElementById('detailDb');
+  const detailQd = document.getElementById('detailQdrant');
+
+  try {
+    const h = await fetchJSON(`${API}/health`);
+
+    // API
+    const apiOk = h.status === 'ok';
+    apiEl.textContent = apiOk ? '✅ 正常' : '❌ 异常';
+    apiEl.style.color = apiOk ? 'var(--green)' : 'var(--red)';
+    detailApi.textContent = '正常';
+    detailApi.className = 'badge badge-ok';
+
+    // DB
+    const dbOk = h.services?.database === 'ok';
+    dbEl.textContent = dbOk ? '✅ 已连接' : '❌ 断开';
+    dbEl.style.color = dbOk ? 'var(--green)' : 'var(--red)';
+    detailDb.textContent = dbOk ? '已连接' : h.services?.database || '未知';
+    detailDb.className = `badge ${dbOk ? 'badge-ok' : 'badge-err'}`;
+
+    // Qdrant
+    const qdOk = h.services?.qdrant === 'ok';
+    qdEl.textContent = qdOk ? '✅ 已连接' : (h.services?.qdrant === 'unavailable' ? '⚠️ 未就绪' : '❌ 断开');
+    qdEl.style.color = qdOk ? 'var(--green)' : (h.services?.qdrant === 'unavailable' ? 'var(--yellow)' : 'var(--red)');
+    detailQd.textContent = qdOk ? '已连接' : (h.services?.qdrant || '不可用');
+    detailQd.className = `badge ${qdOk ? 'badge-ok' : 'badge-warn'}`;
+
+  } catch (e) {
+    apiEl.textContent = '❌ 无法连接';
+    apiEl.style.color = 'var(--red)';
+    dbEl.textContent = '-';
+    qdEl.textContent = '-';
+    showToast(`无法连接到 API: ${e.message}`);
+  }
+}
+
+// ── 统计 ——
+
+async function refreshStats() {
+  try {
+    const s = await fetchJSON(`${API}/stats`);
+    document.getElementById('alluvialCount').textContent = s.alluvial ?? 0;
+    document.getElementById('goldCount').textContent = s.gold ?? 0;
+    document.getElementById('diamondCount').textContent = s.black_diamond ?? 0;
+    document.getElementById('totalCount').textContent = s.total ?? 0;
+
+    // 更新服务详情里的 MinIO/Redis 示意
+    const minioEl = document.getElementById('detailMinio');
+    const redisEl = document.getElementById('detailRedis');
+    minioEl.textContent = '就绪';
+    minioEl.className = 'badge badge-ok';
+    redisEl.textContent = '就绪';
+    redisEl.className = 'badge badge-ok';
+
+  } catch (e) {
+    console.error('Stats error:', e);
+  }
+}
+
+// ── 黑钻事件 ——
+
+async function refreshDiamonds() {
+  const el = document.getElementById('diamondList');
+  try {
+    const data = await fetchJSON(`${API}/diamonds?limit=10`);
+    if (!Array.isArray(data) || data.length === 0) {
+      el.innerHTML = '<div class="empty">暂无黑钻事件。对话经过提炼后会在这里展示 🌙</div>';
+      return;
+    }
+
+    el.innerHTML = data.map(ev => {
+      const es = ev.emotional_spectrum || {};
+      const emotion = es.dominant_emotion || '';
+      const sentiment = es.user_sentiment || '';
+
+      const dotColor = ev.is_active ? 'var(--green)' : 'var(--text-dim)';
+      const tags = (ev.tags || []).map(t => `<span class="event-tag">${t}</span>`).join('');
+
+      return `
+        <div class="event-item">
+          <div class="event-dot" style="background:${dotColor}"></div>
+          <div class="event-body">
+            <div class="event-type">${ev.event_type} · ${ev.decay_days || 0}天前</div>
+            <div class="event-facts">${(ev.core_facts || '').slice(0, 120)}</div>
+            <div class="event-meta">
+              ${emotion ? `😊 ${emotion}` : ''}
+              ${sentiment ? `· ${sentiment}` : ''}
+              ${ev.is_active ? '· <span style="color:var(--green)">活跃</span>' : '· <span style="color:var(--text-dim)">降级</span>'}
+            </div>
+            <div style="margin-top:4px">${tags}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+  } catch (e) {
+    el.innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
+  }
+}
+
+// ── 手动提炼 ——
+
+async function triggerRefine() {
+  const btn = event.target;
+  btn.textContent = '⏳ 提炼中...';
+  btn.disabled = true;
+  try {
+    const r = await fetchJSON(`${API}/refine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'max_items=5',
+    });
+    showToast(`🧠 提炼完成: 处理 ${r.processed} 条, 晋升 ${r.promoted} 条`);
+    await refreshAll();
+  } catch (e) {
+    showToast(`❌ 提炼失败: ${e.message}`);
+  }
+  btn.textContent = '🧠 手动提炼';
+  btn.disabled = false;
+}
+
+// ── 辅助 ——
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+// ── 自动刷新 ——
+setInterval(refreshAll, 15000);
+refreshAll();
+updateClock();
+setInterval(updateClock, 1000);
+
+</script>
+</body>
+</html>

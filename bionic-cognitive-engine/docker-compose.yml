@@ -1,0 +1,154 @@
+# ═══════════════════════════════════════════════════════════════
+# 仿生智脑 (Bionic Cognitive Engine) - Docker Compose
+# ═══════════════════════════════════════════════════════════════
+# 一键拉起全部基础设施服务：
+#   PostgreSQL (16) - 主数据库
+#   Redis (7)       - 任务队列 Broker
+#   Qdrant          - 向量数据库
+#   MinIO           - 对象存储
+#   API (FastAPI)   - REST 服务 (端口 7200)
+#   Celery Worker   - 异步任务
+#   Celery Beat     - 定时调度
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ── PostgreSQL 主数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: bionic-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bionic
+      POSTGRES_USER: bionic
+      POSTGRES_PASSWORD: bionic_secret_2026
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bionic"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 任务队列 ──
+  redis:
+    image: redis:7-alpine
+    container_name: bionic-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Qdrant 向量数据库 ──
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: bionic-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── MinIO 对象存储 ──
+  minio:
+    image: minio/minio:latest
+    container_name: bionic-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: bionic_admin
+      MINIO_ROOT_PASSWORD: bionic_secret_2026
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── FastAPI 服务 ──
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bionic-api
+    restart: unless-stopped
+    ports:
+      - "7200:7200"
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+      MINIO_HOST: minio
+      LLM_API_URL: ${LLM_API_URL:-http://host.docker.internal:3000/api/chat}
+      API_SECRET_KEY: ${API_SECRET_KEY:-change-me-to-a-random-64-char-string}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+
+  # ── Celery Worker ──
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: bionic-celery-worker
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+      MINIO_HOST: minio
+      LLM_API_URL: ${LLM_API_URL:-http://host.docker.internal:3000/api/chat}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+
+  # ── Celery Beat 定时调度 ──
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: bionic-celery-beat
+    restart: unless-stopped
+    command: celery -A tasks.celery_app beat -l info
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    depends_on:
+      - redis
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  minio_data:

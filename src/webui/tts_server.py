@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-TTS Server — Edge-TTS 语音合成桥接服务
+TTS Server — 玉瑶语音合成服务
 
-为 WenStar 玉瑶聊天系统提供 TTS 功能。
-使用 Microsoft Edge 免费 TTS 引擎（无需 GPU，离线可用）。
+支持双引擎：
+  • Edge-TTS （默认）— 微软云端，音质佳，需联网
+  • ChatTTS（本地） — 开源本地模型，完全离线
 
 用法:
   python tts_server.py [port]
 
 环境变量:
-  TTS_VOICE=zh-CN-XiaoxiaoNeural   # 中文女声（默认）
-  TTS_VOICE=zh-CN-YunxiNeural      # 中文男声
-  TTS_VOICE=zh-CN-XiaoyiNeural     # 中文情感女声
+  TTS_ENGINE=edge|chattts   # 默认引擎
+  TTS_VOICE=...              # 默认声音
+  CHATTTS_MODEL_PATH         # ChatTTS 模型路径（自动检测）
 """
 import json
 import os
@@ -19,8 +20,10 @@ import sys
 import uuid
 import argparse
 import asyncio
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from functools import partial
 
 # ── 路径 ──
 SCRIPT_DIR = Path(__file__).parent
@@ -28,62 +31,97 @@ DATA_DIR = SCRIPT_DIR / ".." / ".." / "data" / "webui"
 AUDIO_DIR = DATA_DIR / "audio"
 
 # ── 配置 ──
-TTS_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
-RATE = os.environ.get("TTS_RATE", "+0%")   # 语速: -50% ~ +50%
-VOLUME = os.environ.get("TTS_VOLUME", "+0%")  # 音量: -50% ~ +50%
+TTS_ENGINE = os.environ.get("TTS_ENGINE", "edge")  # edge | chattts
+TTS_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoyiNeural")
+RATE = os.environ.get("TTS_RATE", "+0%")
+VOLUME = os.environ.get("TTS_VOLUME", "+0%")
 
-# 中文声音列表
-CHINESE_VOICES = [
-    {"id": "zh-CN-XiaoxiaoNeural", "name": "晓晓", "gender": "女", "locale": "普通话"},
-    {"id": "zh-CN-XiaoyiNeural", "name": "晓伊", "gender": "女", "locale": "普通话（情感丰富）"},
-    {"id": "zh-CN-YunjianNeural", "name": "云健", "gender": "男", "locale": "普通话"},
-    {"id": "zh-CN-YunxiNeural", "name": "云希", "gender": "男", "locale": "普通话（温柔）"},
-    {"id": "zh-CN-YunxiaNeural", "name": "云夏", "gender": "男", "locale": "普通话"},
-    {"id": "zh-CN-YunyangNeural", "name": "云扬", "gender": "男", "locale": "普通话（阳光）"},
-    {"id": "zh-CN-liaoning-XiaobeiNeural", "name": "晓北", "gender": "女", "locale": "东北话"},
-    {"id": "zh-CN-shaanxi-XiaoniNeural", "name": "晓妮", "gender": "女", "locale": "陕西话"},
-    {"id": "zh-HK-HiuGaaiNeural", "name": "晓佳", "gender": "女", "locale": "粤语"},
-    {"id": "zh-HK-HiuMaanNeural", "name": "晓文", "gender": "女", "locale": "粤语"},
-    {"id": "zh-HK-WanLungNeural", "name": "云龙", "gender": "男", "locale": "粤语"},
-    {"id": "zh-TW-HsiaoChenNeural", "name": "晓臻", "gender": "女", "locale": "台湾国语"},
-    {"id": "zh-TW-YunJheNeural", "name": "云哲", "gender": "男", "locale": "台湾国语"},
-    {"id": "zh-TW-HsiaoYuNeural", "name": "晓雨", "gender": "女", "locale": "台湾国语"},
+# ChatTTS 模型路径（自动检测）
+CHATTTS_PATH = os.environ.get(
+    "CHATTTS_MODEL_PATH",
+    str(Path(SCRIPT_DIR, "..", "..", "voxcpm2", "models", "chattts").resolve())
+)
+_CHAT_MODEL = None  # 懒加载
+
+# ── 声音列表 ──
+EDGE_VOICES = [
+    {"id": "zh-CN-XiaoxiaoNeural", "name": "晓晓", "gender": "女", "locale": "普通话", "engine": "edge"},
+    {"id": "zh-CN-XiaoyiNeural", "name": "晓伊", "gender": "女", "locale": "普通话（情感丰富）", "engine": "edge"},
+    {"id": "zh-CN-YunjianNeural", "name": "云健", "gender": "男", "locale": "普通话", "engine": "edge"},
+    {"id": "zh-CN-YunxiNeural", "name": "云希", "gender": "男", "locale": "普通话（温柔）", "engine": "edge"},
+    {"id": "zh-CN-YunxiaNeural", "name": "云夏", "gender": "男", "locale": "普通话", "engine": "edge"},
+    {"id": "zh-CN-YunyangNeural", "name": "云扬", "gender": "男", "locale": "普通话（阳光）", "engine": "edge"},
+    {"id": "zh-CN-liaoning-XiaobeiNeural", "name": "晓北", "gender": "女", "locale": "东北话", "engine": "edge"},
+    {"id": "zh-CN-shaanxi-XiaoniNeural", "name": "晓妮", "gender": "女", "locale": "陕西话", "engine": "edge"},
+    {"id": "zh-HK-HiuGaaiNeural", "name": "晓佳", "gender": "女", "locale": "粤语", "engine": "edge"},
+    {"id": "zh-HK-HiuMaanNeural", "name": "晓文", "gender": "女", "locale": "粤语", "engine": "edge"},
+    {"id": "zh-HK-WanLungNeural", "name": "云龙", "gender": "男", "locale": "粤语", "engine": "edge"},
+    {"id": "zh-TW-HsiaoChenNeural", "name": "晓臻", "gender": "女", "locale": "台湾国语", "engine": "edge"},
+    {"id": "zh-TW-YunJheNeural", "name": "云哲", "gender": "男", "locale": "台湾国语", "engine": "edge"},
+    {"id": "zh-TW-HsiaoYuNeural", "name": "晓雨", "gender": "女", "locale": "台湾国语", "engine": "edge"},
 ]
 
+CHATTTS_VOICES = [
+    {"id": "chattts_default", "name": "ChatTTS 默认", "gender": "女", "locale": "普通话（本地模型）", "engine": "chattts"},
+]
 
-async def generate_tts(text: str) -> dict:
-    """生成语音，返回音频文件信息"""
+ALL_VOICES = EDGE_VOICES + CHATTTS_VOICES
+
+
+def _load_chattts():
+    """懒加载 ChatTTS 模型（线程安全）"""
+    global _CHAT_MODEL
+    if _CHAT_MODEL is not None:
+        return _CHAT_MODEL
+    print("[ChatTTS] 加载本地模型中...")
+    os.environ["CHATTTS_MODEL_PATH"] = CHATTTS_PATH
+    import ChatTTS
+    chat = ChatTTS.Chat()
+    chat.load(device="cuda", source="local", custom_path=CHATTTS_PATH)
+    _CHAT_MODEL = chat
+    print(f"[ChatTTS] 加载完成 (模型路径: {CHATTTS_PATH})")
+    return _CHAT_MODEL
+
+
+async def generate_edge_tts(text: str) -> dict:
+    """Edge-TTS 云端合成"""
     import edge_tts
-
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-
     filename = f"tts_{uuid.uuid4().hex[:12]}.mp3"
     filepath = AUDIO_DIR / filename
-
-    communicate = edge_tts.Communicate(
-        text,
-        TTS_VOICE,
-        rate=RATE,
-        volume=VOLUME,
-    )
+    communicate = edge_tts.Communicate(text, TTS_VOICE, rate=RATE, volume=VOLUME)
     await communicate.save(str(filepath))
-
-    duration = 0
     size = filepath.stat().st_size
-    # 粗略估算时长（MP3 约 16KB/秒）
-    if size > 0:
-        duration = size / 16000
-
     return {
-        "url": f"/audio/{filename}",
-        "filename": filename,
-        "duration_sec": round(duration, 1),
-        "size_bytes": size,
+        "url": f"/audio/{filename}", "filename": filename,
+        "duration_sec": round(size / 16000, 1), "size_bytes": size,
+    }
+
+
+def generate_chattts(text: str) -> dict:
+    """ChatTTS 本地合成"""
+    import numpy as np
+    import soundfile as sf
+    chat = _load_chattts()
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    wavs = chat.infer(text, use_decoder=True)
+    sr = 24000
+    audio = wavs[0]
+    # ChatTTS 可能返回 torch tensor 或 numpy array
+    if hasattr(audio, 'cpu'):
+        audio = audio.cpu().numpy()
+    filename = f"tts_{uuid.uuid4().hex[:12]}.wav"
+    filepath = AUDIO_DIR / filename
+    sf.write(str(filepath), audio, sr)
+    size = filepath.stat().st_size
+    return {
+        "url": f"/audio/{filename}", "filename": filename,
+        "duration_sec": round(len(audio) / sr, 1), "size_bytes": size,
     }
 
 
 class TTSHandler(BaseHTTPRequestHandler):
-    """HTTP 请求处理器"""
+    engine = TTS_ENGINE  # class-level default
 
     def _send_json(self, data: dict, status: int = 200):
         self.send_response(status)
@@ -101,11 +139,35 @@ class TTSHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send_json({"status": "ok", "engine": "edge-tts", "voice": TTS_VOICE})
+            self._send_json({
+                "status": "ok",
+                "engine": self.engine,
+                "voice": TTS_VOICE,
+                "chattts_loaded": _CHAT_MODEL is not None,
+            })
         elif self.path == "/voices":
-            self._send_json({"voices": CHINESE_VOICES, "current": TTS_VOICE})
+            self._send_json({"voices": ALL_VOICES, "current": TTS_VOICE, "engine": self.engine})
         elif self.path == "/":
-            html = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>YuYao TTS</title><style>body{font-family:sans-serif;background:#0d0812;color:#f0e0e8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.card{background:#1c1530;border:1px solid #2a1e35;border-radius:12px;padding:30px 40px;text-align:center}h1{color:#e8a0b4;font-size:20px;margin:0 0 8px 0}.status{color:#4ade80;font-size:13px;margin-bottom:12px}.info{color:#b8a0b0;font-size:11px;line-height:1.6}code{background:#0d0812;padding:2px 6px;border-radius:4px;font-size:11px}</style></head><body><div class="card"><h1>TTS Voice Service</h1><div class="status">Running</div><div class="info">Voice: <code>'+TTS_VOICE+'</code><br>POST <code>/tts</code> generate speech<br>GET <code>/health</code> health check</div></div></body></html>'
+            html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>YuYao TTS</title><style>
+body{{font-family:sans-serif;background:#0d0812;color:#f0e0e8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.card{{background:#1c1530;border:1px solid #2a1e35;border-radius:12px;padding:30px 40px;text-align:center}}
+h1{{color:#e8a0b4;font-size:20px;margin:0 0 8px 0}}
+.status{{color:#4ade80;font-size:13px;margin-bottom:12px}}
+.info{{color:#b8a0b0;font-size:11px;line-height:1.6}}
+code{{background:#0d0812;padding:2px 6px;border-radius:4px;font-size:11px}}
+.tag{{display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;margin-left:4px}}
+.tag-edge{{background:rgba(96,165,250,0.15);color:#60a5fa}}
+.tag-local{{background:rgba(74,222,128,0.15);color:#4ade80}}
+</style></head><body><div class="card">
+<h1>YuYao TTS Service</h1>
+<div class="status">Running</div>
+<div class="info">
+Engine: <code>{self.engine}</code>
+<span class="tag {"tag-local" if self.engine=="chattts" else "tag-edge"}">{self.engine}</span><br>
+Voice: <code>{TTS_VOICE}</code><br>
+POST <code>/tts</code> generate speech<br>
+GET <code>/health</code> health | <code>/voices</code> list
+</div></div></body></html>'''
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -115,46 +177,69 @@ class TTSHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):
-        if self.path == "/voice":
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length)
+
+        # ── 解码 body ──
+        def _decode_body(raw: bytes) -> dict:
+            for enc in ['utf-8', 'gbk', 'gb2312']:
+                try: return json.loads(raw.decode(enc))
+                except (UnicodeDecodeError, json.JSONDecodeError): continue
+            return json.loads(raw.decode('utf-8', errors='replace'))
+
+        # ── 切换引擎 ──
+        if self.path == "/engine":
             try:
-                length = int(self.headers.get("Content-Length", 0))
-                raw = self.rfile.read(length)
-                body = json.loads(raw.decode("utf-8"))
-                voice_id = body.get("voice", "").strip()
-                if not any(v["id"] == voice_id for v in CHINESE_VOICES):
-                    self._send_json({"error": f"不支持的声音: {voice_id}"}, 400)
+                body = _decode_body(raw)
+                engine = body.get("engine", "").strip()
+                if engine not in ("edge", "chattts"):
+                    self._send_json({"error": f"不支持的引擎: {engine}"}, 400)
                     return
-                global TTS_VOICE
-                TTS_VOICE = voice_id
-                print(f"[TTS] 切换到声音: {voice_id}")
-                self._send_json({"ok": True, "voice": TTS_VOICE})
+                TTSHandler.engine = engine
+                print(f"[TTS] 切换到引擎: {engine}")
+                self._send_json({"ok": True, "engine": engine})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
             return
 
+        # ── 切换声音 ──
+        if self.path == "/voice":
+            try:
+                body = _decode_body(raw)
+                voice_id = body.get("voice", "").strip()
+                if not any(v["id"] == voice_id for v in ALL_VOICES):
+                    self._send_json({"error": f"不支持的声音: {voice_id}"}, 400)
+                    return
+                global TTS_VOICE
+                TTS_VOICE = voice_id
+                # Edge voice → 自动切 edge 引擎
+                for v in ALL_VOICES:
+                    if v["id"] == voice_id:
+                        TTSHandler.engine = v.get("engine", "edge")
+                        break
+                print(f"[TTS] 切换到: {TTS_VOICE} (引擎: {TTSHandler.engine})")
+                self._send_json({"ok": True, "voice": TTS_VOICE, "engine": TTSHandler.engine})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        # ── TTS 生成 ──
         if self.path == "/tts":
             try:
-                length = int(self.headers.get("Content-Length", 0))
-                raw = self.rfile.read(length)
-                # 处理编码：尝试 UTF-8 和 GBK
-                body = None
-                for enc in ['utf-8', 'gbk', 'gb2312']:
-                    try:
-                        body = json.loads(raw.decode(enc))
-                        break
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        continue
-                if body is None:
-                    body = json.loads(raw.decode('utf-8', errors='replace'))
+                body = _decode_body(raw)
                 text = body.get("text", "").strip()
                 if not text:
                     self._send_json({"error": "text is required"}, 400)
                     return
-                # 异步转同步
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(generate_tts(text))
-                loop.close()
+
+                if self.engine == "chattts":
+                    result = generate_chattts(text)
+                else:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(generate_edge_tts(text))
+                    loop.close()
+
                 self._send_json(result)
             except Exception as e:
                 import traceback
@@ -164,22 +249,24 @@ class TTSHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     def log_message(self, format, *args):
-        """简化日志输出"""
         if "/health" not in args[0]:
             print(f"[TTS] {args[0]} {args[1]} {args[2]}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Edge-TTS Server")
+    parser = argparse.ArgumentParser(description="YuYao TTS Server")
     parser.add_argument("port", nargs="?", type=int, default=8765,
-                       help="监听端口 (默认: 8765)")
+                        help="监听端口 (默认: 8765)")
     args = parser.parse_args()
 
     server = HTTPServer(("0.0.0.0", args.port), TTSHandler)
-    print(f"[TTS] Edge-TTS 语音合成服务启动: http://localhost:{args.port}")
-    print(f"[TTS] 声音: {TTS_VOICE} | 语速: {RATE} | 音量: {VOLUME}")
-    print(f"[TTS]   POST /tts  - 生成语音 (JSON: {{'text':'...'}})")
-    print(f"[TTS]   GET  /health - 健康检查")
+    print(f"[TTS] 玉瑶语音合成服务启动: http://localhost:{args.port}")
+    print(f"[TTS]   引擎: {TTSHandler.engine} | 声音: {TTS_VOICE}")
+    print(f"[TTS]   POST /tts     生成语音 (JSON: {{'text':'...'}})")
+    print(f"[TTS]   POST /voice   切换声音")
+    print(f"[TTS]   POST /engine  切换引擎 (edge|chattts)")
+    print(f"[TTS]   GET  /voices  声音列表")
+    print(f"[TTS]   GET  /health  健康检查")
     print(f"[TTS] 音频输出目录: {AUDIO_DIR}")
 
     try:
