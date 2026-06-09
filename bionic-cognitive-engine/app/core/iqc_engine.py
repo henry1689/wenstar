@@ -122,11 +122,12 @@ class IQCEngine:
 
     async def _promote_to_gold(self, db: AsyncSession,
                                alluvial: AlluvialRecord, report: dict):
-        """IQC 通过 → 升入金库"""
+        """IQC 通过 → 升入金库（继承 user_id，保留数据归属）"""
         gold = GoldVaultEntity(
             topic=(alluvial.source_name or "未命名话题"),
             raw_dialogue={"source": alluvial.source_name, "text": "[MinIO 对象存储]"},
             is_refined=False,
+            user_id=alluvial.user_id,  # 继承用户归属
         )
         db.add(gold)
         await db.flush()
@@ -134,7 +135,7 @@ class IQCEngine:
         # 更新砂金库状态
         alluvial.status = "approved"
 
-        logger.info(f"升入金库: {gold.id} <- 砂金:{alluvial.id}")
+        logger.info(f"升入金库: {gold.id} <- 砂金:{alluvial.id} user={alluvial.user_id}")
         return gold
 
     async def _load_known_hashes(self, db: AsyncSession):

@@ -49,6 +49,30 @@ def init_services(vs: VectorStore, ref, search):
     searcher = search
 
 
+# ── 安全模块实例（由 main.py 注入）──
+_audit_vault = None
+_fortress = None
+
+
+def _set_audit_vault(vault):
+    global _audit_vault
+    _audit_vault = vault
+
+
+def _set_fortress(fortress):
+    global _fortress
+    _fortress = fortress
+
+
+def _audit(action: str, detail: dict = None, user_id: str = None, ip: str = None):
+    """统一的审计记录入口"""
+    if _audit_vault:
+        try:
+            _audit_vault.record(action, detail, user_id, ip)
+        except Exception:
+            pass
+
+
 # ═══════════════════════════════════════════════════════════════
 # 路由：健康检查
 # ═══════════════════════════════════════════════════════════════
@@ -74,7 +98,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     return HealthResponse(
         status="ok",
         services=services,
-        version="1.0.0",
+        version="1.1.0",
     )
 
 
@@ -167,6 +191,7 @@ async def ingest_file(
     await db.commit()
 
     logger.info(f"砂金入库: {record.id} file={file.filename} size={file_size}")
+    _audit("ingest", {"file": file.filename, "size": file_size})
     return IngestResponse(
         id=record.id, status="qc_pending",
         file_hash=file_hash,
@@ -183,17 +208,20 @@ async def search(
     q: str = Query(..., min_length=1, max_length=200, description="检索关键词"),
     limit: int = Query(5, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
+    user_id: str = Query("default_user", description="用户 ID（由调用方传入）"),
 ):
     """
     混合检索：黑钻(向量) → 黑钻(全文) → 金库(ILIKE) → 未命中。
 
     玉瑶说"我想起上次我们聊的..."，系统自动优先查黑钻库。
+    自动按当前用户过滤数据（默认用户为 default_user）。
+    玉瑶调用时请传入 X-User-Id 请求头，系统自动提取 user_id。
     """
     if not searcher:
-        # 降级为直接数据库查询
-        return await _fallback_search(db, q, limit)
+        # 降级为直接数据库查询（也传 user_id）
+        return await _fallback_search(db, q, limit, user_id)
 
-    result = await searcher.recall(db, q, limit)
+    result = await searcher.recall(db, q, limit, user_id=user_id)
 
     items = []
     for r in result.results:
@@ -205,17 +233,19 @@ async def search(
     )
 
 
-async def _fallback_search(db: AsyncSession, q: str, limit: int) -> SearchResponse:
-    """降级检索（无向量服务时）"""
+async def _fallback_search(db: AsyncSession, q: str, limit: int,
+                            user_id: str = "default_user") -> SearchResponse:
+    """降级检索（无向量服务时），自动按用户过滤"""
     import time
     start = time.time()
     like = f"%{q}%"
 
-    # 黑钻库优先
+    # 黑钻库优先（按用户过滤）
     stmt = select(BlackDiamondEntity).where(
         BlackDiamondEntity.is_active == True,
         BlackDiamondEntity.is_deleted == False,
         BlackDiamondEntity.core_facts.ilike(like),
+        BlackDiamondEntity.user_id == user_id,
     ).order_by(BlackDiamondEntity.decay_days.asc()).limit(limit)
 
     rows = (await db.execute(stmt)).scalars().all()
@@ -235,11 +265,12 @@ async def _fallback_search(db: AsyncSession, q: str, limit: int) -> SearchRespon
             results=items, latency_ms=round((time.time() - start) * 1000),
         )
 
-    # 金库降级
+    # 金库降级（按用户过滤）
     stmt2 = select(GoldVaultEntity).where(
         GoldVaultEntity.is_active == True,
         GoldVaultEntity.is_deleted == False,
         GoldVaultEntity.topic.ilike(like),
+        GoldVaultEntity.user_id == user_id,
     ).order_by(GoldVaultEntity.created_at.desc()).limit(limit)
 
     rows2 = (await db.execute(stmt2)).scalars().all()
@@ -608,6 +639,7 @@ async def upload_doc(
     await db.commit()
 
     logger.info(f"用户上传: {record.id} file={file.filename} user={user_id}")
+    _audit("doc_upload", {"file": file.filename, "sand_id": record.id}, user_id)
     return IngestResponse(
         id=record.id, status="qc_pending",
         file_hash=file_hash,
@@ -650,6 +682,8 @@ async def update_diamond_doc(
 
     doc.updated_at = datetime.now(timezone.utc)
     await db.commit()
+
+    _audit("doc_update", {"doc_id": doc_id, "vault": "diamond"}, user_id)
 
     es = doc.emotional_spectrum or {}
     if isinstance(es, str):
@@ -729,4 +763,250 @@ async def delete_diamond_doc(
     await db.commit()
 
     logger.info(f"用户删除黑钻: {doc_id} user={user_id}")
+    _audit("doc_delete", {"doc_id": doc_id, "vault": "diamond"}, user_id)
     return DeleteResponse(status="deleted", id=doc_id, message="已删除（已停止衰减计算）")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：测试专用（仅调试模式可用）
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/ingest-test")
+async def ingest_test(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    🧪 测试专用：直接将对话注入金库（绕过砂金→IQC）。
+    仅开发调试模式可用。
+    """
+    import time as _time
+    from app.domain.models import GoldVaultEntity
+
+    topic = body.get("topic", "测试话题")
+    raw_dialogue_raw = body.get("raw_dialogue", "[]")
+    emotion_vec = body.get("emotion_vector")
+    tags = body.get("tags", ["待提炼"])
+    user_id = body.get("user_id", "test_user")
+    vad_spectrum = body.get("vad_spectrum")
+
+    # 处理 raw_dialogue
+    if isinstance(raw_dialogue_raw, str):
+        try:
+            raw_dialogue = json.loads(raw_dialogue_raw)
+        except:
+            raw_dialogue = [{"role": "system", "content": raw_dialogue_raw}]
+    else:
+        raw_dialogue = raw_dialogue_raw
+
+    # 创建金库记录（歌词+曲谱一体存储）
+    gold = GoldVaultEntity(
+        topic=topic,
+        raw_dialogue=raw_dialogue,
+        emotion_vector=emotion_vec,
+        vad_spectrum=vad_spectrum,
+        vad_pending=vad_spectrum is None,  # 无VAD则标记待谱曲
+        tags=tags,
+        is_refined=False,
+        user_id=user_id,
+    )
+    db.add(gold)
+    await db.commit()
+
+    # 如果有 emotion_vector 且 Qdrant 可用，写入向量库
+    if emotion_vec and vector_store and vector_store.available:
+        vector_store.upsert_vector(
+            point_id=gold.id,
+            vector=emotion_vec,
+            payload={
+                "topic": topic,
+                "user_id": user_id,
+            },
+        )
+        gold.vector_id = gold.id
+        await db.merge(gold)
+        await db.commit()
+
+    logger.info(f"[TEST] 注入金库: {gold.id} topic={topic}")
+    return {"id": gold.id, "topic": topic, "status": "injected"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：安全与维护 (Security)
+# 只有景幻仙姑（管理员）可以访问
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/security/status")
+async def security_status():
+    """🔒 安全状态总览"""
+    result = {
+        "fortress": None,
+        "integrity": None,
+        "audit": None,
+    }
+
+    # 堡垒检查
+    if _fortress:
+        result["fortress"] = _fortress.report()
+    else:
+        result["fortress"] = {"error": "未加载"}
+
+    # 完整性校验
+    try:
+        from app.security.integrity import IntegrityShield
+        shield = IntegrityShield()
+        integrity = shield.verify_startup()
+        result["integrity"] = {
+            "passed": integrity["passed"],
+            "file_count": integrity["file_count"],
+            "violations": integrity["violations"],
+        }
+    except Exception as e:
+        result["integrity"] = {"error": str(e)}
+
+    # 审计金库状态
+    if _audit_vault:
+        chain = _audit_vault.verify_chain()
+        result["audit"] = {
+            "records": chain["records"],
+            "chain_valid": chain["valid"],
+        }
+    else:
+        result["audit"] = {"error": "未加载"}
+
+    return result
+
+
+@router.get("/security/audit")
+async def get_audit_logs(
+    action: str = Query(None, description="按操作类型筛选"),
+    user_id: str = Query(None, description="按用户筛选"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """📋 查看审计日志（需管理员权限）"""
+    if not _audit_vault:
+        raise HTTPException(status_code=503, detail="审计金库未加载")
+
+    rows = _audit_vault.query(
+        user_id=user_id, action=action,
+        limit=limit, offset=offset,
+    )
+    return {"total": len(rows), "records": rows}
+
+
+@router.get("/security/audit/verify")
+async def verify_audit_chain():
+    """🔗 验证审计哈希链完整性"""
+    if not _audit_vault:
+        raise HTTPException(status_code=503, detail="审计金库未加载")
+
+    result = _audit_vault.verify_chain()
+    return result
+
+
+@router.post("/security/manifest/generate")
+async def generate_manifest():
+    """📝 生成/更新代码完整性 MANIFEST"""
+    try:
+        from app.security.integrity import IntegrityShield
+        shield = IntegrityShield()
+        path = shield.generate_manifest()
+        _audit("manifest_generate", {"path": path})
+        return {"status": "ok", "path": path, "message": "MANIFEST 已生成"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/security/backup")
+async def trigger_backup():
+    """💾 手动触发全量备份"""
+    try:
+        from app.core.backup import BackupManager
+        backup = BackupManager()
+        result = backup.run_full_backup()
+        _audit("backup_manual", {"tag": result["tag"]})
+        return {"status": "ok", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/security/backups")
+async def list_backups():
+    """列出所有备份"""
+    try:
+        from app.core.backup import BackupManager
+        backup = BackupManager()
+        backups = backup.list_backups()
+        return {"backups": backups}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 路由：景幻仙姑管理员对话 (Admin Chat)
+# ═══════════════════════════════════════════════════════════════
+
+_admin_assistant = None
+
+
+def _set_admin_assistant(assistant):
+    global _admin_assistant
+    _admin_assistant = assistant
+
+
+@router.post("/admin/chat")
+async def admin_chat(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(_get_user_id),
+):
+    """
+    与景幻仙姑对话。
+
+    Body: {"message": "你好，介绍一下这个系统"}
+    """
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="景幻仙姑助理未初始化")
+
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="消息不能为空")
+    if len(message) > 2000:
+        raise HTTPException(status_code=400, detail="消息太长")
+
+    try:
+        result = await _admin_assistant.chat_async(message, user_id, db)
+        _audit("admin_chat", {"msg": message[:80]}, user_id)
+        return result
+    except Exception as e:
+        logger.error(f"景幻对话失败: {e}")
+        return {"reply": f"对话处理异常", "actions": [], "proposal": None, "history_length": 0}
+
+
+@router.get("/admin/proposals")
+async def list_admin_proposals(
+    status: str = Query(None, description="filter: pending_review/approved/rejected"),
+):
+    """列出改善建议"""
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="未初始化")
+    props = _admin_assistant.get_proposals(status)
+    return {"total": len(props), "proposals": props}
+
+
+@router.get("/admin/conversation")
+async def get_admin_conversation():
+    """获取当前对话历史"""
+    if not _admin_assistant:
+        raise HTTPException(status_code=503, detail="未初始化")
+    return {"messages": _admin_assistant.conversation[-20:], "total": len(_admin_assistant.conversation)}
+
+
+@router.post("/admin/reset")
+async def reset_admin_conversation():
+    """重置对话"""
+    global _admin_assistant
+    if _admin_assistant:
+        _admin_assistant.conversation = []
+    return {"status": "ok", "message": "对话已重置"}

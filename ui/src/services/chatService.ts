@@ -32,8 +32,8 @@ export function sendMessageStream(message: string): void {
   // 添加用户消息到对话
   store.addMessage('user', message.trim());
 
-  // SSE 直接连后端 3000 端口（Vite proxy 不支持流式转发）
-  const SSE_BASE = 'http://localhost:3000';
+  // SSE 直接连后端 3001 端口（Vite proxy 不支持流式转发）
+  const SSE_BASE = 'http://localhost:3001';
   const eventSource = new EventSource(`${SSE_BASE}/api/chat/stream?message=${encodeURIComponent(message.trim())}`);
 
   eventSource.onmessage = (event) => {

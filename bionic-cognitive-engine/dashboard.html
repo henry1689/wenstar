@@ -28,7 +28,6 @@
     min-height: 100vh;
   }
 
-  /* ── 头部 ── */
   .header {
     display: flex; justify-content: space-between; align-items: flex-end;
     margin-bottom: 24px; padding-bottom: 16px;
@@ -47,13 +46,11 @@
     font-size: 13px; color: var(--text-dim); text-align: right;
   }
 
-  /* ── 网格 ── */
   .grid { display: grid; gap: 16px; margin-bottom: 20px; }
   .grid-4 { grid-template-columns: repeat(4, 1fr); }
   .grid-3 { grid-template-columns: repeat(3, 1fr); }
   .grid-2 { grid-template-columns: repeat(2, 1fr); }
 
-  /* ── 卡片 ── */
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px 20px;
@@ -64,21 +61,15 @@
     font-size: 12px; color: var(--text-dim); text-transform: uppercase;
     letter-spacing: 0.5px; margin-bottom: 8px;
   }
-  .card-value {
-    font-size: 28px; font-weight: 700; margin-bottom: 4px;
-  }
-  .card-sub {
-    font-size: 12px; color: var(--text-dim);
-  }
+  .card-value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .card-sub { font-size: 12px; color: var(--text-dim); }
 
-  /* ── 服务指示器 ── */
   .service-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 0; border-bottom: 1px solid var(--border);
   }
   .service-row:last-child { border-bottom: none; }
   .service-name { font-size: 14px; display: flex; align-items: center; gap: 8px; }
-  .service-name .icon { font-size: 16px; }
   .badge {
     display: inline-block; padding: 2px 10px; border-radius: 10px;
     font-size: 12px; font-weight: 500;
@@ -88,7 +79,6 @@
   .badge-err { background: rgba(248,81,73,0.15); color: var(--red); }
   .badge-off { background: rgba(110,123,138,0.15); color: var(--text-dim); }
 
-  /* ── 统计格子 ── */
   .stat-grid { display: flex; gap: 12px; flex-wrap: wrap; }
   .stat-item {
     flex: 1; min-width: 100px; text-align: center;
@@ -98,7 +88,6 @@
   .stat-item .num { font-size: 24px; font-weight: 700; }
   .stat-item .label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
-  /* ── 事件列表 ── */
   .event-item {
     padding: 10px 0; border-bottom: 1px solid var(--border);
     display: flex; gap: 12px; align-items: flex-start;
@@ -121,13 +110,11 @@
     margin-right: 4px;
   }
 
-  /* ── 空状态 ── */
   .empty {
     text-align: center; padding: 32px 0;
     color: var(--text-dim); font-size: 14px;
   }
 
-  /* ── 操作栏 ── */
   .actions {
     display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
   }
@@ -176,7 +163,7 @@
   </div>
 </div>
 
-<!-- ── 服务健康 ── -->
+<!-- 服务健康 -->
 <div class="grid grid-3">
   <div class="card">
     <div class="card-title">🔌 API 状态</div>
@@ -195,7 +182,7 @@
   </div>
 </div>
 
-<!-- ── 三库统计 ── -->
+<!-- 三库统计 -->
 <div class="grid grid-2">
   <div class="card">
     <div class="card-title">📦 三库统计</div>
@@ -246,13 +233,13 @@
   </div>
 </div>
 
-<!-- ── 操作栏 ── -->
+<!-- 操作栏 -->
 <div class="actions">
   <button class="btn btn-primary" onclick="refreshAll()">🔄 刷新</button>
   <button class="btn" onclick="triggerRefine()">🧠 手动提炼</button>
 </div>
 
-<!-- ── 黑钻事件 ── -->
+<!-- 黑钻事件 -->
 <div class="card" style="margin-bottom:20px">
   <div class="card-title">💎 黑钻事件 · 精选歌单</div>
   <div id="diamondList">
@@ -260,7 +247,7 @@
   </div>
 </div>
 
-<!-- ── Toast ── -->
+<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
@@ -303,21 +290,18 @@ async function refreshHealth() {
   try {
     const h = await fetchJSON(`${API}/health`);
 
-    // API
     const apiOk = h.status === 'ok';
     apiEl.textContent = apiOk ? '✅ 正常' : '❌ 异常';
     apiEl.style.color = apiOk ? 'var(--green)' : 'var(--red)';
-    detailApi.textContent = '正常';
-    detailApi.className = 'badge badge-ok';
+    detailApi.textContent = apiOk ? '正常' : '异常';
+    detailApi.className = `badge ${apiOk ? 'badge-ok' : 'badge-err'}`;
 
-    // DB
     const dbOk = h.services?.database === 'ok';
     dbEl.textContent = dbOk ? '✅ 已连接' : '❌ 断开';
     dbEl.style.color = dbOk ? 'var(--green)' : 'var(--red)';
-    detailDb.textContent = dbOk ? '已连接' : h.services?.database || '未知';
+    detailDb.textContent = dbOk ? '已连接' : (h.services?.database || '未知');
     detailDb.className = `badge ${dbOk ? 'badge-ok' : 'badge-err'}`;
 
-    // Qdrant
     const qdOk = h.services?.qdrant === 'ok';
     qdEl.textContent = qdOk ? '✅ 已连接' : (h.services?.qdrant === 'unavailable' ? '⚠️ 未就绪' : '❌ 断开');
     qdEl.style.color = qdOk ? 'var(--green)' : (h.services?.qdrant === 'unavailable' ? 'var(--yellow)' : 'var(--red)');
@@ -329,6 +313,8 @@ async function refreshHealth() {
     apiEl.style.color = 'var(--red)';
     dbEl.textContent = '-';
     qdEl.textContent = '-';
+    detailApi.textContent = '无法连接';
+    detailApi.className = 'badge badge-err';
     showToast(`无法连接到 API: ${e.message}`);
   }
 }
@@ -343,13 +329,10 @@ async function refreshStats() {
     document.getElementById('diamondCount').textContent = s.black_diamond ?? 0;
     document.getElementById('totalCount').textContent = s.total ?? 0;
 
-    // 更新服务详情里的 MinIO/Redis 示意
-    const minioEl = document.getElementById('detailMinio');
-    const redisEl = document.getElementById('detailRedis');
-    minioEl.textContent = '就绪';
-    minioEl.className = 'badge badge-ok';
-    redisEl.textContent = '就绪';
-    redisEl.className = 'badge badge-ok';
+    document.getElementById('detailMinio').textContent = '就绪';
+    document.getElementById('detailMinio').className = 'badge badge-ok';
+    document.getElementById('detailRedis').textContent = '就绪';
+    document.getElementById('detailRedis').className = 'badge badge-ok';
 
   } catch (e) {
     console.error('Stats error:', e);
@@ -371,7 +354,6 @@ async function refreshDiamonds() {
       const es = ev.emotional_spectrum || {};
       const emotion = es.dominant_emotion || '';
       const sentiment = es.user_sentiment || '';
-
       const dotColor = ev.is_active ? 'var(--green)' : 'var(--text-dim)';
       const tags = (ev.tags || []).map(t => `<span class="event-tag">${t}</span>`).join('');
 
@@ -437,6 +419,76 @@ refreshAll();
 updateClock();
 setInterval(updateClock, 1000);
 
+// ═══════════════════════════════════════════════════════════════
+// 景幻仙姑 · 管理员对话
+// ═══════════════════════════════════════════════════════════════
+
+let _co=false;
+function _tc(){const p=document.getElementById('chatPanel');_co=!_co;p.classList.toggle('chat-open',_co);
+  if(_co&&document.getElementById('chatMessages').children.length<=1)_sc('你好，景幻仙姑');}
+async function _sc(m){const i=document.getElementById('chatInput'),e=document.getElementById('chatMessages');
+  if(!m){m=i.value.trim();if(!m)return;i.value='';}
+  _am('user','你',m);const t=_am('assistant','景幻仙姑','...',1);
+  try{const r=await fetch(API+'/admin/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});
+  const d=await r.json();const x=document.getElementById(t);if(x)x.remove();
+  _am('assistant','景幻仙姑',d.reply||'(无回复)');
+  if(d.proposal)_am('system','系统','提案 '+d.proposal.proposal_id+': '+d.proposal.title);
+  if(d.actions&&d.actions.length)_am('system','系统','执行: '+d.actions.map(a=>a.type).join(', '));
+  e.scrollTop=e.scrollHeight;}catch(e){const x=document.getElementById(t);if(x)x.remove();_am('system','系统','连接失败');}}
+function _am(r,l,c,t){const id=(t?'t':'m')+Date.now(),e=document.getElementById('chatMessages');
+  const d=document.createElement('div');d.id=id;d.className='chat-msg chat-'+r;
+  d.innerHTML='<div class="chat-msg-label">'+l+'</div><div class="chat-msg-content">'+c+'</div>';
+  e.appendChild(d);e.scrollTop=e.scrollHeight;return id;}
+document.addEventListener('DOMContentLoaded',()=>{const i=document.getElementById('chatInput');
+  if(i)i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();_sc();}});});
+function _ic(c){document.getElementById('chatInput').value=c;_sc();}
 </script>
+
+<button class="chat-fab" onclick="_tc()" id="chatFab" title="与景幻仙姑对话"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+
+<div class="chat-panel" id="chatPanel">
+<div class="chat-header">
+<div class="chat-header-info"><span class="chat-avatar">🌸</span><div><div class="chat-header-title">景幻仙姑</div><div class="chat-header-sub">仿生智脑掌管者</div></div></div>
+<button class="chat-close" onclick="_tc()">✕</button></div>
+<div class="chat-messages" id="chatMessages">
+<div class="chat-msg chat-assistant"><div class="chat-msg-label">景幻仙姑</div><div class="chat-msg-content">我是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。这座图书馆里每一本书放在哪里我都记得。有什么可以帮你的？</div></div></div>
+<div class="chat-input-area">
+<button class="chat-cmd-btn" onclick="_ic('介绍一下这个系统')" title="系统介绍">📖</button>
+<button class="chat-cmd-btn" onclick="_ic('怎么使用？')" title="使用帮助">❓</button>
+<button class="chat-cmd-btn" onclick="_ic('重新生成完整性校验')" title="重新生成Manifest">🛡️</button>
+<button class="chat-cmd-btn" onclick="_ic('触发一次备份')" title="触发备份">💾</button>
+<textarea class="chat-input" id="chatInput" placeholder="向景幻仙姑提问..." rows="1"></textarea>
+<button class="chat-send-btn" onclick="_sc()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div></div>
+
+<style>
+.chat-fab{position:fixed;bottom:24px;right:24px;width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#7aa2f7,#9b6bff);color:#fff;border:none;cursor:pointer;z-index:1000;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(122,162,247,0.3);transition:all 0.3s}
+.chat-fab:hover{transform:scale(1.1);box-shadow:0 6px 30px rgba(122,162,247,0.5)}
+.chat-panel{position:fixed;bottom:80px;right:24px;width:380px;height:520px;background:#1e1f33;border:1px solid #2f3048;border-radius:16px;z-index:999;display:flex;flex-direction:column;transform:translateY(20px);opacity:0;pointer-events:none;transition:all 0.3s;box-shadow:0 8px 40px rgba(0,0,0,0.4)}
+.chat-panel.chat-open{transform:translateY(0);opacity:1;pointer-events:auto}
+.chat-header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #2f3048}
+.chat-header-info{display:flex;align-items:center;gap:10px}
+.chat-avatar{font-size:20px}
+.chat-header-title{font-size:14px;font-weight:600;color:#c9d1d9}
+.chat-header-sub{font-size:11px;color:#6e7b8a}
+.chat-close{background:0;border:none;color:#6e7b8a;cursor:pointer;font-size:16px;padding:4px}
+.chat-close:hover{color:#f85149}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.chat-msg{max-width:85%}
+.chat-msg.chat-user{align-self:flex-end}
+.chat-msg.chat-assistant,.chat-msg.chat-system{align-self:flex-start}
+.chat-msg-label{font-size:10px;color:#6e7b8a;margin-bottom:2px}
+.chat-msg-content{font-size:13px;line-height:1.5;padding:8px 12px;border-radius:10px;background:#2f3048;color:#c9d1d9;white-space:pre-wrap;word-break:break-word}
+.chat-msg.chat-user .chat-msg-content{background:#7aa2f7;color:#fff}
+.chat-msg.chat-system .chat-msg-content{background:rgba(210,153,34,0.15);color:#d29922;font-size:12px}
+.chat-input-area{display:flex;align-items:flex-end;gap:6px;padding:10px 12px;border-top:1px solid #2f3048}
+.chat-cmd-btn{background:rgba(122,162,247,0.1);border:1px solid #2f3048;border-radius:6px;font-size:16px;padding:4px 6px;cursor:pointer;line-height:1;flex-shrink:0}
+.chat-cmd-btn:hover{background:rgba(122,162,247,0.2)}
+.chat-input{flex:1;background:#1a1b26;border:1px solid #2f3048;border-radius:8px;padding:8px 12px;color:#c9d1d9;font-size:13px;resize:none;font-family:inherit;min-height:36px;max-height:80px}
+.chat-input:focus{outline:none;border-color:#7aa2f7}
+.chat-send-btn{background:#7aa2f7;border:none;border-radius:8px;color:#fff;padding:8px 10px;cursor:pointer;flex-shrink:0;display:flex;align-items:center}
+.chat-send-btn:hover{opacity:0.85}
+@media(max-width:640px){.chat-panel{width:calc(100vw-24px);right:12px;bottom:72px;height:60vh}}
+</style>
+
 </body>
 </html>

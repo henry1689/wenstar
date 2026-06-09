@@ -62,6 +62,10 @@ class GoldVaultEntity(Base):
         ARRAY(Float), nullable=True, comment="24D 情感向量数组（valence/arousal/dominance 等维度）"
     )
 
+    # ── VAD 谱曲（歌单的曲谱部分）──
+    vad_spectrum: dict = Column(JSONB, nullable=True, comment="VAD完整谱曲（情感谱曲引擎产出）")
+    vad_pending: bool = Column(Boolean, default=False, comment="是否待谱曲（谱曲引擎不可用时标记）")
+
     # ── 元数据 ──
     is_active: bool = Column(Boolean, default=True, comment="是否活跃（非活跃不参与常规检索）")
     is_refined: bool = Column(Boolean, default=False, comment="是否已提炼为黑钻事件")

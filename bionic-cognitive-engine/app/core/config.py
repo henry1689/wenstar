@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
+    # ── 模拟模式 ──
+    LLM_MOCK: bool = False  # 设为 True 使用 MockLLMClient（测试/演示用）
+
+    # ── 后台任务 ──
+    CELERY_ENABLED: bool = False  # 设为 True 时由 Celery Worker 处理异步任务，后台工作者暂停
+    BG_IQC_INTERVAL: int = 30  # IQC 质检轮询间隔（秒）
+    BG_REFINE_INTERVAL: int = 300  # 记忆提炼轮询间隔（秒）
+    BG_DECAY_INTERVAL: int = 1800  # 半衰期检查间隔（秒）
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -27,6 +27,10 @@ import { decompose, mergeDecomposedResults } from '../m4/QueryDecomposer.js';
 import { extractRelations, storeRelations } from '../app/knowledge/RelationshipExtractor.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
 
+// 仿生智脑适配器（可选依赖 — 不可用时降级）
+import { bionic } from '../adapter/bionic-adapter.js';
+import type { VadSpectrum } from '../adapter/bionic-adapter.js';
+
 export interface ChatContext {
   encoder: DNAEncoder;
   storage: FusionStorageAdapter;
@@ -83,6 +87,7 @@ export interface ChatResponse {
   m5: { strategy_id: string; tone: string; depth: string; max_length: number; description: string };
   emotionalFlash: boolean;
   triggeredMemoryId: string | null;
+  vad_spectrum?: any | null;
 }
 
 export async function processChat(message: string, ctx: ChatContext): Promise<ChatResponse> {
@@ -163,6 +168,20 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         enrichedHistory.unshift({ role: 'assistant', content: inject });
       }
     } catch (err) { console.warn('[EmotionContagion] 检索失败:', err); }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 仿生智脑检索（对话增强 — 长期记忆）
+    // ═══════════════════════════════════════════════════════════════
+    try {
+      const bionicMemories = await bionic.search(message);
+      if (bionicMemories.length > 0) {
+        const inject = bionicMemories.slice(0, 3).map(m => {
+          const text = m.core_facts || m.topic || '';
+          return `[内心: 这让我想起了一件事……${text.substring(0, 100)}]`;
+        }).join('\n');
+        enrichedHistory.unshift({ role: 'assistant', content: inject });
+      }
+    } catch (err) { console.warn('[BionicSearch] 仿生智脑检索失败:', err); }
 
     // 躯体上下文注入（SomaticMemory → LLM 上下文 — 五重铁律协议③）
     try {
@@ -383,8 +402,33 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[M6Evol] 失败:', err); }
 
+    // ═══════════════════════════════════════════════════════════════
+    // 异步存储歌单（歌词+曲谱）到仿生智脑
+    // ═══════════════════════════════════════════════════════════════
+    let vadSpectrum: VadSpectrum | null = null;
+    (async () => {
+      try {
+        // 1. 情感谱曲（获取 VAD）
+        vadSpectrum = await bionic.composeEmotion(message);
+        // 2. 整合歌单 → 存入仿生智脑
+        await bionic.storeSongSheet({
+          topic: message.substring(0, 50),
+          turns: [
+            { role: 'user', content: message },
+            { role: 'assistant', content: reply },
+          ],
+          emotion24d: p,
+          vad: vadSpectrum,
+          userId: 'default_user',
+        });
+        if (vadSpectrum) console.log('[BionicStore] 歌单已存入（含VAD谱曲）');
+        else console.log('[BionicStore] 歌单已存入（纯歌词，待谱曲）');
+      } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
+    })();
+
     return {
       reply, turn_count: Math.floor(ctx.conversationHistory.length / 2),
+      vad_spectrum: vadSpectrum,
       m1: { branch_id: dna.branch_id, locus_path: dna.locus_path, seq_pos: seqPos, leaf_zone: dna.leaf_zone, ref: `seq_${String(seqPos).padStart(6, '0')}`, entities: dna.entity_genes.map(e => ({ name: e.name, type: e.type })), raw_input: dna.raw_input, entity_genes: dna.entity_genes },
       m3: { quadrant1: allDims.filter((d: any) => d.q === 1), quadrant2: allDims.filter((d: any) => d.q === 2), quadrant3: allDims.filter((d: any) => d.q === 3), quadrant4: allDims.filter((d: any) => d.q === 4), calcium: { score: Number(decision.enhanced.calcium_score.toFixed(3)), level: cl, label: LEVEL_NAMES[cl] ?? '?', breakdown: { base_core: 0, emotional_boost: 0, threat_bonus: 0 } }, actions: decision.actions, reason: decision.reason },
       m4: { timeline: ctx_m4.memory_summary.timeline.map(t => ({ time: t.time, summary: t.summary, calcium_level: t.calcium_level })), total: ctx_m4.memory_summary.timeline.length, family: ctx_m4.family_context?.length ?? 0 },
@@ -402,6 +446,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       m5: { strategy_id: 'fallback', tone: 'neutral', depth: 'shallow', max_length: 20, description: '降级兜底' },
       emotionalFlash: false,
       triggeredMemoryId: null,
+      vad_spectrum: null,
     };
   }
 }

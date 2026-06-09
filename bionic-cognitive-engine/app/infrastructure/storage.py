@@ -33,12 +33,16 @@ class StorageManager:
         access_key: Optional[str] = None,
         secret_key: Optional[str] = None,
         bucket: Optional[str] = None,
+        encryptor: Optional[object] = None,
     ):
         self.endpoint = endpoint or settings.MINIO_ENDPOINT
         self.access_key = access_key or settings.MINIO_ACCESS_KEY
         self.secret_key = secret_key or settings.MINIO_SECRET_KEY
         self.bucket = bucket or settings.MINIO_BUCKET
         self._client: Optional[Minio] = None
+        # AES-256-GCM 加密器（由 main.py 初始化时注入）
+        # 所有上传的文件先加密再存储，下载时自动解密
+        self.encryptor = encryptor
 
     def initialize(self) -> bool:
         """初始化 MinIO 客户端 + 确保 bucket 存在"""
@@ -68,15 +72,20 @@ class StorageManager:
         return self._client is not None
 
     def upload_file(self, object_key: str, data: bytes) -> bool:
-        """上传文件到 MinIO"""
+        """上传文件到 MinIO（自动 AES-256-GCM 加密）"""
         if not self.available:
             return False
         try:
+            # 加密后再上传（若有加密器）
+            final_data = data
+            if self.encryptor:
+                final_data = self.encryptor.encrypt(data)
+
             self._client.put_object(
                 bucket_name=self.bucket,
                 object_name=object_key,
-                data=io.BytesIO(data),
-                length=len(data),
+                data=io.BytesIO(final_data),
+                length=len(final_data),
                 content_type="application/octet-stream",
             )
             return True
@@ -85,15 +94,19 @@ class StorageManager:
             return False
 
     def download_file(self, object_key: str) -> Optional[bytes]:
-        """从 MinIO 下载文件"""
+        """从 MinIO 下载文件（自动 AES-256-GCM 解密）"""
         if not self.available:
             return None
         try:
             response = self._client.get_object(self.bucket, object_key)
-            data = response.read()
+            encrypted_data = response.read()
             response.close()
             response.release_conn()
-            return data
+
+            # 解密后返回（若有加密器）
+            if self.encryptor and encrypted_data:
+                return self.encryptor.decrypt(encrypted_data)
+            return encrypted_data
         except S3Error as e:
             logger.error(f"MinIO 下载失败: {e}")
             return None
