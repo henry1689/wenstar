@@ -554,6 +554,31 @@ html, body, #root {
   margin-left: 2px;
 }
 
+/* 手机网络访问提示 */
+.network-hint {
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: rgba(0, 255, 255, 0.04);
+  border: 1px solid rgba(0, 255, 255, 0.08);
+  border-radius: 6px;
+  font-size: 8px;
+  color: rgba(0, 255, 255, 0.5);
+  line-height: 1.5;
+}
+.network-hint a {
+  color: #00ffff;
+  text-decoration: none;
+  font-weight: 600;
+}
+.network-hint a:hover {
+  text-decoration: underline;
+}
+.network-hint-sub {
+  font-size: 7px;
+  color: rgba(0, 255, 255, 0.25);
+  margin-top: 1px;
+}
+
 /* 通用标签行 */
 .pulse-label {
   display: flex;
@@ -1217,6 +1242,28 @@ html, body, #root {
   width: 34px;
   height: 34px;
   border-radius: 8px;
+  border: 1px solid rgba(180, 195, 210, 0.15);
+  background: rgba(180, 195, 210, 0.04);
+  color: rgba(180, 195, 210, 0.5);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.chat-upload-btn:hover {
+  color: rgba(180, 195, 210, 0.8);
+  border-color: rgba(180, 195, 210, 0.3);
+  background: rgba(180, 195, 210, 0.1);
+}
+
+/* 语音输入按钮 */
+.chat-mic-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   border: 1px solid rgba(180, 195, 210, 0.1);
   background: transparent;
   color: rgba(180, 195, 210, 0.3);
@@ -1227,9 +1274,141 @@ html, body, #root {
   flex-shrink: 0;
   transition: all 0.2s;
 }
-
-.chat-upload-btn:hover {
+.chat-mic-btn:hover {
   color: rgba(180, 195, 210, 0.6);
   border-color: rgba(180, 195, 210, 0.2);
   background: rgba(180, 195, 210, 0.05);
+}
+.chat-mic-btn.recording {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+/* 工具栏：上传、麦克风、电话（放在输入框下方） */
+.chat-utility-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 2px;
+  flex-shrink: 0;
+}
+.chat-panel-inline .chat-utility-bar {
+  padding: 4px 14px 8px;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(248, 113, 113, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(248, 113, 113, 0.5); }
+}
+
+/* 电话通话按钮 */
+.chat-phone-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 195, 210, 0.1);
+  background: transparent;
+  color: rgba(180, 195, 210, 0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.chat-phone-btn:hover {
+  color: rgba(74, 222, 128, 0.7);
+  border-color: rgba(74, 222, 128, 0.3);
+  background: rgba(74, 222, 128, 0.06);
+}
+.chat-phone-btn.active {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.1);
+  animation: phone-pulse 1.5s ease-in-out infinite;
+}
+@keyframes phone-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(74, 222, 128, 0.2); }
+  50% { box-shadow: 0 0 14px rgba(74, 222, 128, 0.5); }
+}
+
+/* 刷新按钮 */
+.chat-refresh-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 195, 210, 0.1);
+  background: transparent;
+  color: rgba(180, 195, 210, 0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: all 0.2s;
+}
+.chat-refresh-btn:hover {
+  color: rgba(180, 195, 210, 0.6);
+  border-color: rgba(180, 195, 210, 0.2);
+  background: rgba(180, 195, 210, 0.05);
+}
+
+/* ============================================================
+   手机端响应式适配
+   ============================================================ */
+@media (max-width: 768px) {
+  .app-root {
+    grid-template-columns: 1fr;
+  }
+  .console-left {
+    display: none;
+  }
+  .zone-right {
+    grid-column: 1;
+    height: 100vh;
+    border-left: none;
+  }
+  .zone-thoughts {
+    display: none;
+  }
+  .zone-chat {
+    height: 100%;
+    padding: 6px 8px 8px;
+  }
+  .chat-panel-inline {
+    border-radius: 8px;
+  }
+  .chat-panel-inline .chat-messages {
+    padding: 6px 10px;
+  }
+  .chat-panel-inline .chat-input-area {
+    padding: 6px 10px 8px;
+  }
+  .network-hint {
+    display: none;
+  }
+  .center-hint {
+    display: none;
+  }
+  .chat-upload-btn,
+  .chat-mic-btn,
+  .chat-phone-btn,
+  .chat-refresh-btn {
+    width: 30px;
+    height: 30px;
+  }
+  .chat-input {
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+}
+@media (max-width: 420px) {
+  .chat-upload-btn {
+    display: none;
+  }
+  .chat-input-area {
+    gap: 4px;
+  }
 }

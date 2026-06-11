@@ -881,7 +881,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (existsSync(audioPath)) {
         const ext = path.extname(fileName).toLowerCase();
         const mime: Record<string, string> = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.ogg': 'audio/ogg' };
-        res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream', 'Cache-Control': 'max-age=3600' });
+        res.writeHead(200, {
+          'Content-Type': mime[ext] || 'application/octet-stream',
+          'Cache-Control': 'max-age=3600',
+          'Access-Control-Allow-Origin': '*',
+        });
         res.end(fs.readFileSync(audioPath));
         return;
       }

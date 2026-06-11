@@ -109,6 +109,13 @@ export default function StatusPanel() {
         <div className="ms-fps">{isLoading ? '--' : fps}<span className="ms-fps-unit">FPS</span></div>
       </motion.div>
 
+      {/* ── 手机网络访问提示 ── */}
+      <motion.div className="network-hint" variants={itemAnim}>
+        📱 同一WiFi：<a href="http://192.168.10.114:5174" target="_blank" rel="noopener">http://192.168.10.114:5174</a>
+        <div className="network-hint-sub">📞电话模式→键盘🎤说话→5秒自动发送</div>
+        <div className="network-hint-sub">📶 4G/5G：<a href="https://emphasis-michel-align-vpn.trycloudflare.com" target="_blank" rel="noopener" style={{color:'#4ade80'}}>点此打开公网版</a>（电话模式完整功能）</div>
+      </motion.div>
+
       {/* ── ① 情绪脉搏 ── */}
       <motion.div variants={itemAnim}>
         <EmotionalPulse

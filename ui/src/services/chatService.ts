@@ -8,6 +8,28 @@
 import { useChatStore } from '../store/chatStore';
 import { pushChatModules } from './thoughtService';
 
+// TTS 音频状态回调（用于 ChatPanel 暂停/恢复语音识别，防止回声死循环）
+let _onTTSAudioState: ((state: 'playing' | 'idle') => void) | null = null;
+export function setOnTTSAudioState(cb: ((state: 'playing' | 'idle') => void) | null) {
+  _onTTSAudioState = cb;
+}
+
+/** 中断 TTS 播放（用户打断说话时调用） */
+export function stopTTS() {
+  if (_currentAudio && !_currentAudio.paused) {
+    _currentAudio.pause();
+    _currentAudio.currentTime = 0;
+    _onTTSAudioState?.('idle');
+  }
+}
+
+/** 在用户首次交互时调用，解锁音频播放（解决手机自动播放限制） */
+export function unlockAudio() {
+  const a = new Audio();
+  a.volume = 0;
+  a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+}
+
 // 通过 Vite proxy (/api → localhost:3000) 转发请求
 const API_BASE = '/api';
 
@@ -62,7 +84,7 @@ export function sendMessageStream(message: string): void {
     eventSource.close();
   };
 }
-export async function sendMessage(message: string): Promise<ChatResponse> {
+export async function sendMessage(message: string, ttsEnabled: boolean = true): Promise<ChatResponse> {
   const store = useChatStore.getState();
   store.setTyping(true);
   store.setError(null);
@@ -71,7 +93,7 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: message.trim(), tts: true }),
+      body: JSON.stringify({ message: message.trim(), tts: ttsEnabled }),
     });
 
     if (!res.ok) {
@@ -83,34 +105,35 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     store.addMessage('assistant', data.reply);
     store.setTyping(false);
 
-    // 播放 TTS 语音（强制停止上一条，防止重叠）
+    // 播放 TTS 语音（合并：防重叠锁定 + 回声消除通知）
     if (data.audio_url) {
       try {
-        // 不管前面有没有在播，全部停掉
+        // 停止上一条
         if (_currentAudio) {
           _currentAudio.pause();
           _currentAudio.currentTime = 0;
           _currentAudio.onended = null;
           _currentAudio = null;
         }
-        // 等一小段锁释放（防止并发请求中的竞态）
         if (_audioLock) {
           await new Promise(r => setTimeout(r, 200));
         }
         _audioLock = true;
-        const audioUrl = data.audio_url.startsWith('/') ? `http://localhost:3001${data.audio_url}` : data.audio_url;
+        const host = window.location.hostname;
+        const audioUrl = data.audio_url.startsWith('/') ? `http://${host}:3001${data.audio_url}` : data.audio_url;
         const audio = new Audio(audioUrl);
         audio.volume = 0.8;
         _currentAudio = audio;
-        // 等待音频加载完成后再播放（防止同时加载两个）
+        _onTTSAudioState?.('playing');
         await audio.load();
-        audio.play().catch(() => {});
+        audio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
         audio.onended = () => {
           _currentAudio = null;
           _audioLock = false;
+          _onTTSAudioState?.('idle');
         };
-        audio.onerror = () => { _audioLock = false; };
-      } catch { _audioLock = false; }
+        audio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
+      } catch { _audioLock = false; _onTTSAudioState?.('idle'); }
     }
 
     // 将 M1-M5 分析结果注入思维流

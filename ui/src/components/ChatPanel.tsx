@@ -4,10 +4,10 @@
  * 浮动（默认）或内嵌模式。
  * 内嵌模式用于右侧下半区布局。
  */
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { sendMessage, resetConversation, fetchConversation } from '../services/chatService';
+import { sendMessage, resetConversation, fetchConversation, setOnTTSAudioState, unlockAudio, stopTTS } from '../services/chatService';
 import * as pdfjs from 'pdfjs-dist';
 
 // 设置 PDF.js worker（使用内置的 worker 文件）
@@ -29,8 +29,162 @@ export default function ChatPanel({ inline }: Props) {
 
   const [input, setInput] = useState('');
   const [showWelcome, setShowWelcome] = useState(true);
+  const [voiceMode, setVoiceMode] = useState<'none' | 'mic' | 'phone'>('none');
+  const [ttsEnabled, setTtsEnabled] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const voiceModeRef = useRef<'none' | 'mic' | 'phone'>('none');
+  const phoneTimerRef = useRef<any>(null);
+  const phoneBufferRef = useRef('');
+  const isPausedForTTS = useRef(false);
+  const inputTimerRef = useRef<any>(null);
+  const isKeyboardPhone = useRef(false);
+  const restartRef = useRef<(() => void) | null>(null);
+
+  // 键盘电话模式：输入内容后5秒自动发送
+  const triggerInputAutoSend = useCallback((text: string) => {
+    if (!text.trim()) return;
+    if (useChatStore.getState().isTyping) return;
+    setShowWelcome(false);
+    addMessage('user', text.trim());
+    setInput('');
+    sendMessage(text.trim(), ttsEnabled).catch(() => {});
+  }, [ttsEnabled, addMessage]);
+
+  // TTS 回声消除：玉瑶说话时暂停语音识别，播完重新创建识别器
+  useEffect(() => {
+    setOnTTSAudioState((state) => {
+      if (voiceModeRef.current !== 'phone') return;
+      if (state === 'playing') {
+        isPausedForTTS.current = true;
+        try { recognitionRef.current?.stop(); } catch {}
+      } else if (state === 'idle') {
+        isPausedForTTS.current = false;
+        if (voiceModeRef.current === 'phone') {
+          restartRef.current?.();
+        }
+      }
+    });
+    return () => setOnTTSAudioState(null);
+  }, []);
+
+  // ── 麦克风模式：语音转文字填入输入框 ──
+  const toggleMic = useCallback(() => {
+    unlockAudio();
+    if (voiceModeRef.current === 'mic') {
+      recognitionRef.current?.stop();
+      voiceModeRef.current = 'none';
+      setVoiceMode('none');
+      return;
+    }
+    if (voiceModeRef.current === 'phone') {
+      if (phoneTimerRef.current) { clearTimeout(phoneTimerRef.current); phoneTimerRef.current = null; }
+      recognitionRef.current?.stop();
+      voiceModeRef.current = 'none';
+      setVoiceMode('none');
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) { setError('手机请直接用键盘上的🎤麦克风按钮说话'); return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop())).catch(() => {});
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'zh-CN';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognitionRef.current = recognition;
+    recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript.trim();
+          if (text && text.length >= 2) {
+            setInput(prev => (prev ? prev + ' ' + text : text));
+          }
+        }
+      }
+    };
+    recognition.onerror = (err: any) => { console.warn('[Mic] Error:', err?.error || err); };
+    recognition.onend = () => {
+      if (voiceModeRef.current === 'mic') { setTimeout(() => { try { recognition.start(); } catch {} }, 300); }
+      else { setVoiceMode('none'); }
+    };
+    recognition.start();
+    voiceModeRef.current = 'mic';
+    setVoiceMode('mic');
+  }, [setError]);
+
+  // ── 电话模式：麦克风一直开，说话即发，像真电话 ──
+  const keepListening = useCallback(() => {
+    const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!_SR || voiceModeRef.current !== 'phone') return;
+    const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false; r.continuous = true;
+    recognitionRef.current = r;
+    r.onresult = (e: any) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const t = e.results[i][0].transcript.trim();
+          if (t && t.length >= 1) {
+            if (isPausedForTTS.current) stopTTS();
+            setShowWelcome(false);
+            addMessage('user', t);
+            sendMessage(t, ttsEnabled).catch(() => {});
+          }
+        }
+      }
+    };
+    r.onend = () => { if (voiceModeRef.current === 'phone') setTimeout(keepListening, 100); };
+    r.onerror = () => { if (voiceModeRef.current === 'phone') setTimeout(keepListening, 1000); };
+    try { r.start(); } catch { setTimeout(keepListening, 500); }
+  }, [ttsEnabled, addMessage]);
+  useEffect(() => { restartRef.current = keepListening; }, [keepListening]);
+
+  const flushPhone = useCallback(() => {
+    if (phoneBufferRef.current) {
+      const text = phoneBufferRef.current;
+      phoneBufferRef.current = '';
+      setShowWelcome(false);
+      addMessage('user', text);
+      sendMessage(text, ttsEnabled).catch(() => {});
+    }
+  }, [ttsEnabled, addMessage]);
+
+  const togglePhone = useCallback(() => {
+    unlockAudio();
+    if (voiceModeRef.current === 'phone') {
+      voiceModeRef.current = 'none';
+      setVoiceMode('none');
+      if (phoneTimerRef.current) { clearTimeout(phoneTimerRef.current); phoneTimerRef.current = null; }
+      if (inputTimerRef.current) { clearTimeout(inputTimerRef.current); inputTimerRef.current = null; }
+      flushPhone();
+      isKeyboardPhone.current = false;
+      try { recognitionRef.current?.stop(); } catch {}
+      return;
+    }
+    if (voiceModeRef.current === 'mic') {
+      recognitionRef.current?.stop();
+      voiceModeRef.current = 'none';
+      setVoiceMode('none');
+    }
+    const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    voiceModeRef.current = 'phone';
+    setVoiceMode('phone');
+    if (_SR) {
+      navigator.mediaDevices.getUserMedia({audio:true}).then(s => s.getTracks().forEach(t => t.stop())).catch(()=>{});
+      phoneBufferRef.current = '';
+      setTimeout(() => keepListening(), 100);
+    } else { isKeyboardPhone.current = true; setTimeout(() => inputRef.current?.focus(), 100); }
+  }, [ttsEnabled, addMessage, setError]);
+
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    if (isKeyboardPhone.current && value.trim()) {
+      if (inputTimerRef.current) clearTimeout(inputTimerRef.current);
+      inputTimerRef.current = setTimeout(() => {
+        if (isKeyboardPhone.current && voiceModeRef.current === 'phone') {
+          triggerInputAutoSend(value);
+        }
+      }, 5000);
+    }
+  };
 
   // 自动滚动 + 自动聚焦
   useEffect(() => {
@@ -86,7 +240,7 @@ export default function ChatPanel({ inline }: Props) {
     setInput('');
     setShowWelcome(false);
     addMessage('user', text);
-    try { await sendMessage(text); } catch { setError('连接失败'); }
+    try { await sendMessage(text, ttsEnabled); } catch { setError('连接失败'); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -161,11 +315,20 @@ export default function ChatPanel({ inline }: Props) {
               <div className="chat-name">玉瑶</div>
               <div className="chat-subtitle">
                 <span className="chat-status-dot" />
-                {isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`}
+                {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
               </div>
             </div>
           </div>
           <div className="chat-header-actions">
+            <button className="chat-icon-btn" onClick={() => setTtsEnabled(!ttsEnabled)} title={ttsEnabled ? 'TTS 语音已开启' : 'TTS 语音已关闭'}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {ttsEnabled ? (
+                  <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /></>
+                ) : (
+                  <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>
+                )}
+              </svg>
+            </button>
             <button className="chat-icon-btn" onClick={handleReset} title="重置对话">↺</button>
           </div>
         </div>
@@ -218,7 +381,7 @@ export default function ChatPanel({ inline }: Props) {
               e.target.value = '';
             }} />
           <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么...（可粘贴文本/图片）"
-            value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping} autoFocus
+            value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping} autoFocus
             rows={1}
             onInput={(e) => {
               const el = e.currentTarget;
@@ -260,6 +423,22 @@ export default function ChatPanel({ inline }: Props) {
             </svg>
           </button>
         </div>
+        <div className="chat-utility-bar">
+          <button className="chat-upload-btn" title="上传文件" onClick={() => document.getElementById('file-upload')?.click()}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+          </button>
+          <button className={`chat-mic-btn${voiceMode === 'mic' ? ' recording' : ''}`} title={voiceMode === 'mic' ? '点击停止语音输入' : '语音输入'} onClick={toggleMic}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>
+          </button>
+          <button className={`chat-phone-btn${voiceMode === 'phone' ? ' active' : ''}`} title={voiceMode === 'phone' ? '点击挂断' : '电话通话'} onClick={togglePhone}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {voiceMode === 'phone' ? <><line x1="22" y1="2" x2="2" y2="22" /><path d="M16 8a5 5 0 0 1 0 8" /><path d="M8 16a5 5 0 0 1 0-8" /></> : <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>}
+            </svg>
+          </button>
+          <button className="chat-refresh-btn" title="刷新页面" onClick={() => location.reload()}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+          </button>
+        </div>
       </div>
     );
   }
@@ -293,11 +472,20 @@ export default function ChatPanel({ inline }: Props) {
                   <div className="chat-name">玉瑶</div>
                   <div className="chat-subtitle">
                     <span className="chat-status-dot" />
-                    {isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`}
+                    {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
                   </div>
                 </div>
               </div>
               <div className="chat-header-actions">
+                <button className="chat-icon-btn" onClick={() => setTtsEnabled(!ttsEnabled)} title={ttsEnabled ? 'TTS 语音已开启' : 'TTS 语音已关闭'}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {ttsEnabled ? (
+                      <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /></>
+                    ) : (
+                      <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>
+                    )}
+                  </svg>
+                </button>
                 <button className="chat-icon-btn" onClick={handleReset} title="重置对话">↺</button>
                 <button className="chat-icon-btn" onClick={toggleOpen} title="关闭">✕</button>
               </div>
@@ -328,7 +516,7 @@ export default function ChatPanel({ inline }: Props) {
             </div>
             <div className="chat-input-area">
               <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么..." autoFocus
-                value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping}
+                value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping}
                 rows={1}
                 onInput={(e) => {
                   const el = e.currentTarget;
@@ -360,6 +548,22 @@ export default function ChatPanel({ inline }: Props) {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
                 </svg>
+              </button>
+            </div>
+            <div className="chat-utility-bar">
+              <button className="chat-upload-btn" title="上传文件" onClick={() => document.getElementById('file-upload')?.click()}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+              </button>
+              <button className={`chat-mic-btn${voiceMode === 'mic' ? ' recording' : ''}`} title={voiceMode === 'mic' ? '点击停止语音输入' : '语音输入'} onClick={toggleMic}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>
+              </button>
+              <button className={`chat-phone-btn${voiceMode === 'phone' ? ' active' : ''}`} title={voiceMode === 'phone' ? '点击挂断' : '电话通话'} onClick={togglePhone}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {voiceMode === 'phone' ? <><line x1="22" y1="2" x2="2" y2="22" /><path d="M16 8a5 5 0 0 1 0 8" /><path d="M8 16a5 5 0 0 1 0-8" /></> : <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>}
+                </svg>
+              </button>
+              <button className="chat-refresh-btn" title="刷新页面" onClick={() => location.reload()}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
               </button>
             </div>
           </motion.div>
