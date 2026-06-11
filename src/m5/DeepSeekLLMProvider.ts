@@ -25,7 +25,7 @@ if (!API_KEY) {
 
 const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
 const BASE_URL = 'https://api.deepseek.com/v1';
-const MAX_HISTORY_TURNS = 60; // 保留最近 30 轮完整对话
+const MAX_HISTORY_TURNS = 200; // 保留最近 100 轮完整对话
 
 interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
@@ -74,6 +74,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
     cognition: CognitionObject;
     conversationHistory?: ConversationTurn[];
     knowledgeBase?: string;
+    currentTime?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }> {
     const rawInput = params.cognition.current.raw_input ?? '';
     const history = params.conversationHistory ?? [];
@@ -148,7 +149,12 @@ export class DeepSeekLLMProvider implements LLMProvider {
     }
 
     // 构建 System Prompt — 使用当前角色
-    const systemPrompt = this.persona.buildSystemPrompt(level, params.knowledgeBase);
+    // 注入当前系统时间（Asia/Shanghai）
+    const timeStr = params.currentTime
+      ? new Date(params.currentTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+      : new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+
+    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${this.persona.buildSystemPrompt(level, params.knowledgeBase)}`;
 
     // 构建上下文提示词
     const dimContext = [
@@ -189,11 +195,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
     // 软约束
     contextBlock += `\n[注意: 如果上面有[内心:...]开头的片段，那是你内心的感觉，不是回忆列表。不要直接复述它，而是自然地转化为关切的语气或行动。]`;
 
-    // 记忆响应原则
-    if (params.knowledgeBase && params.knowledgeBase.length > 0) {
-      contextBlock += `\n📖【已提供知识库内容】System Prompt末尾的[我的记忆库]是鸿鸣自己存的内容，可以放心引用。`;
-    }
-    contextBlock += `\n📝【记忆响应】鸿鸣问你记不记得某事时：有明确资料就说"看过/记得"；模糊就说"好像看过/有点印象"；没印象就说"好像没有/想不起来了"；他反复追问还搞不清就明确说"真不记得了"。🚨绝不可编造具体事件细节。`;
+
 
     // 注入 M4 检索到的历史记忆摘要
     const hist = params.cognition.history;

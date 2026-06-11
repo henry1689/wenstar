@@ -29,7 +29,7 @@ import { researchTopic } from '../app/knowledge/WebResearchService.js';
 
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
 import { bionic } from '../adapter/bionic-adapter.js';
-import type { VadSpectrum } from '../adapter/bionic-adapter.js';
+import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.js';
 
 export interface ChatContext {
   encoder: DNAEncoder;
@@ -90,6 +90,110 @@ export interface ChatResponse {
   vad_spectrum?: any | null;
 }
 
+
+/** 获取 VAD 驱动的 tone 校准 — 调用 8100 谱曲引擎获取数值，用 V/A/dominant 决定 tone */
+async function getVadToneHint(message: string): Promise<string> {
+  try {
+    const vadResp = await fetch('http://localhost:8100/api/v1/emotion/compose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message }),
+    });
+    if (!vadResp.ok) return '';
+    const vadData = await vadResp.json();
+    const v: number = vadData.overall?.valence ?? 0;
+    const a: number = vadData.overall?.arousal ?? 0;
+    const dom: string = vadData.overall?.dominant_emotion ?? '';
+    const arc: string = vadData.overall?.emotional_arc ?? '';
+    const peaks: Array<{ intensity: number; peak_type: string }> = vadData.peaks ?? [];
+    const hasPeak = peaks.length > 0 && peaks[0].intensity > 0.7;
+
+    const hints: string[] = [];
+
+    // VAD 数值驱动 tone：不靠关键词，靠情感数值
+    const emotionToTone: Record<string, string> = {
+      '极乐': '🎯VAD驱动→【极乐】快感接近临界。用原始狂野的 tone 接住——不要温柔克制。',
+      '依恋': '🎯VAD驱动→【依恋】情感底色是依恋和占有。用危险宠溺回应，不要悲伤害怕。',
+      '掌控': '🎯VAD驱动→【掌控】权力游戏。用低沉命令的 tone 接住，不要温柔安慰。',
+      '挑逗': '🎯VAD驱动→【挑逗】调情。用靠近低笑的 tone 接，不要当真严肃。',
+      '温存': '🎯VAD驱动→【温存】求温暖。用温柔慵懒的 tone 回应。',
+    };
+
+    if (emotionToTone[dom]) {
+      hints.push(emotionToTone[dom]);
+    }
+
+    // 数值增强
+    if (v > 0.85 && a > 0.85) {
+      hints.push('[VAD] 极高唤醒+效价→高潮临界表达。用极度热烈的 tone 回应。');
+    } else if (v < -0.3 && (dom === '依恋' || dom === '掌控')) {
+      hints.push('[VAD] 效价' + v.toFixed(2) + ',主导=' + dom + '→语义反转。用宠溺/掌控回应。');
+    }
+
+    if (hasPeak) {
+      hints.push('[VAD] 情感峰值强度' + peaks[0].intensity.toFixed(2) + '→饱满情感浓度回应。');
+    }
+
+    if (arc && arc !== dom) {
+      hints.push('[VAD] 情感弧线: ' + arc);
+    }
+
+    return hints.length > 0 ? hints.join('\n') : '';
+  } catch (err) {
+    console.warn('[VADTone] 调用失败:', (err as Error).message);
+    return '';
+  }
+}
+
+/**
+ * 本地语境快速判定 — 整句语义优先：判断情感是否直接对玉瑶表达
+ * 注意：这里是快速本地判定（无VAD），只拦截明显的叙事型句子。
+ * 亲密呓语（"操死我"等）即使无"你"也默认放行。
+ */
+function isDirectedEmotion(message: string): boolean {
+  const text = message.trim();
+  if (!text) return true;
+
+  const hasDirectAddress = /[你您]/.test(text);
+  const isFirstPersonNarrative = /我(?:以前|曾经|那时|过去|觉得|认为|当时|以前)/.test(text);
+  const isThirdPerson = /[他她它]/.test(text);
+
+  // 分句检测："你"+情感词在同一分句 → 最可靠的指向信号
+  const segments = text.split(/[，,。.；;！!？?\n\n]/);
+  for (const seg of segments) {
+    if (/你/.test(seg) && /喜欢|开心|高兴|快乐|难过|悲伤|兴奋|激动|爱|想|恨|爽|舒服/.test(seg)) {
+      return true;
+    }
+  }
+
+  // 明确的叙事/他人描述 → 不触发（即使包含情感词）
+  if (isFirstPersonNarrative && !hasDirectAddress) return false;
+  if (isThirdPerson && !hasDirectAddress) return false;
+
+  // 明确的叙事/描述他人 → 不触发
+  if (isFirstPersonNarrative && !hasDirectAddress) return false;
+  if (isThirdPerson && !hasDirectAddress) return false;
+
+  // 无"你"且无情感词 + 无亲密词 → 中性句，不触发
+  // "今天天气不错" 不表达任何情感
+  if (!hasDirectAddress) {
+    const hasEmotionWord = /喜欢|开心|高兴|快乐|难过|悲伤|痛苦|幸福|兴奋|激动|爱|想|恨|哭|笑|爽|舒服|难受|憋|痒|麻|软|硬|热|暖|敏感|疼|痛/.test(text);
+    const hasIntimateWord = /操|干|日|舔|咬|插|顶|揉|捏|掐|摸|吻|吸|骚|浪|湿|水|屌|鸡|奶|肿|硬/.test(text);
+    if (!hasEmotionWord && !hasIntimateWord) return false;
+  }
+
+  // 有情感词但无"你" + "我" → 自述叙事，非对玉瑶表达
+  // "我最喜欢画画了" "我喜欢吃苹果" 表达自己的爱好，不是对玉瑶说
+  if (!hasDirectAddress) {
+    const hasEmotionWord = /喜欢|开心|高兴|快乐|难过|悲伤|痛苦|幸福|兴奋|激动|爱|想|恨|哭|笑|爽|舒服|难受|憋|痒|麻|软|硬|热|暖|敏感|疼|痛/.test(text);
+    if (hasEmotionWord && /我/.test(text)) return false;
+  }
+
+  // 其他情况（包括"杀了你""操死我"等呓语）→ 默认放行
+  // VAD 驱动的精确判定在后端 8100 的 context_relevance 中完成
+  return true;
+}
+
 export async function processChat(message: string, ctx: ChatContext): Promise<ChatResponse> {
   try {
     const dna = ctx.encoder.encodeSingle(message);
@@ -102,84 +206,98 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     let enrichedHistory = [...ctx.conversationHistory];
     let emotionalMemories: ScoredMemory[] = [];
 
+    // ═══════════════════════════════════════════════════════════════
+    // 上下文连续性检测 —— 优先保持当前话题，记忆只在话题切换时注入
+    // ═══════════════════════════════════════════════════════════════
+    const recentContext = ctx.conversationHistory.slice(-3).map(t => t.content).join('').slice(-200);
+    const isFollowUp = /[那这]个|然后|还有|后来|可是|但是|而且|再|又|还|呢|吧|吗/.test(message) && message.length < 30;
+    const hasNewEntity = dna.entity_genes.some(g => g.name && !recentContext.includes(g.name));
+    const hasContinuationMarkers = /嗯|对|好|行|是|是的|没错|就是|[那这]样/.test(message) && message.length < 20;
+    const isTopicShift = hasNewEntity || (!isFollowUp && !hasContinuationMarkers);
+
     try {
-      const currentEntityNames = dna.entity_genes.map(g => g.name).filter(Boolean);
-      const relatedEntities = currentEntityNames.length > 0
-        ? ctx.storage.findRelatedEntities(currentEntityNames, 0.3) : [];
-      const uniqueExpanded = [...new Set([...currentEntityNames, ...relatedEntities.map(r => r.name)])];
 
-      const decomposed = decompose(message);
-      const allQueryTexts = [message, ...decomposed.subQueries.filter((q: string) => q !== message)];
-      const allResultSets: ScoredMemory[][] = [];
+      // 只在话题切换时才检索记忆，否则优先当前上下文
+      if (isTopicShift) {
+        const currentEntityNames = dna.entity_genes.map(g => g.name).filter(Boolean);
+        const relatedEntities = currentEntityNames.length > 0
+          ? ctx.storage.findRelatedEntities(currentEntityNames, 0.3) : [];
+        const uniqueExpanded = [...new Set([...currentEntityNames, ...relatedEntities.map(r => r.name)])];
 
-      const mode: SimilarityMode =
-        p.pleasure < -0.2 ? 'mood_congruent' :
-        p.intimacy > 0.4 ? 'intimacy_search' :
-        p.arousal > 0.6 ? 'by_calcium' : 'balanced';
+        const decomposed = decompose(message);
+        const allQueryTexts = [message, ...decomposed.subQueries.filter((q: string) => q !== message)];
+        const allResultSets: ScoredMemory[][] = [];
 
-      for (const q of allQueryTexts) {
-        let memories = ctx.storage.findByEmotionalSimilarity({
-          current_perception: p, similarity_mode: mode,
-          entities: uniqueExpanded, limit: 8,
-        });
-        memories = rerank(memories, q);
-        const valid = memories.filter((m: any) =>
-          (m.scores.emotional > 0.5 || m.composite > 0.2) && m.record.id !== dna.branch_id
-        );
-        if (valid.length > 0) allResultSets.push(valid);
-      }
+        const mode: SimilarityMode =
+          p.pleasure < -0.2 ? 'mood_congruent' :
+          p.intimacy > 0.4 ? 'intimacy_search' :
+          p.arousal > 0.6 ? 'by_calcium' : 'balanced';
 
-      emotionalMemories = mergeDecomposedResults(allResultSets, 5);
+        for (const q of allQueryTexts) {
+          let memories = ctx.storage.findByEmotionalSimilarity({
+            current_perception: p, similarity_mode: mode,
+            entities: uniqueExpanded, limit: 5,  // limit降低到5
+          });
+          memories = rerank(memories, q);
+          // 提高门槛——只取评分高的记忆
+          const valid = memories.filter((m: any) =>
+            (m.scores.emotional > 0.65 || m.composite > 0.35) && m.record.id !== dna.branch_id
+          );
+          if (valid.length > 0) allResultSets.push(valid);
+        }
 
-      if (relatedEntities.length > 0) {
-        const relationMemories = ctx.storage.findMemoriesByEntityNames(relatedEntities.map((r: any) => r.name), 3);
-        for (const rm of relationMemories) {
-          if (!emotionalMemories.some((e: any) => e.record.id === rm.id) && rm.id !== dna.branch_id) {
-            emotionalMemories.push({
-              record: rm, scores: { emotional: 0.5, topic: 0, entity: 0.8, calcium: rm.calcium_score },
-              composite: 0.5 * rm.effective_strength,
-            });
+        emotionalMemories = mergeDecomposedResults(allResultSets, 3);  // 最多3条
+
+        if (relatedEntities.length > 0) {
+          const relationMemories = ctx.storage.findMemoriesByEntityNames(relatedEntities.map((r: any) => r.name), 2);
+          for (const rm of relationMemories) {
+            if (!emotionalMemories.some((e: any) => e.record.id === rm.id) && rm.id !== dna.branch_id) {
+              emotionalMemories.push({
+                record: rm, scores: { emotional: 0.5, topic: 0, entity: 0.8, calcium: rm.calcium_score },
+                composite: 0.5 * rm.effective_strength,
+              });
+            }
           }
         }
-      }
 
-      const recentHistoryRaw = enrichedHistory.slice(-4).map((t: any) => t.content).join('');
-      let freshMemories = emotionalMemories.filter((m: any) => !recentHistoryRaw.includes(m.record.id));
+        const recentHistoryRaw = enrichedHistory.slice(-4).map((t: any) => t.content).join('');
+        let freshMemories = emotionalMemories.filter((m: any) => !recentHistoryRaw.includes(m.record.id));
 
-      if (freshMemories.length < 2) {
-        const fallback = ctx.storage.findByEmotionalSimilarity({ current_perception: p, similarity_mode: 'balanced', limit: 3 });
-        freshMemories = fallback.filter((m: any) =>
-          (m.scores.emotional > 0.3 || m.scores.calcium > 0.3) && m.record.id !== dna.branch_id && !recentHistoryRaw.includes(m.record.id)
-        );
-      }
+        if (freshMemories.length < 2 && !hasContinuationMarkers) {
+          const fallback = ctx.storage.findByEmotionalSimilarity({ current_perception: p, similarity_mode: 'balanced', limit: 2 });
+          freshMemories = fallback.filter((m: any) =>
+            (m.scores.emotional > 0.4 || m.scores.calcium > 0.4) && m.record.id !== dna.branch_id && !recentHistoryRaw.includes(m.record.id)
+          );
+        }
 
-      if (freshMemories.length === 0 && emotionalMemories.length > 0) freshMemories = [emotionalMemories[0]];
-      const finalMemories = freshMemories.length > 0 ? freshMemories : emotionalMemories.slice(0, 1);
+        const finalMemories = freshMemories.length > 0 ? freshMemories : emotionalMemories.slice(0, 1);
 
-      if (finalMemories.length > 0) {
-        const inject = finalMemories.map((m, i) => {
-          const feeling = m.record.calcium_score > 0.6 ? '（这件事当时对你很重要）' : '（我记得你那时候的感觉）';
-          const action = m.record.perception.pleasure > 0 ? '温暖的感觉' : '那种心情';
-          const note = i === 0 ? '\n[不要用跟上次相同的句式回应]' : '';
-          const userSaid = m.record.raw_input.substring(0, 60);
-          // 用"鸿鸣曾说过"做前缀，强化归属标识
-          return `[内心: 看到鸿鸣现在的样子，让我想起${action}……鸿鸣曾说过:"${userSaid}"${feeling}${note}]`;
-        }).join('\n');
-        enrichedHistory.unshift({ role: 'assistant', content: inject });
+        if (finalMemories.length > 0 && !hasContinuationMarkers) {
+          const inject = finalMemories.slice(0, 1).map((m, i) => {  // 最多1条
+            const feeling = m.record.calcium_score > 0.6 ? '（这件事当时对你很重要）' : '（我记得你那时候的感觉）';
+            const action = m.record.perception.pleasure > 0 ? '温暖的感觉' : '那种心情';
+            const userSaid = m.record.raw_input.substring(0, 60);
+            return `[内心: 看到鸿鸣现在的样子，让我想起${action}……鸿鸣曾说过:"${userSaid}"${feeling}]`;
+          }).join('\n');
+          enrichedHistory.unshift({ role: 'assistant', content: inject });
+        }
       }
     } catch (err) { console.warn('[EmotionContagion] 检索失败:', err); }
 
     // ═══════════════════════════════════════════════════════════════
-    // 仿生智脑检索（对话增强 — 长期记忆）
+    // 仿生智脑检索（仅话题切换时调用，且不覆盖当前上下文）
     // ═══════════════════════════════════════════════════════════════
+    let bionicMemories: BionicSearchResult[] = [];
     try {
-      const bionicMemories = await bionic.search(message);
-      if (bionicMemories.length > 0) {
-        const inject = bionicMemories.slice(0, 3).map(m => {
-          const text = m.core_facts || m.topic || '';
-          return `[内心: 这让我想起了一件事……${text.substring(0, 100)}]`;
-        }).join('\n');
-        enrichedHistory.unshift({ role: 'assistant', content: inject });
+      if (isTopicShift && !hasContinuationMarkers) {
+        bionicMemories = await bionic.search(message);
+        if (bionicMemories.length > 0 && !enrichedHistory.some(e => e.content?.includes(bionicMemories[0].core_facts?.substring(0, 40) || ''))) {
+          const inject = bionicMemories.slice(0, 1).map(m => {
+            const text = m.core_facts || m.topic || '';
+            return `[这让我想起了一件事……${text.substring(0, 100)}]`;
+          }).join('\n');
+          enrichedHistory.unshift({ role: 'assistant', content: inject });
+        }
       }
     } catch (err) { console.warn('[BionicSearch] 仿生智脑检索失败:', err); }
 
@@ -212,10 +330,53 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[KnowledgeSearch] 检索失败:', err); }
 
-    // 线索协助
+        // ═══════════════════════════════════════════════════════════════
+    // 情感谱曲引擎(8100)VAD驱动 — 用数值驱动 tone，而非关键词
+    // ═══════════════════════════════════════════════════════════════
+    try {
+      // ① 获取 VAD 谱曲（当前消息的实时情感分析）
+      const toneHint = await getVadToneHint(message);
+      if (toneHint) console.log('[VADTone] toneHint: ' + toneHint.substring(0, 80));
+
+      // ② 同时获取知识库曲谱清单（作为背景知识）
+      let scoreText = '';
+      const scoreResp = await fetch('http://localhost:8100/api/v1/emotion/knowledge/export?min_intensity=0.85');
+      if (scoreResp.ok) {
+        const scoreData = await scoreResp.json();
+        const entries: Array<{ term: string; category: string; intensity: number; reversal: boolean }> = scoreData.entries || [];
+        if (entries.length > 0) {
+          const catLabels: Record<string, string> = { 'EX_': '极乐','FL_': '挑逗','IN_': '依恋','DO_': '掌控','TE_': '张力','AF_': '温存' };
+          scoreText = '\n【情感曲谱库】以下是你掌握的亲密表达知识（供参考）：\n';
+          const byCat: Record<string, typeof entries> = {};
+          for (const e of entries) { const c = e.category || '??'; if (!byCat[c]) byCat[c] = []; byCat[c].push(e); }
+          for (const [code, label] of Object.entries(catLabels)) {
+            const es = byCat[code];
+            if (!es?.length) continue;
+            const terms = es.sort((a: any, b: any) => b.intensity - a.intensity).map((e: any) => '\u300c' + e.term + '\u300d').join(' ');
+            scoreText += label + ': ' + terms + '\n';
+          }
+          console.log('[EmotionScore] 已注入 ' + entries.length + ' 条情感曲谱');
+        }
+      }
+
+      // ③ 整合 toneHint + scoreText -> knowledgeBaseText
+      if (toneHint || scoreText) {
+        const combined = (toneHint + '\n\n' + scoreText).trim();
+        if (knowledgeBaseText) {
+          knowledgeBaseText = combined + '\n\n' + knowledgeBaseText;
+        } else {
+          knowledgeBaseText = combined;
+        }
+      }
+    } catch (err) { console.warn('[VADTone] 谱曲引擎(8100)不可用，跳过:', (err as Error).message); }
+
+    // 线索协助（集成仿生智脑检索结果，生成区分性反问）
     let clueReply: string | null = null;
     try {
-      const clueResult = await ctx.clueAssistant.processUserInput({ originalQuery: message, perception: p, m8Engine: ctx.m8 });
+      const clueResult = await ctx.clueAssistant.processUserInput({
+        originalQuery: message, perception: p, m8Engine: ctx.m8,
+        bionicMemories: bionicMemories,  // 让线索系统知道外部记忆中有什么不同的场景
+      });
       if (clueResult.needsQuestion && clueResult.questionText) {
         clueReply = clueResult.questionText;
       } else if (clueResult.isReady && clueResult.searchResult?.entries.length) {
@@ -288,20 +449,44 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         : '⚠️ 你不知道自己具体在忙什么。不要编造具体的项目、客户、工作内容。可以温柔地说"想你了""没什么特别的"之类的。';
     }
 
-    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard].filter(Boolean).join('\n');
+    // ⏰ 强制注入当前系统时间
+    const now = new Date();
+    const beijingTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    const timeGuard = `[当前时间] ${beijingTime}（北京时间）——回答时间问题时必须以此为准，不能编造。`;
+
+    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard].filter(Boolean).join('\n');
 
     let reply: string;
     if (clueReply) {
       reply = clueReply;
     } else {
-      const guardMsg: ConversationTurn = { role: 'assistant', content: allGuardMsgs };
-      const enrichedWithGuard = allGuardMsgs ? [...enrichedHistory, guardMsg] : enrichedHistory;
-      try { reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, knowledgeBaseText); } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
+      // ⏰ 时间问题拦截器（不依赖 LLM provider，确保时间绝对正确）
+      // ⚠️ 使用 \b 和限定长度匹配，防止"现在.*时候"跨句匹配长文本
+      const timeMatch = message.length < 100 && (
+        /^.*(?:现在几点了|几点了|现在时间|什么时间|什么时候|今天星期|星期几|今天[是]?[几号日期])/.test(message) ||
+        /^.{0,20}几点.{0,10}了/.test(message) ||
+        /^.{0,20}现在.{0,20}时候/.test(message)
+      );
+      if (timeMatch) {
+        const now = new Date();
+        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+        const h = now.getHours();
+        const m = now.getMinutes();
+        const ampm = h >= 12 ? '下午' : '上午';
+        const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+        const timeStr = `${ampm}${hour12}点${m > 0 ? m + '分' : ''}`;
+        reply = `（看了眼手机）现在${timeStr}。${now.getMonth() + 1}月${now.getDate()}日，星期${weekdays[now.getDay()]}。`;
+      } else {
+        const guardMsg: ConversationTurn = { role: 'assistant', content: allGuardMsgs };
+        const enrichedWithGuard = allGuardMsgs ? [...enrichedHistory, guardMsg] : enrichedHistory;
+        try { reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, knowledgeBaseText, message); } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
+      }
     }
 
-    // 持久化对话历史（故障重启后自动恢复）
-    ctx.conversationHistory.push({ role: 'user', content: message });
-    ctx.conversationHistory.push({ role: 'assistant', content: reply });
+    // 持久化对话历史（故障重启后自动恢复，带时间戳）
+    const nowTs = new Date().toISOString();
+    ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs });
+    ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs });
     ctx.saveConversationHistory();
 
     // 躯体感知记录（SomaticMemory — 五重铁律协议③）
@@ -433,7 +618,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       m3: { quadrant1: allDims.filter((d: any) => d.q === 1), quadrant2: allDims.filter((d: any) => d.q === 2), quadrant3: allDims.filter((d: any) => d.q === 3), quadrant4: allDims.filter((d: any) => d.q === 4), calcium: { score: Number(decision.enhanced.calcium_score.toFixed(3)), level: cl, label: LEVEL_NAMES[cl] ?? '?', breakdown: { base_core: 0, emotional_boost: 0, threat_bonus: 0 } }, actions: decision.actions, reason: decision.reason },
       m4: { timeline: ctx_m4.memory_summary.timeline.map(t => ({ time: t.time, summary: t.summary, calcium_level: t.calcium_level })), total: ctx_m4.memory_summary.timeline.length, family: ctx_m4.family_context?.length ?? 0 },
       m5: deriveM5Strategy(decision),
-      emotionalFlash: emotionalMemories.length > 0,
+      emotionalFlash: emotionalMemories.length > 0 && isDirectedEmotion(message),
       triggeredMemoryId: emotionalMemories[0]?.record?.id ?? null,
     };
   } catch (err) {

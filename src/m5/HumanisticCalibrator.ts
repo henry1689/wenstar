@@ -7,6 +7,7 @@
 import type { CognitionObject } from './types/index.js';
 import type { M3Action } from '../m3/types/perception.js';
 import { injectThinkingPause } from './expression/ThinkingPauseInjector.js';
+import { fixSceneConflict as fixContextConflict } from './ContextMemory.js';
 
 const FALLBACK_POOLS: Record<M3Action, string[]> = {
   ignore: ['嗯', '好的', '听到了', '嗯嗯', '好嘞', '知道啦', '明白'],
@@ -52,6 +53,9 @@ export class HumanisticCalibrator {
     if (intensity > 0) {
       draft = injectThinkingPause(draft, intensity);
     }
+
+    // ── 场景一致性修正：全裸时移除"衣角""扣子"等矛盾词 ──
+    draft = fixContextConflict(draft);
 
     // 记录到最近池
     RECENT_POOL.push(draft);

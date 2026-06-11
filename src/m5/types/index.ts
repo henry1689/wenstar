@@ -58,6 +58,7 @@ export interface StrategyConfig {
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
+  timestamp?: string;  // ISO 8601 时间戳
 }
 
 export interface LLMProvider {
@@ -67,5 +68,7 @@ export interface LLMProvider {
     conversationHistory?: ConversationTurn[];
     /** 知识库内容（注入到系统提示层） */
     knowledgeBase?: string;
+    /** 当前系统时间（Asia/Shanghai） */
+    currentTime?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }>;
 }

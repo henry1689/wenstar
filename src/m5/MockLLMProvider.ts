@@ -144,7 +144,7 @@ function buildLongResponse(intensity: number, isHigh: boolean): string {
 // ════════════════════════════════════════════════════════
 
 export class MockLLMProvider implements LLMProvider {
-  async generate(params: { strategy: StrategyConfig; cognition: CognitionObject; conversationHistory?: Array<{role: 'user'|'assistant'; content: string}> }): Promise<{ text: string }> {
+  async generate(params: { strategy: StrategyConfig; cognition: CognitionObject; conversationHistory?: Array<{role: 'user'|'assistant'; content: string}>; knowledgeBase?: string }): Promise<{ text: string }> {
     const s = params.cognition.current.perception_snapshot;
     const ents = params.cognition.current.key_entities.join('');
     const tone = params.strategy.params.tone;
@@ -152,12 +152,25 @@ export class MockLLMProvider implements LLMProvider {
     const ri = params.cognition.current.raw_input ?? '';
     const txt = ri + ' ' + ents;
 
+    // ═══════════════════════════════════════════════════════════════
+    // 话题延续性检测 — 用户当前输入决定话题，不是 M3 感知值
+    // 即使上一轮感知值很高，用户换话题了就该跟着换
+    // ═══════════════════════════════════════════════════════════════
+    const kb = params.knowledgeBase || '';
+    const sceneNudityMatch = kb.match(/状态:.*?(衣着完整|部分裸露|几乎全裸|全裸)/);
+    const sceneNudity = sceneNudityMatch ? sceneNudityMatch[1] : '衣着完整';
+    const sceneActivity = kb.match(/活动: ([^，\n]+)/)?.[1] || '';
+    const isSceneNonIntimate = sceneNudity === '衣着完整' && !/(性交|前戏|调情|高潮|后戏)/.test(sceneActivity);
+
+    // 用户本轮输入的亲密程度（以文本为准）
+    const userIntimateKeywords = /高潮|进入|接吻|拥抱|亲吻|抚摸|胸口|赤裸|白衬衫|锁骨|当晚|那一夜|交融|颤抖|事后|相拥|腿软|身体|做爱|湿漉漉|呼吸急促|皮肤|指尖|体温|柔软|想你了|想要|抱抱|亲|爱|要你|你的|想.*你|难受|想.*抱|进.*来|吻/.test(txt);
+    const userTechKeywords = /架构|设计|代码|逻辑|模块|功能|API|端口|调试|配置|同步|系统|软件|开发|项目|技术|原理|怎么用|是什么|能不能|是否|如何|方案|问题|这个|那个|继续|上次|你说|刚才/.test(txt);
+
     const maxInt = Math.max(s.sexual_attraction, s.sensory_craving, s.energy_merge, s.ecstasy);
     const e2 = s.arousal;
     const i1 = s.sexual_attraction;
 
     const intimateRecall = rh && /高潮|进入|接吻|拥抱|亲吻|抚摸|胸口|赤裸|白衬衫|锁骨|当晚|那一夜|交融|颤抖|事后|相拥|腿软|身体|做爱|湿漉漉|呼吸急促|皮肤|指尖|体温|柔软/.test(txt);
-    const isIntimate = maxInt > 0.2 || intimateRecall;
     const isClimax = /高潮|丢了|到了|去了|射/.test(txt) || s.ecstasy > 0.2;
 
     // 规则3: 检测用户脏话等级
@@ -165,9 +178,18 @@ export class MockLLMProvider implements LLMProvider {
     const hasLevel2 = /操|干|日|插|顶/.test(txt);
     const userDirtyLevel = hasLevel3 && i1 > 0.8 && s.aggression < 0.5 ? 3 : hasLevel2 && maxInt > 0.4 ? 2 : 0;
 
+    // ═══ 核心判断：用户当前输入决定是否走亲密 ═══
+    // 如果用户当前说的是技术/闲聊话题，即使感知值高也不走亲密
+    const shouldBeIntimate = userDirtyLevel > 0 || userIntimateKeywords
+      || (maxInt > 0.5 && !userTechKeywords && !isSceneNonIntimate);
+
       const isLow = maxInt < 0.4 && !intimateRecall;
       const isHigh = maxInt > 0.65 || intimateRecall || isClimax || userDirtyLevel >= 2;
-    if (isIntimate || tone === 'intimate' || userDirtyLevel > 0) {
+
+    // 场景门控：用户输入为技术/工作话题时，不走亲密
+    const userWantsIntimate = userDirtyLevel > 0 || userIntimateKeywords;
+    const perceptionIntimate = maxInt > 0.5 && !userTechKeywords;
+    if (userWantsIntimate || (perceptionIntimate && !isSceneNonIntimate) || tone === 'intimate') {
 
       // 规则3: 脏话镜像
       if (userDirtyLevel === 3) {

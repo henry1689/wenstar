@@ -8,6 +8,8 @@ import { CognitionAssembler } from './CognitionAssembler.js';
 import { StrategySelector } from './StrategySelector.js';
 import { MockLLMProvider } from './MockLLMProvider.js';
 import { HumanisticCalibrator } from './HumanisticCalibrator.js';
+import { buildContextPrompt, updateAfterReply } from './ContextMemory.js';
+import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor } from './SceneAnchor.js';
 
 export class M5Orchestrator {
   private assembler: CognitionAssembler;
@@ -24,27 +26,48 @@ export class M5Orchestrator {
 
   /**
    * 执行完整的四步表达生成流水线
-   * @param conversationHistory 最近对话轮次（用于 LLM 上下文记忆）
-   * @param knowledgeBase 知识库内容（注入到系统提示层）
+   * @param m4ctx M4 上下文
+   * @param conversationHistory 最近对话轮次
+   * @param knowledgeBase 知识库内容
+   * @param userMessage 用户当前消息（用于场景记忆更新）
    */
-  async orchestrate(m4ctx: M4Context, conversationHistory?: ConversationTurn[], knowledgeBase?: string): Promise<string> {
+  async orchestrate(m4ctx: M4Context, conversationHistory?: ConversationTurn[], knowledgeBase?: string, userMessage?: string): Promise<string> {
     // Step 1: 认知组装（纯函数）
     const cognition = this.assembler.assemble(m4ctx);
 
     // Step 2: 策略选择（规则引擎）
     const strategy = this.selector.select(cognition);
 
+    // Step 2.5: 提取场景锚点 → 生成强制约束
+    extractAnchor(conversationHistory, userMessage);
+    const anchorConstraint = buildAnchorConstraint();
+
+    // Step 2.6: 注入场景上下文记忆
+    const sceneContext = buildContextPrompt();
+    const combinedKnowledge = [
+      anchorConstraint,
+      sceneContext,
+      knowledgeBase || '',
+    ].filter(Boolean).join('\n');
+
     // Step 3: LLM 受控生成（唯一LLM调用点）
     let draft: string;
     try {
-      const result = await this.llm.generate({ strategy, cognition, conversationHistory, knowledgeBase });
+      const currentTime = new Date().toISOString();
+      const result = await this.llm.generate({ strategy, cognition, conversationHistory, knowledgeBase: combinedKnowledge, currentTime });
       draft = result.text;
     } catch (err) {
       console.error('[M5] LLM生成失败:', err);
       draft = '';
     }
 
-    // Step 4: 人文校准 + 降级兜底
-    return this.calibrator.calibrate(draft, cognition);
+    // Step 4: 场景锚点校验（替换冲突词）→ 人文校准 → 降级兜底
+    const anchorValidated = validateAgainstAnchor(draft);
+    const calibrated = this.calibrator.calibrate(anchorValidated, cognition);
+
+    // Step 5: 更新场景记忆（供下一轮使用）
+    updateAfterReply(calibrated, userMessage || '', strategy.params.tone, cognition.current.perception_snapshot);
+
+    return calibrated;
   }
 }

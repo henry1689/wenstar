@@ -11,6 +11,10 @@ import { pushChatModules } from './thoughtService';
 // 通过 Vite proxy (/api → localhost:3000) 转发请求
 const API_BASE = '/api';
 
+// 全局音频引用 — 防止多条语音重叠播放（保证同一时间只有一个在播）
+let _currentAudio: HTMLAudioElement | null = null;
+let _audioLock = false;
+
 interface ChatResponse {
   reply: string;
   turn_count: number;
@@ -79,14 +83,34 @@ export async function sendMessage(message: string): Promise<ChatResponse> {
     store.addMessage('assistant', data.reply);
     store.setTyping(false);
 
-    // 播放 TTS 语音
+    // 播放 TTS 语音（强制停止上一条，防止重叠）
     if (data.audio_url) {
       try {
+        // 不管前面有没有在播，全部停掉
+        if (_currentAudio) {
+          _currentAudio.pause();
+          _currentAudio.currentTime = 0;
+          _currentAudio.onended = null;
+          _currentAudio = null;
+        }
+        // 等一小段锁释放（防止并发请求中的竞态）
+        if (_audioLock) {
+          await new Promise(r => setTimeout(r, 200));
+        }
+        _audioLock = true;
         const audioUrl = data.audio_url.startsWith('/') ? `http://localhost:3001${data.audio_url}` : data.audio_url;
         const audio = new Audio(audioUrl);
         audio.volume = 0.8;
+        _currentAudio = audio;
+        // 等待音频加载完成后再播放（防止同时加载两个）
+        await audio.load();
         audio.play().catch(() => {});
-      } catch {}
+        audio.onended = () => {
+          _currentAudio = null;
+          _audioLock = false;
+        };
+        audio.onerror = () => { _audioLock = false; };
+      } catch { _audioLock = false; }
     }
 
     // 将 M1-M5 分析结果注入思维流

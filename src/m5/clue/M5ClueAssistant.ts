@@ -19,6 +19,7 @@ import type { ClueSearchResult } from '../../m8/types/index.js';
 import { derivePhysiologicalSnapshot } from '../../m8/PhysiologicalDeriver.js';
 import type { Perception24D } from '../../m3/types/perception.js';
 import type { ClueTracker } from '../../m7/ClueTracker.js';
+import type { BionicSearchResult } from '../../adapter/bionic-adapter.js';
 import type { InteractionLog } from '../../m7/types/index.js';
 
 // ─── 特征选项池（按话题类型分类） ───
@@ -39,6 +40,8 @@ export interface ClueQuestionConfig {
   perception?: Perception24D;
   /** M8 引擎实例 */
   m8Engine: M8Engine;
+  /** 可选的外部记忆检索结果（来自仿生智脑），用于生成区分性反问 */
+  bionicMemories?: BionicSearchResult[];
 }
 
 /**
@@ -58,8 +61,17 @@ export interface ClueQuestionResult {
 /**
  * 判断用户输入是否为模糊查询
  */
+/**
+ * 判断用户输入是否为模糊查询
+ * - 长文本（>80字）不是模糊查询
+ * - "那个"后面跟具体名词（架构/方案/项目/人/事）→ 是延续话题，不是模糊回忆
+ * - 必须包含明确的模糊指示词
+ */
 function isVagueQuery(text: string): boolean {
-  return /那个|上次|那家|那次|那晚|某家|某次|之前|以前|有个/.test(text);
+  if (text.length > 80) return false;
+  // "那个"后跟具体技术/话题名词 → 是延续当前话题，不是模糊回忆
+  if (/那个/.test(text) && /架构|方案|项目|代码|设计|系统|模块|功能|问题|事|人/.test(text)) return false;
+  return /那个|上次|那家|那晚|某家|某次/.test(text);
 }
 
 /**
@@ -150,7 +162,7 @@ export class M5ClueAssistant {
 
     // 初次检测是否为模糊查询
     if (isVagueQuery(originalQuery)) {
-      const question = this.generateQuestion(originalQuery);
+      const question = this.generateQuestion(originalQuery, config.bionicMemories);
       this.conversationBuffer.push({ role: 'user', text: originalQuery, timestamp: now });
       this.conversationBuffer.push({ role: 'ai', text: question, timestamp: now });
       return {
@@ -160,7 +172,8 @@ export class M5ClueAssistant {
       };
     }
 
-    // 非模糊查询，不需要线索协助
+    // 非模糊查询 → 清除线索缓存（防止污染下一轮），不需要线索协助
+    this.conversationBuffer = [];
     return { needsQuestion: false, isReady: true };
   }
 
@@ -227,10 +240,58 @@ export class M5ClueAssistant {
   }
 
   /**
+   * 从一组搜索结果中提取区分性特征，生成选项式反问
+   * 当仿生智脑返回多条相关记忆时，提取它们的差异点作为反问选项
+   */
+  private buildDistinctQuestions(records: BionicSearchResult[], text: string): string | null {
+    if (records.length < 2) return null;
+
+    // 提取每条记录的核心关键词（提取不同类型的事件/人物/场景）
+    const contexts = records.map(r => (r.core_facts || r.topic || '')).filter(Boolean);
+    if (contexts.length < 2) return null;
+
+    // ⚠️ 确保不暴露用户姓名和组织名等具体信息
+    // 只提取"人"、"项目"、"场景"三个维度的区分特征
+    interface DistFeature { label: string; sample: string; }
+    const features: DistFeature[] = [];
+
+    for (const ctx of contexts) {
+      // 检测是否含"在一起"恋爱类内容 → 区分出"约会"场景
+      if (/亲吻|约会|谈恋爱|散步|牵|抱|靠|肩/.test(ctx) && !features.some(f => f.label === '约会')) {
+        features.push({ label: '约会', sample: ctx.substring(0, 20) });
+      }
+      // 检测是否含"项目/合作/开会/设计" → 区分出"工作"场景
+      if (/项目|设计|开会|合作|方案|合同|客户|开发|谈|张总|李总/.test(ctx) && !features.some(f => f.label === '工作')) {
+        features.push({ label: '工作', sample: ctx.substring(0, 20) });
+      }
+      // 检测人物 → 用泛化称呼
+      if (/朋友|同事|同学|客户/.test(ctx) && !features.some(f => f.label === '朋友')) {
+        features.push({ label: '朋友', sample: ctx.substring(0, 20) });
+      }
+    }
+
+    if (features.length < 2) return null;
+
+    // 生成选项式反问（取前两个区分维度）
+    const optA = features[0].label;
+    const optB = features[1].label;
+    if (/店|厅|吧|馆|公园|海|山/.test(text)) {
+      return `是去${optA}的那家，还是去${optB}的那家？`;
+    }
+    return `是你${optA}的事，还是${optB}的事？`;
+  }
+
+  /**
    * 生成特征选项式反问
    * ≤15字，带语气词
    */
-  private generateQuestion(text: string): string {
+  private generateQuestion(text: string, bionicMemories?: BionicSearchResult[]): string {
+    // 如果有仿生搜索结果且含多条不同记忆 → 用它们生成区分性反问
+    if (bionicMemories && bionicMemories.length >= 2) {
+      const q = this.buildDistinctQuestions(bionicMemories, text);
+      if (q) return q;
+    }
+
     const types = detectClueType(text);
     if (types.length > 0) {
       const pool = FEATURE_OPTIONS[types[0]] ?? FEATURE_OPTIONS['scene'];

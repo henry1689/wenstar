@@ -34,6 +34,13 @@ export interface BionicSearchResult {
   created_at?: string;
 }
 
+/** 语境相关性判定 — 整句语义优先 */
+export interface ContextRelevance {
+  is_directed: boolean;    // 情感是否指向对话对方
+  is_narrative: boolean;   // 是否是客观叙事/描述
+  explanation: string;     // 判定说明
+}
+
 /** VAD 谱曲结果（情感谱曲引擎输出） */
 export interface VadSpectrum {
   overall: {
@@ -46,6 +53,7 @@ export interface VadSpectrum {
   peaks: Array<{ sequence: number; text: string; peak_type: string; intensity: number }>;
   score: number;
   confidence: number;
+  context_relevance?: ContextRelevance;
 }
 
 /** 歌单：歌词+曲谱 一体 */
@@ -130,6 +138,8 @@ class BionicAdapter {
     if (sheet.vad) body.vad_spectrum = sheet.vad;
 
     const r = await bionicFetch<any>('/ingest-test', { method: 'POST', body: JSON.stringify(body) }, 10000);
+    if (r?.status === 'injected' && sheet.vad) console.log(`[BionicStore] VAD谱曲已存入`);
+    else if (r?.status === 'injected') console.log(`[BionicStore] 纯歌词已存入（待谱曲）`);
     return r?.status === 'injected';
   }
 
@@ -155,6 +165,7 @@ class BionicAdapter {
         peaks: (r.peaks || []).map((p: any) => ({ sequence: p.sequence, text: p.text, peak_type: p.peak_type, intensity: p.intensity })),
         score: r.confidence,
         confidence: r.confidence,
+        context_relevance: r.context_relevance || { is_directed: true, is_narrative: false, explanation: '8100未返回语境判定，默认放行' },
       };
     } catch { return null; }
   }

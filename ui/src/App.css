@@ -1160,12 +1160,17 @@ html, body, #root {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(0, 255, 255, 0.08);
   border-radius: 10px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   font-size: 13px;
   color: #ccc;
   font-family: inherit;
   outline: none;
   transition: border-color 0.2s;
+  resize: none;
+  min-height: 42px;
+  max-height: 120px;
+  line-height: 1.5;
+  overflow-y: auto;
 }
 
 .chat-input:focus {

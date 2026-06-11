@@ -217,8 +217,14 @@ export default function ChatPanel({ inline }: Props) {
               setInput(`请帮我看看这个文件 ${file.name}:\n\`\`\`\n${preview}\n\`\`\``);
               e.target.value = '';
             }} />
-          <input ref={inputRef} className="chat-input" type="text" placeholder="对玉瑶说点什么...（可粘贴文本/图片）"
+          <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么...（可粘贴文本/图片）"
             value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping} autoFocus
+            rows={1}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.style.height = 'auto';
+              el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+            }}
             onPaste={async (e) => {
               const items = e.clipboardData?.items;
               if (!items) return;
@@ -321,8 +327,14 @@ export default function ChatPanel({ inline }: Props) {
               )}
             </div>
             <div className="chat-input-area">
-              <input ref={inputRef} className="chat-input" type="text" placeholder="对玉瑶说点什么..." autoFocus
+              <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么..." autoFocus
                 value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping}
+                rows={1}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = 'auto';
+                  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+                }}
                 onPaste={async (e) => {
                   const items = e.clipboardData?.items;
                   if (!items) return;

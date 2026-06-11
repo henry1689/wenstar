@@ -44,6 +44,24 @@ function isName(text: string): boolean {
   return SURNAMES.has(text[0]);
 }
 
+/** 检查提取的"名字"是否长词的一部分（防止"车载"误判为姓"车"）*/
+function isCompoundWordPart(name: string, fullText: string): boolean {
+  const idx = fullText.indexOf(name);
+  if (idx < 0) return false;
+  const afterIdx = idx + name.length;
+  // 如果名字后面紧跟着汉字，说明是长词的一部分
+  if (afterIdx < fullText.length) {
+    const nextChar = fullText[afterIdx];
+    if (/[一-鿿]/.test(nextChar)) return true;
+  }
+  // 如果名字前面有汉字，说明是长词的一部分（排除空格和标点间隔）
+  if (idx > 0) {
+    const prevChar = fullText[idx - 1];
+    if (/[一-鿿]/.test(prevChar)) return true;
+  }
+  return false;
+}
+
 /** 名字后紧跟这些字说明不是名字的完整部分 */
 const TRAILING_STOP = new Set('昨今明去来也和就都在这那而已了过');
 
@@ -233,7 +251,11 @@ export function extractRelations(text: string): DetectedRelationship[] {
       }
     }
   }
-  return results;
+
+  // ═══════════════════════════════════════════════════════════════
+  // 过滤：排除所有长词误匹配（如"车载空气净化器"中的"车载空"）
+  // ═══════════════════════════════════════════════════════════════
+  return results.filter(r => !isCompoundWordPart(r.personName, text));
 }
 
 export function storeRelations(sqlite: any, relations: DetectedRelationship[], sourceMessage: string): number {
