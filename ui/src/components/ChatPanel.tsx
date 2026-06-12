@@ -127,8 +127,8 @@ export default function ChatPanel({ inline }: Props) {
         for (let i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
             const t = e.results[i][0].transcript.trim();
-            if (t && t.length >= 1) {
-              if (isPausedForTTS.current) stopTTS();
+            if (t && t.length >= 2) {
+              if (isPausedForTTS.current) { stopTTS(); return; }
               setShowWelcome(false);
               addMessage('user', t);
               sendMessage(t, ttsEnabled).catch(() => {});
