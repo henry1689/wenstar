@@ -23,11 +23,17 @@ export function stopTTS() {
   }
 }
 
+// 全局唯一音频播放器（复用同一个元素，解决手机自动播放限制）
+const _playerAudio = new Audio();
+_playerAudio.volume = 0.8;
+let _audioUnlocked = false;
+
 /** 在用户首次交互时调用，解锁音频播放（解决手机自动播放限制） */
 export function unlockAudio() {
-  const a = new Audio();
-  a.volume = 0;
-  a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+  _playerAudio.src = '';
+  _playerAudio.play().then(() => { _playerAudio.pause(); _playerAudio.currentTime = 0; }).catch(() => {});
 }
 
 // 通过 Vite proxy (/api → localhost:3000) 转发请求
@@ -119,20 +125,19 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
           await new Promise(r => setTimeout(r, 200));
         }
         _audioLock = true;
-        // 同源路径，Vite 代理 /audio → localhost:3001
+        // 复用全局播放器（解决手机自动播放限制）
         const audioUrl = data.audio_url.startsWith('/') ? data.audio_url : data.audio_url;
-        const audio = new Audio(audioUrl);
-        audio.volume = 0.8;
-        _currentAudio = audio;
-        audio.onended = () => {
+        _currentAudio = _playerAudio;
+        _playerAudio.src = audioUrl;
+        _playerAudio.onended = () => {
           _currentAudio = null;
           _audioLock = false;
           _onTTSAudioState?.('idle');
         };
-        audio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
+        _playerAudio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
         _onTTSAudioState?.('playing');
-        await audio.load();
-        audio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
+        await _playerAudio.load();
+        _playerAudio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
       } catch { _audioLock = false; _onTTSAudioState?.('idle'); }
     }
 
