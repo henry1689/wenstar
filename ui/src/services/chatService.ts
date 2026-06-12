@@ -119,20 +119,20 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
           await new Promise(r => setTimeout(r, 200));
         }
         _audioLock = true;
-        const host = window.location.hostname;
-        const audioUrl = data.audio_url.startsWith('/') ? `http://${host}:3001${data.audio_url}` : data.audio_url;
+        // 同源路径，Vite 代理 /audio → localhost:3001
+        const audioUrl = data.audio_url.startsWith('/') ? data.audio_url : data.audio_url;
         const audio = new Audio(audioUrl);
         audio.volume = 0.8;
         _currentAudio = audio;
-        _onTTSAudioState?.('playing');
-        await audio.load();
-        audio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
         audio.onended = () => {
           _currentAudio = null;
           _audioLock = false;
           _onTTSAudioState?.('idle');
         };
         audio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
+        _onTTSAudioState?.('playing');
+        await audio.load();
+        audio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
       } catch { _audioLock = false; _onTTSAudioState?.('idle'); }
     }
 

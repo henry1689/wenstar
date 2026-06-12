@@ -112,28 +112,35 @@ export default function ChatPanel({ inline }: Props) {
     setVoiceMode('mic');
   }, [setError]);
 
-  // ── 电话模式：麦克风一直开，说话即发，像真电话 ──
+  // ── 电话模式：Coze同款 — 连续稳定通话 ──
+  const recGenRef = useRef(0);
   const keepListening = useCallback(() => {
     const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!_SR || voiceModeRef.current !== 'phone') return;
-    const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false; r.continuous = true;
-    recognitionRef.current = r;
-    r.onresult = (e: any) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          const t = e.results[i][0].transcript.trim();
-          if (t && t.length >= 1) {
-            if (isPausedForTTS.current) stopTTS();
-            setShowWelcome(false);
-            addMessage('user', t);
-            sendMessage(t, ttsEnabled).catch(() => {});
+    const gen = ++recGenRef.current;
+    // 延迟100ms开始，避免和旧识别器的onend冲突
+    const startIt = () => {
+      if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
+      const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false; r.continuous = true;
+      recognitionRef.current = r;
+      r.onresult = (e: any) => {
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            const t = e.results[i][0].transcript.trim();
+            if (t && t.length >= 1) {
+              if (isPausedForTTS.current) stopTTS();
+              setShowWelcome(false);
+              addMessage('user', t);
+              sendMessage(t, ttsEnabled).catch(() => {});
+            }
           }
         }
-      }
+      };
+      r.onend = () => { if (!isPausedForTTS.current && gen === recGenRef.current && voiceModeRef.current === 'phone') keepListening(); };
+      r.onerror = () => { if (gen === recGenRef.current && voiceModeRef.current === 'phone') setTimeout(keepListening, 500); };
+      try { r.start(); } catch { if (gen === recGenRef.current) setTimeout(keepListening, 500); }
     };
-    r.onend = () => { if (voiceModeRef.current === 'phone') setTimeout(keepListening, 100); };
-    r.onerror = () => { if (voiceModeRef.current === 'phone') setTimeout(keepListening, 1000); };
-    try { r.start(); } catch { setTimeout(keepListening, 500); }
+    setTimeout(startIt, 100);
   }, [ttsEnabled, addMessage]);
   useEffect(() => { restartRef.current = keepListening; }, [keepListening]);
 
@@ -364,13 +371,6 @@ export default function ChatPanel({ inline }: Props) {
         </div>
 
         <div className="chat-input-area">
-          <button className="chat-upload-btn" title="上传文件" onClick={() => document.getElementById('file-upload')?.click()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
           <input id="file-upload" type="file" accept=".txt,.md,.json,.csv,.js,.ts,.py,.rs,.html,.css,.xml,.yaml,.toml,.ini,.log,.jsx,.tsx,.docx,.pdf" style={{ display: 'none' }}
             onChange={async (e) => {
               const file = e.target.files?.[0];
