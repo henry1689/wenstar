@@ -666,7 +666,8 @@ class SystemKnowledgeBase:
         if not results:
             return ""
 
-        return '\n\n'.join(results[:3])  # 最多返回3条
+        limit = getattr(self, '_max_results', 5)
+        return '\n\n'.join(results[:limit])  # _max_results 可由外部临时调整
 
     def get_features_list(self) -> str:
         """生成功能列表"""

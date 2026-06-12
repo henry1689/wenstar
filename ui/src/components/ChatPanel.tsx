@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { sendMessage, resetConversation, fetchConversation, setOnTTSAudioState, unlockAudio, stopTTS } from '../services/chatService';
+import { sendMessage, resetConversation, fetchConversation, setOnTTSAudioState, unlockAudio, stopTTS, isTTSPlaying } from '../services/chatService';
 import * as pdfjs from 'pdfjs-dist';
 
 // 设置 PDF.js worker（使用内置的 worker 文件）
@@ -127,8 +127,8 @@ export default function ChatPanel({ inline }: Props) {
         for (let i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
             const t = e.results[i][0].transcript.trim();
+            if (isTTSPlaying()) { stopTTS(); } // 打断TTS后，该次语音继续处理
             if (t && t.length >= 2) {
-              if (isPausedForTTS.current) { stopTTS(); return; }
               setShowWelcome(false);
               addMessage('user', t);
               sendMessage(t, ttsEnabled).catch(() => {});
@@ -136,7 +136,7 @@ export default function ChatPanel({ inline }: Props) {
           }
         }
       };
-      r.onend = () => { if (!isPausedForTTS.current && gen === recGenRef.current && voiceModeRef.current === 'phone') keepListening(); };
+      r.onend = () => { if (gen === recGenRef.current && voiceModeRef.current === 'phone') keepListening(); };
       r.onerror = () => { if (gen === recGenRef.current && voiceModeRef.current === 'phone') setTimeout(keepListening, 500); };
       try { r.start(); } catch { if (gen === recGenRef.current) setTimeout(keepListening, 500); }
     };

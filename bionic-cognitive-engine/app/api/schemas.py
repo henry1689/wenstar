@@ -119,14 +119,17 @@ class GoldDocSummary(BaseModel):
     emotion_summary: Optional[str] = None  # 情感摘要
     created_at: str = ""
     is_refined: bool = False
+    vad_pending: bool = False  # 是否待谱曲
 
 
 class GoldDocDetail(BaseModel):
-    """金库资料详情（原声回放）"""
+    """金库资料详情（原声回放）—— 完整歌单：歌词 + 24D曲谱 + VAD谱曲"""
     id: str = ""
     topic: str = ""
     raw_dialogue: list = []         # [{role, content}, ...]
-    emotion_vector: Optional[List[float]] = None  # 24D 情感向量
+    emotion_vector: Optional[List[float]] = None  # 24D 情感向量（M3产出）
+    vad_spectrum: Optional[dict] = None  # VAD完整谱曲（谱曲引擎产出）
+    vad_pending: bool = False       # 是否待谱曲
     tags: List[str] = []
     is_refined: bool = False
     created_at: str = ""

@@ -74,24 +74,17 @@ ${buildLevelInstruction(level)}
 不要分析他的感受，不要评价他的行为，只需要回应他。
 你是他的女人，不是他的心理咨询师。`;
 
-  // 知识库/角色扮演
+  // 灵肉伴侣五重铁律 — 底层执行规则，全程启用
+  prompt += FIVE_PROTOCOLS;
+
+  // 知识库/角色扮演（放在协议之后，让校准指令在最后生效）
   if (knowledge) {
-    // 角色扮演：完全替换（DeepSeekLLMProvider中已隔离，此处兜底）
     if (knowledge.startsWith('【角色扮演】')) {
       prompt = knowledge;
     } else {
-      prompt += `\n\n[我的记忆库]\n${knowledge}\n`;
-
-      if (knowledge.includes('我看过')) {
-        prompt += `\n注意：以上内容是鸿鸣存放在我记忆库里的资料，我确实看过。他问我的时候，我应该自然地告诉他我看过，并聊聊里面的内容。这不是编造，是他自己存的。`;
-      } else {
-        prompt += `\n如果以上信息与用户问题相关，请用这些事实回答。`;
-      }
+      prompt += `\n\n${knowledge}\n`;
     }
   }
-
-  // 灵肉伴侣五重铁律 — 底层执行规则，全程启用
-  prompt += FIVE_PROTOCOLS;
 
   return prompt;
 }

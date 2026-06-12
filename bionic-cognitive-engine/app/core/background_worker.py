@@ -96,11 +96,20 @@ class BackgroundWorker:
 
     # ── ① IQC 质检循环（30秒间隔）──
 
+    async def _with_db(self, callback):
+        """通用数据库会话包装：获取会话 → 执行 → 关闭"""
+        db = await self.db_manager.get_session()
+        try:
+            return await callback(db)
+        finally:
+            await db.close()
+
     async def _iqc_loop(self):
         """IQC 质检队列消费 —— 砂金库 → 金库"""
         while self._running:
             try:
-                async with self.db_manager.session() as db:
+                db = await self.db_manager.get_session()
+                try:
                     result = await self.iqc.process_queue(db, max_items=10)
                     if result["checked"] > 0:
                         self._stats["iqc_cycles"] += 1
@@ -110,21 +119,24 @@ class BackgroundWorker:
                             f"[BK-IQC] 处理{result['checked']}条: "
                             f"{result['passed']}通过/{result['failed']}失败"
                         )
+                finally:
+                    await db.close()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[BK-IQC] 异常: {e}")
-            await asyncio.sleep(30)  # 每30秒检查一次
+            await asyncio.sleep(30)
 
     # ── ② 记忆提炼循环（5分钟间隔）──
 
     async def _consolidate_loop(self):
         """自动提炼 —— 金库 → 黑钻库"""
-        await asyncio.sleep(60)  # 启动后延迟1分钟
+        await asyncio.sleep(60)
         while self._running:
             try:
                 if self.refiner:
-                    async with self.db_manager.session() as db:
+                    db = await self.db_manager.get_session()
+                    try:
                         result = await self.refiner.consolidate_next_batch(db, max_items=5)
                         if result["processed"] > 0:
                             self._stats["consolidate_cycles"] += 1
@@ -133,20 +145,23 @@ class BackgroundWorker:
                                 f"[BK-REFINE] 处理{result['processed']}条: "
                                 f"晋升{result['promoted']}条/失败{result['failed']}条"
                             )
+                    finally:
+                        await db.close()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[BK-REFINE] 异常: {e}")
-            await asyncio.sleep(300)  # 每5分钟检查一次
+            await asyncio.sleep(300)
 
-    # ── ③ 半衰期衰减循环（30分钟间隔）──
+    # ── ③ 半衰期衰减循环 ──
 
     async def _decay_loop(self):
         """半衰期检查 —— 黑钻库降级/归档"""
-        await asyncio.sleep(120)  # 启动后延迟2分钟
+        await asyncio.sleep(120)
         while self._running:
             try:
-                async with self.db_manager.session() as db:
+                db = await self.db_manager.get_session()
+                try:
                     result = await self.decay.run_daily_check(db)
                     if result["checked"] > 0:
                         self._stats["decay_cycles"] += 1
@@ -156,8 +171,10 @@ class BackgroundWorker:
                             f"[BK-DECAY] 检查{result['checked']}条: "
                             f"降级{result['demoted']}条/归档{result['archived']}条"
                         )
+                finally:
+                    await db.close()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[BK-DECAY] 异常: {e}")
-            await asyncio.sleep(1800)  # 每30分钟检查一次
+            await asyncio.sleep(1800)

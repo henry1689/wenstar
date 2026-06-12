@@ -463,6 +463,7 @@ async def list_gold_docs(
             emotion_summary=emotion_summary,
             created_at=r.created_at.isoformat() if r.created_at else "",
             is_refined=r.is_refined,
+            vad_pending=r.vad_pending if hasattr(r, 'vad_pending') else False,
         ))
 
     return DocListResponse(items=items, total=total, page=page, page_size=page_size)
@@ -492,6 +493,8 @@ async def get_gold_doc(
         id=doc.id, topic=doc.topic,
         raw_dialogue=doc.raw_dialogue or [],
         emotion_vector=doc.emotion_vector,
+        vad_spectrum=doc.vad_spectrum if hasattr(doc, 'vad_spectrum') else None,
+        vad_pending=doc.vad_pending if hasattr(doc, 'vad_pending') else False,
         tags=doc.tags or [],
         is_refined=doc.is_refined,
         created_at=doc.created_at.isoformat() if doc.created_at else "",
@@ -800,17 +803,36 @@ async def ingest_test(
         raw_dialogue = raw_dialogue_raw
 
     # 创建金库记录（歌词+曲谱一体存储）
+    # 注意: vad_spectrum 和 vad_pending 用 SQL 直写（SQLAlchemy ORM 不认 ALTER TABLE 后加列）
     gold = GoldVaultEntity(
         topic=topic,
         raw_dialogue=raw_dialogue,
         emotion_vector=emotion_vec,
-        vad_spectrum=vad_spectrum,
-        vad_pending=vad_spectrum is None,  # 无VAD则标记待谱曲
         tags=tags,
         is_refined=False,
         user_id=user_id,
     )
     db.add(gold)
+    await db.flush()
+
+    # 用 raw SQL 写入 vad_spectrum/vad_pending
+    from sqlalchemy import text as sa_text
+    import json as _json
+    logger.info(f"[VAD] 收到 vad_spectrum={type(vad_spectrum).__name__} topic={topic[:20]}")
+    try:
+        if vad_spectrum is not None:
+            vs_json = _json.dumps(vad_spectrum, ensure_ascii=False)
+            sql = sa_text(f"UPDATE gold_dialogues SET vad_spectrum = '{vs_json}'::jsonb, vad_pending = false WHERE id = '{gold.id}'")
+            logger.info(f"[VAD] SQL: UPDATE gold_dialogues SET vad_spectrum=... vad_pending=false WHERE id={gold.id[:12]}...")
+            await db.execute(sql)
+        else:
+            await db.execute(
+                sa_text(f"UPDATE gold_dialogues SET vad_pending = true WHERE id = '{gold.id}'")
+            )
+    except Exception as e:
+        logger.error(f"[VAD] 写入异常: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     await db.commit()
 
     # 如果有 emotion_vector 且 Qdrant 可用，写入向量库

@@ -19,14 +19,18 @@ export function stopTTS() {
   if (!_playerAudio.paused) {
     _playerAudio.pause();
     _playerAudio.currentTime = 0;
-    _onTTSAudioState?.('idle');
   }
+  _ttsPlaying = false;
+  _onTTSAudioState?.('idle');
+  if (_playTimer) { _playTimer(); _playTimer = null; }
 }
 
 // 全局唯一音频播放器（复用同一个元素，解决手机自动播放限制）
 const _playerAudio = new Audio();
 _playerAudio.volume = 0.8;
 let _audioUnlocked = false;
+let _ttsPlaying = false;
+let _playTimer: any = null;
 
 /** 在用户首次交互时调用，解锁音频播放（解决手机自动播放限制） */
 export function unlockAudio() {
@@ -36,11 +40,17 @@ export function unlockAudio() {
   _playerAudio.play().then(() => { _playerAudio.pause(); _playerAudio.currentTime = 0; }).catch(() => {});
 }
 
+/** TTS 是否正在播放（供 ChatPanel 检测，防止手机麦克风回采导致回声死循环） */
+export function isTTSPlaying(): boolean { return _ttsPlaying; }
+
+/** 等待 TTS 播放完毕 */
+export function waitTTSDone(): Promise<void> {
+  if (!_ttsPlaying) return Promise.resolve();
+  return new Promise(r => { _playTimer = r; });
+}
+
 // 通过 Vite proxy (/api → localhost:3000) 转发请求
 const API_BASE = '/api';
-
-// 音频锁 — 防止多条语音重叠播放
-let _audioLock = false;
 
 interface ChatResponse {
   reply: string;
@@ -110,23 +120,16 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
     store.addMessage('assistant', data.reply);
     store.setTyping(false);
 
-    // 播放 TTS 语音
+    // 播放 TTS 语音（iPhone 需要绝对路径）
     if (data.audio_url) {
-      try {
-        if (_audioLock) { await new Promise(r => setTimeout(r, 200)); }
-        _audioLock = true;
-        // 清除旧事件，防止干扰
-        _playerAudio.onended = null;
-        _playerAudio.onerror = null;
-        _playerAudio.onabort = null;
-        const audioUrl = data.audio_url.startsWith('/') ? data.audio_url : data.audio_url;
-        _playerAudio.src = audioUrl;
-        _playerAudio.onended = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
-        _playerAudio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
-        _onTTSAudioState?.('playing');
-        await _playerAudio.load();
-        _playerAudio.play().catch(() => { _onTTSAudioState?.('idle'); _audioLock = false; });
-      } catch { _audioLock = false; _onTTSAudioState?.('idle'); }
+      const audioUrl = data.audio_url.startsWith('/') ? window.location.origin + data.audio_url : data.audio_url;
+      _ttsPlaying = true;
+      _playerAudio.src = audioUrl;
+      const onDone = () => { _ttsPlaying = false; _onTTSAudioState?.('idle'); if (_playTimer) { _playTimer(); _playTimer = null; } };
+      _playerAudio.onended = onDone;
+      _playerAudio.onerror = onDone;
+      _onTTSAudioState?.('playing');
+      _playerAudio.play().catch(() => { onDone(); });
     }
 
     // 将 M1-M5 分析结果注入思维流

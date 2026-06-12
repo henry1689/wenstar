@@ -78,7 +78,11 @@ class SystemAssistant:
             self.conversation.append({"role":"assistant","content":reply,"actions":[],"proposal":False})
             return {"reply":reply,"actions":[],"proposal":None,"history_length":len(self.conversation)//2}
 
-        if self.llm and hasattr(self.llm,'call') and self._is_llm_usable():
+        # ── 当 LLM 可用时，说明类意图交给 _llm_chat 统一处理（支持知识库综合回答）──
+        # proposal/tweak/vault_query 仍走专用处理器（有实际操作）
+        llm_usable = self.llm and hasattr(self.llm,'call') and self._is_llm_usable()
+        if llm_usable and intent["type"] in ("greeting", "system_intro", "feature_question",
+                                               "status", "help", "unknown", "general", "feedback"):
             reply = self._llm_chat(message)
         else:
             reply = self._rule_reply(intent, message)
@@ -246,24 +250,32 @@ class SystemAssistant:
         使用 LLM + 知识库生成自然回复。
         景幻仙姑人设：严谨的图书管理员 + 温柔的技术助手。
         有就是有，没有就是没有。有价值的反馈会承诺跟进。
+
+        优化说明：
+        1. 先从知识库搜索相关内容（多结果）
+        2. 对综合性问题（含多个主题）→ 直接走知识库全文回答
+        3. 对单一问题 → 传给 MockLLM 匹配
+        4. 都找不到 → 规则降级
         """
-        # 从知识库搜索相关信息
-        kb_context = ""
+        # ── 第1步：从知识库搜索相关信��（取5条）
+        kb_result_raw = ""
         if self.kb:
+            old_max = getattr(self.kb, '_max_results', 3)
+            self.kb._max_results = 5
             kb_result = self.kb.search(message)
+            self.kb._max_results = old_max
             if kb_result:
-                kb_context = f"\n\n## 参考文献\n{kb_result}"
+                kb_result_raw = kb_result
 
-        # 构建对话上下文
-        history = self.conversation[-6:-1]
-        history_text = ""
-        if history:
-            history_text = "\n".join(
-                f"{'用户' if h['role']=='user' else '景幻仙姑'}: {h['content'][:200]}"
-                for h in history
-            )
+        kb_sections = kb_result_raw.count('【') if kb_result_raw else 0
+        is_multi_topic = any(c in message for c in ['和', '与', '怎么', '如何', '什么关系', '分别'])
 
-        # 景幻仙姑人设 system prompt
+        # ── 第2步：综合性问题且命中多条知识 → 直接走知识库综合回答
+        if kb_sections >= 2 and is_multi_topic:
+            logger.info(f"[景幻] 综合问题: 命中 {kb_sections} 条知识，综合回答")
+            return f"我查了一下馆藏，找到了以下相关信息：\n\n{kb_result_raw[:2000]}"
+
+        # ── 第3步：传给 MockLLM（单一主题问题）
         system_prompt = (
             "你是景幻仙姑——仿生智脑的掌管者、大英图书馆馆长。\n\n"
             "## 你的原则\n"
@@ -272,32 +284,32 @@ class SystemAssistant:
             "- 🔧 技术后盾：熟悉系统架构（FastAPI+PostgreSQL+Qdrant+MinIO），"
             "能帮用户解决实际问题\n\n"
             "## 你的能力\n"
-            "1. 查询三库数据（砂金库/金库/黑钻库）\n"
+            "1. 查询三库数据\n"
             "2. 介绍系统架构和使用方法\n"
             "3. 执行微调操作\n"
             "4. 生成改善建议\n"
-            "5. 监控安全状态\n\n"
-            "## 对话风格\n"
-            "- 回答简洁、准确，不啰嗦\n"
-            "- 不知道就说不知道，但会告诉用户你还能帮他做什么\n"
-            "- 如果用户提的建议有价值，真诚地表示感谢并承诺跟进\n"
-            "- 用户问的问题如果涉及系统当前不支持的功能，诚实告知，"
-            "同时可以说「这个方向很好，我会记录下来」"
+            "5. 监控安全状态"
         )
-        if history_text:
+        history = self.conversation[-6:-1]
+        if history:
+            history_text = "\n".join(f"{'用户' if h['role']=='user' else '景幻仙姑'}: {h['content'][:200]}" for h in history)
             system_prompt += f"\n\n## 最近的对话\n{history_text}"
-
-        user_prompt = message
-        if kb_context:
-            user_prompt = f"{message}\n\n{kb_context}"
+        if kb_result_raw:
+            system_prompt += f"\n\n## 馆藏资料\n{kb_result_raw[:2000]}"
 
         try:
-            response = self.llm.call(user_prompt, system_prompt)
+            response = self.llm.call(message, system_prompt)
             if response and len(response.strip()) > 10:
                 return response.strip()
         except Exception as e:
             logger.warning(f"LLM 对话失败: {e}")
 
+        # ── 第4步：MockLLM 没匹配上 → 知识库兜底
+        if kb_result_raw and len(kb_result_raw) > 40:
+            logger.info(f"[景幻] 知识库兜底: {kb_sections} 条")
+            return f"我查了一下馆藏，找到了以下相关信息：\n\n{kb_result_raw[:1500]}"
+
+        # ── 第5步：都没找到 → 规则降级
         return self._rule_reply(self._parse_intent(message), message)
 
     # ── 意图识别 ──
