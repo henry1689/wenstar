@@ -58,7 +58,7 @@ export default function ChatPanel({ inline }: Props) {
       if (voiceModeRef.current !== 'phone') return;
       if (state === 'playing') {
         isPausedForTTS.current = true;
-        try { recognitionRef.current?.stop(); } catch {}
+        // 不主动stop，让onend发现isPausedForTTS后自然暂停
       } else if (state === 'idle') {
         isPausedForTTS.current = false;
         if (voiceModeRef.current === 'phone') {
