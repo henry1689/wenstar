@@ -52,13 +52,13 @@ export default function ChatPanel({ inline }: Props) {
     sendMessage(text.trim(), ttsEnabled).catch(() => {});
   }, [ttsEnabled, addMessage]);
 
-  // TTS 回声消除：玉瑶说话时暂停语音识别，播完重新创建识别器
+  // TTS 回声消除：TTS播放时防止麦克风回采导致回声死循环
   useEffect(() => {
     setOnTTSAudioState((state) => {
       if (voiceModeRef.current !== 'phone') return;
       if (state === 'playing') {
         isPausedForTTS.current = true;
-        // 不主动stop，让onend发现isPausedForTTS后自然暂停
+        // 不主动stop识别器——让它自然onend，由onend检查isPausedForTTS决定是否重启
       } else if (state === 'idle') {
         isPausedForTTS.current = false;
         if (voiceModeRef.current === 'phone') {
@@ -118,16 +118,18 @@ export default function ChatPanel({ inline }: Props) {
     const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!_SR || voiceModeRef.current !== 'phone') return;
     const gen = ++recGenRef.current;
-    // 延迟100ms开始，避免和旧识别器的onend冲突
     const startIt = () => {
       if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
-      const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false; r.continuous = true;
+      const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false;
+      // iPhone 不支持 continuous: true，设 false 确保兼容
+      r.continuous = false;
       recognitionRef.current = r;
       r.onresult = (e: any) => {
         for (let i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
             const t = e.results[i][0].transcript.trim();
-            if (isTTSPlaying()) { stopTTS(); } // 打断TTS后，该次语音继续处理
+            // 回声死锁防护：TTS播放时收到的语音是回声，打断TTS并丢弃
+            if (isTTSPlaying()) { stopTTS(); return; }
             if (t && t.length >= 2) {
               setShowWelcome(false);
               addMessage('user', t);
@@ -136,8 +138,18 @@ export default function ChatPanel({ inline }: Props) {
           }
         }
       };
-      r.onend = () => { if (gen === recGenRef.current && voiceModeRef.current === 'phone') keepListening(); };
-      r.onerror = () => { if (gen === recGenRef.current && voiceModeRef.current === 'phone') setTimeout(keepListening, 500); };
+      r.onend = () => {
+        if (gen === recGenRef.current && voiceModeRef.current === 'phone') {
+          // TTS播放中不重启识别（iPhone音频会话独占，不能同时播报+录音）
+          if (isPausedForTTS.current) return;
+          keepListening();
+        }
+      };
+      r.onerror = () => {
+        if (gen === recGenRef.current && voiceModeRef.current === 'phone' && !isPausedForTTS.current) {
+          setTimeout(keepListening, 500);
+        }
+      };
       try { r.start(); } catch { if (gen === recGenRef.current) setTimeout(keepListening, 500); }
     };
     setTimeout(startIt, 100);
