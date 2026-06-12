@@ -16,9 +16,9 @@ export function setOnTTSAudioState(cb: ((state: 'playing' | 'idle') => void) | n
 
 /** 中断 TTS 播放（用户打断说话时调用） */
 export function stopTTS() {
-  if (_currentAudio && !_currentAudio.paused) {
-    _currentAudio.pause();
-    _currentAudio.currentTime = 0;
+  if (!_playerAudio.paused) {
+    _playerAudio.pause();
+    _playerAudio.currentTime = 0;
     _onTTSAudioState?.('idle');
   }
 }
@@ -39,8 +39,7 @@ export function unlockAudio() {
 // 通过 Vite proxy (/api → localhost:3000) 转发请求
 const API_BASE = '/api';
 
-// 全局音频引用 — 防止多条语音重叠播放（保证同一时间只有一个在播）
-let _currentAudio: HTMLAudioElement | null = null;
+// 音频锁 — 防止多条语音重叠播放
 let _audioLock = false;
 
 interface ChatResponse {
@@ -111,29 +110,18 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
     store.addMessage('assistant', data.reply);
     store.setTyping(false);
 
-    // 播放 TTS 语音（合并：防重叠锁定 + 回声消除通知）
+    // 播放 TTS 语音
     if (data.audio_url) {
       try {
-        // 停止上一条
-        if (_currentAudio) {
-          _currentAudio.pause();
-          _currentAudio.currentTime = 0;
-          _currentAudio.onended = null;
-          _currentAudio = null;
-        }
-        if (_audioLock) {
-          await new Promise(r => setTimeout(r, 200));
-        }
+        if (_audioLock) { await new Promise(r => setTimeout(r, 200)); }
         _audioLock = true;
-        // 复用全局播放器（解决手机自动播放限制）
+        // 清除旧事件，防止干扰
+        _playerAudio.onended = null;
+        _playerAudio.onerror = null;
+        _playerAudio.onabort = null;
         const audioUrl = data.audio_url.startsWith('/') ? data.audio_url : data.audio_url;
-        _currentAudio = _playerAudio;
         _playerAudio.src = audioUrl;
-        _playerAudio.onended = () => {
-          _currentAudio = null;
-          _audioLock = false;
-          _onTTSAudioState?.('idle');
-        };
+        _playerAudio.onended = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
         _playerAudio.onerror = () => { _audioLock = false; _onTTSAudioState?.('idle'); };
         _onTTSAudioState?.('playing');
         await _playerAudio.load();
