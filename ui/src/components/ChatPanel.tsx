@@ -98,13 +98,15 @@ export default function ChatPanel({ inline }: Props) {
     setVoiceMode('mic');
   }, [setError]);
 
-  // ── 电话模式：Coze同款 — 麦克风常亮，永不停止识别器 ──
-  // 用时间冷却防回声，而不是暂停/重启识别器
+  // ── 电话模式：稳定通话 ──
+  // 核心规则：识别器只在"空闲"时运行。说话→立即停识别器→等回复+TTS播完→再重启
   const _lastSendMs = useRef(0);
   const recGenRef = useRef(0);
   const startRecognition = useCallback(() => {
     const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!_SR || voiceModeRef.current !== 'phone') return;
+    // TTS播放中不启动（iOS音频会话独占）
+    if (isTTSPlaying()) { setTimeout(() => startRecognition(), 300); return; }
     const gen = ++recGenRef.current;
     setTimeout(() => {
       if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
@@ -120,30 +122,47 @@ export default function ChatPanel({ inline }: Props) {
           const t = e.results[i][0].transcript.trim();
           if (t.length < 2) continue;
 
-          // 回声死锁防护：TTS播放期间的识别结果全是回声，全部丢弃
-          if (isTTSPlaying()) { stopTTS(); _lastSendMs.current = Date.now(); continue; }
+          // 安全：TTS播放时丢弃（理论上不会发生，因为TTS播放时不运行识别）
+          if (isTTSPlaying()) { stopTTS(); continue; }
 
-          // 冷却时间（上次发送后3秒内丢弃残余回声）
-          if (Date.now() - _lastSendMs.current < 3000) continue;
+          // ★ 核心：立即停止识别器，等回复完毕再重启
+          try { r.stop(); } catch {}
 
           _lastSendMs.current = Date.now();
           setShowWelcome(false);
           addMessage('user', t);
-          sendMessage(t, ttsEnabled).catch(() => {});
+
+          // 发送消息，等回复+TTS全部播完后再重启识别
+          const myGen = gen;
+          sendMessage(t, ttsEnabled).catch(() => {}).finally(() => {
+            // 轮询等待TTS播完
+            const waitTTS = () => {
+              if (voiceModeRef.current !== 'phone' || myGen !== recGenRef.current) return;
+              if (isTTSPlaying()) return setTimeout(waitTTS, 300);
+              // TTS播完 + 额外延迟保证音频通道释放
+              setTimeout(() => startRecognition(), 500);
+            };
+            waitTTS();
+          });
+          return; // 只处理第一条识别结果
         }
       };
 
       r.onend = () => {
-        // 永不停止：onend 后立即重启
-        if (gen === recGenRef.current && voiceModeRef.current === 'phone') {
-          setTimeout(() => startRecognition(), 50);
-        }
+        if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
+        // 刚发送过消息（5秒内），不重启——由onresult的finally负责
+        if (Date.now() - _lastSendMs.current < 5000) return;
+        if (isTTSPlaying()) return;
+        // 自然结束（无人说话），正常重启
+        setTimeout(() => startRecognition(), 100);
       };
+
       r.onerror = () => {
-        if (gen === recGenRef.current && voiceModeRef.current === 'phone') {
-          setTimeout(() => startRecognition(), 200);
+        if (gen === recGenRef.current && voiceModeRef.current === 'phone' && !isTTSPlaying()) {
+          setTimeout(() => startRecognition(), 500);
         }
       };
+
       try { r.start(); } catch {
         if (gen === recGenRef.current) setTimeout(() => startRecognition(), 500);
       }
@@ -183,6 +202,7 @@ export default function ChatPanel({ inline }: Props) {
     if (_SR) {
       navigator.mediaDevices.getUserMedia({audio:true}).then(s => s.getTracks().forEach(t => t.stop())).catch(()=>{});
       phoneBufferRef.current = '';
+      _lastSendMs.current = 0;
       setTimeout(() => startRecognition(), 100);
     } else { isKeyboardPhone.current = true; setTimeout(() => inputRef.current?.focus(), 100); }
   }, [ttsEnabled, addMessage, setError]);
