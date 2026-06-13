@@ -120,14 +120,13 @@ export default function ChatPanel({ inline }: Props) {
           const t = e.results[i][0].transcript.trim();
           if (t.length < 2) continue;
 
-          // 回声消除：每次发送后3秒内丢弃（防止TTS回声被二次发送）
-          const now = Date.now();
-          if (now - _lastSendMs.current < 3000) continue;
+          // 回声死锁防护：TTS播放期间的识别结果全是回声，全部丢弃
+          if (isTTSPlaying()) { stopTTS(); _lastSendMs.current = Date.now(); continue; }
 
-          // 用户打断了 TTS → 停掉 TTS
-          if (isTTSPlaying()) { stopTTS(); }
+          // 冷却时间（上次发送后3秒内丢弃残余回声）
+          if (Date.now() - _lastSendMs.current < 3000) continue;
 
-          _lastSendMs.current = now;
+          _lastSendMs.current = Date.now();
           setShowWelcome(false);
           addMessage('user', t);
           sendMessage(t, ttsEnabled).catch(() => {});
