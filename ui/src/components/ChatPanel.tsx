@@ -52,17 +52,18 @@ export default function ChatPanel({ inline }: Props) {
     sendMessage(text.trim(), ttsEnabled).catch(() => {});
   }, [ttsEnabled, addMessage]);
 
-  // TTS 回声消除：TTS播放时防止麦克风回采导致回声死循环
+  // TTS 回声消除：TTS播放时暂停语音识别，播完干净重启
   useEffect(() => {
     setOnTTSAudioState((state) => {
       if (voiceModeRef.current !== 'phone') return;
       if (state === 'playing') {
         isPausedForTTS.current = true;
-        // 不主动stop识别器——让它自然onend，由onend检查isPausedForTTS决定是否重启
+        // 识别器自然结束后 onend 看到 isPausedForTTS 不会重启
       } else if (state === 'idle') {
         isPausedForTTS.current = false;
         if (voiceModeRef.current === 'phone') {
-          restartRef.current?.();
+          // iOS需要稍长延迟确保音频通道完全释放
+          setTimeout(() => restartRef.current?.(), 400);
         }
       }
     });
@@ -112,49 +113,75 @@ export default function ChatPanel({ inline }: Props) {
     setVoiceMode('mic');
   }, [setError]);
 
-  // ── 电话模式：Coze同款 — 连续稳定通话 ──
+  // ── 电话模式：Coze同款 — 稳定持续通话 ──
   const recGenRef = useRef(0);
-  const keepListening = useCallback(() => {
+  // 启动语音识别
+  const startRecognition = useCallback(() => {
     const _SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!_SR || voiceModeRef.current !== 'phone') return;
+    if (isPausedForTTS.current) return;          // TTS播放中不启动
     const gen = ++recGenRef.current;
-    const startIt = () => {
-      if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
-      const r = new _SR(); r.lang = 'zh-CN'; r.interimResults = false;
-      // iPhone 不支持 continuous: true，设 false 确保兼容
-      r.continuous = false;
-      recognitionRef.current = r;
-      r.onresult = (e: any) => {
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            const t = e.results[i][0].transcript.trim();
-            // 回声死锁防护：TTS播放时收到的语音是回声，打断TTS并丢弃
-            if (isTTSPlaying()) { stopTTS(); return; }
-            if (t && t.length >= 2) {
-              setShowWelcome(false);
-              addMessage('user', t);
-              sendMessage(t, ttsEnabled).catch(() => {});
-            }
+    const r = new _SR();
+    r.lang = 'zh-CN';
+    r.interimResults = false;
+    r.continuous = false;                        // iOS 不支持 continuous:true
+    recognitionRef.current = r;
+
+    r.onresult = (e: any) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const t = e.results[i][0].transcript.trim();
+          // 回声死锁：TTS播放中收到的语音是回声，打断并丢弃
+          if (isTTSPlaying()) { stopTTS(); return; }
+          if (t && t.length >= 2) {
+            setShowWelcome(false);
+            addMessage('user', t);
+            // ★ 发送消息后立即暂停识别，避免和 TTS 播放冲突
+            isPausedForTTS.current = true;
+            sendMessage(t, ttsEnabled).catch(() => {}).finally(() => {
+              // 回复处理完毕（不管有没有 TTS），尝试重启识别
+              if (voiceModeRef.current !== 'phone') return;
+              if (isTTSPlaying()) {
+                // TTS 还在播，等 idle 事件再重启
+                return;
+              }
+              // 无 TTS 或 TTS 已播完，稍等后重启
+              isPausedForTTS.current = false;
+              setTimeout(() => {
+                if (voiceModeRef.current === 'phone' && !isPausedForTTS.current) {
+                  startRecognition();
+                }
+              }, 400);
+            });
           }
         }
-      };
-      r.onend = () => {
-        if (gen === recGenRef.current && voiceModeRef.current === 'phone') {
-          // TTS播放中不重启识别（iPhone音频会话独占，不能同时播报+录音）
-          if (isPausedForTTS.current) return;
-          keepListening();
-        }
-      };
-      r.onerror = () => {
-        if (gen === recGenRef.current && voiceModeRef.current === 'phone' && !isPausedForTTS.current) {
-          setTimeout(keepListening, 500);
-        }
-      };
-      try { r.start(); } catch { if (gen === recGenRef.current) setTimeout(keepListening, 500); }
+      }
     };
-    setTimeout(startIt, 100);
+
+    r.onend = () => {
+      if (gen !== recGenRef.current || voiceModeRef.current !== 'phone') return;
+      if (isPausedForTTS.current) return;        // 等待回复中/等待TTS播完，不重启
+      // 自然结束（没有说话超时），重启
+      setTimeout(() => {
+        if (gen === recGenRef.current && voiceModeRef.current === 'phone' && !isPausedForTTS.current) {
+          startRecognition();
+        }
+      }, 200);
+    };
+
+    r.onerror = () => {
+      if (gen === recGenRef.current && voiceModeRef.current === 'phone' && !isPausedForTTS.current) {
+        setTimeout(startRecognition, 500);
+      }
+    };
+
+    try { r.start(); } catch {
+      if (gen === recGenRef.current && !isPausedForTTS.current) {
+        setTimeout(startRecognition, 500);
+      }
+    }
   }, [ttsEnabled, addMessage]);
-  useEffect(() => { restartRef.current = keepListening; }, [keepListening]);
+  useEffect(() => { restartRef.current = startRecognition; }, [startRecognition]);
 
   const flushPhone = useCallback(() => {
     if (phoneBufferRef.current) {
@@ -189,7 +216,7 @@ export default function ChatPanel({ inline }: Props) {
     if (_SR) {
       navigator.mediaDevices.getUserMedia({audio:true}).then(s => s.getTracks().forEach(t => t.stop())).catch(()=>{});
       phoneBufferRef.current = '';
-      setTimeout(() => keepListening(), 100);
+      setTimeout(() => startRecognition(), 100);
     } else { isKeyboardPhone.current = true; setTimeout(() => inputRef.current?.focus(), 100); }
   }, [ttsEnabled, addMessage, setError]);
 
