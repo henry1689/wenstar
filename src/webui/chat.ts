@@ -646,19 +646,27 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[KBChat] 建档失败:', err); }
 
-    // 铁律：知识分类反问 — 检查是否有待分类的知识条目，主动询问用途
+    // 铁律：知识分类反问 — 检查超过1天仍未分类的条目，隔几天提醒一次
     try {
-      const unclassifiedItems = ctx.knowledgeBase.getUnclassified(1);
-      if (unclassifiedItems.length > 0) {
-        const item = unclassifiedItems[0];
+      const oneDayMs = 86400000;
+      const unclassifiedItems = ctx.knowledgeBase.getUnclassified(5);
+      const staleItems = unclassifiedItems.filter((item: any) => {
+        const age = Date.now() - new Date(item.created_at).getTime();
+        return age > oneDayMs;
+      });
+      if (staleItems.length > 0) {
+        const item = staleItems[0];
+        const title = (item.title || '').substring(0, 20);
         const alreadyAsked = ctx.conversationHistory.some(
-          t => t.role === 'assistant' && t.content && t.content.includes(item.title.substring(0, 15))
+          (t: any) => t.role === 'assistant' && t.content && t.content.includes(title)
         );
         if (!alreadyAsked) {
+          const ageDays = Math.floor((Date.now() - new Date(item.created_at).getTime()) / oneDayMs);
+          const urgency = ageDays > 60 ? '(再不分类就要被清理了哦)' : ageDays > 30 ? '(提醒一下～)' : '';
           reply += '
 
-📋 你刚才提到的"' + item.title.substring(0, 20) + '"，我想好好记住。
-这是关于什么的呀？比如：工作资料、个人笔记、角色扮演、还是其他？';
+📋 前几天提到的"' + title + '"' + urgency + '，我还没想好怎么归类。
+这是关于工作、生活、角色扮演、还是其他方面的呀？';
         }
       }
     } catch (err) { console.warn('[Classify] 知识分类反问失败:', err); }

@@ -407,10 +407,40 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     ).map(rowToEntry);
   }
 
+  /** 获取创建时间超过指定天数仍未分类的条目（用于玉瑶隔几天提醒一次） */
+  function getUnclassifiedOlderThan(days: number, limit = 5): KnowledgeItem[] {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+    return sqlite.queryAll(
+      `SELECT * FROM knowledge_base WHERE classification_pending = 1 AND created_at < ? ORDER BY created_at ASC LIMIT ?`,
+      [cutoff, limit],
+    ).map(rowToEntry);
+  }
+
+  /**
+   * 彻底移除超过指定天数仍未分类的垃圾条目（铁律：3个月无分类视为垃圾）
+   * 同时清理关联的 knowledge_chunks 和 knowledge_memories
+   */
+  function deleteExpiredUnclassified(maxAgeDays: number): number {
+    const cutoff = new Date(Date.now() - maxAgeDays * 86400000).toISOString();
+    const expired = sqlite.queryAll(
+      `SELECT id FROM knowledge_base WHERE classification_pending = 1 AND created_at < ?`,
+      [cutoff],
+    );
+    const ids = expired.map((r: any) => r.id as string);
+    if (ids.length === 0) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    sqlite.writeRaw(`DELETE FROM knowledge_chunks WHERE kn_id IN (${placeholders})`, ...ids);
+    sqlite.writeRaw(`DELETE FROM knowledge_memories WHERE knowledge_id IN (${placeholders})`, ...ids);
+    sqlite.writeRaw(`DELETE FROM knowledge_base WHERE id IN (${placeholders})`, ...ids);
+    console.log(`[KE] 垃圾清理: 移除 ${ids.length} 条超过 ${maxAgeDays} 天未分类的知识条目`);
+    return ids.length;
+  }
+
   return {
     add, list, getById, update, delete: remove,
     search, count, upload, reindexAll,
     vectorSearchDebug, embedProvider, vectorStore,
     updateClassification, getUnclassified,
+    getUnclassifiedOlderThan, deleteExpiredUnclassified,
   };
 }

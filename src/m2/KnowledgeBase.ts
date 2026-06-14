@@ -51,4 +51,12 @@ export class KnowledgeBase {
   getUnclassified(limit = 10): KnowledgeItem[] {
     return this.engine.getUnclassified(limit);
   }
+
+  getUnclassifiedOlderThan(days: number, limit = 5): KnowledgeItem[] {
+    return this.engine.getUnclassifiedOlderThan(days, limit);
+  }
+
+  deleteExpiredUnclassified(maxAgeDays: number): number {
+    return this.engine.deleteExpiredUnclassified(maxAgeDays);
+  }
 }

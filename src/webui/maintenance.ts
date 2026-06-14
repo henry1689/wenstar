@@ -120,19 +120,22 @@ export class MaintenanceService {
     storage: AnyStorage | (() => AnyStorage);
     /** 记忆衰减维护函数 */
     runDecay?: () => { total: number; archived: number };
+    /** 知识库过期无分类条目清理（铁律：3个月无分类视为垃圾） */
+    runKnowledgeGc?: () => number;
   }): void {
     this.conversationHistory = deps.conversationHistory;
     this.getConversationHistory = deps.getConversationHistory;
     this.setConversationHistory = deps.setConversationHistory;
     this.saveConversationHistory = deps.saveConversationHistory;
-    // 支持直接对象或 getter 函数
     this.storage = typeof deps.storage === 'function' ? null : deps.storage;
     if (typeof deps.storage === 'function') {
-      // getter — 保存原始 getter，runGC 时动态取值
       this._storageGetter = deps.storage as () => AnyStorage;
     }
     if (deps.runDecay) this.runDecay = deps.runDecay;
+    if (deps.runKnowledgeGc) this._runKnowledgeGc = deps.runKnowledgeGc;
   }
+
+  private _runKnowledgeGc: () => number = () => 0;
 
   private _storageGetter: (() => AnyStorage) | null = null;
 
@@ -154,6 +157,12 @@ export class MaintenanceService {
         console.error('[Maintenance] 存储GC失败:', e)
       );
     }, this.config.gcInterval);
+
+    // 知识库未分类条目 GC（3个月无分类彻底删除 — 铁律）
+    setInterval(() => {
+      try { const r = this._runKnowledgeGc(); if (r > 0) console.log('[Maintenance] 知识库GC: 清理 ' + r + ' 条过期未分类条目'); }
+      catch (e) { console.error('[Maintenance] 知识库GC失败:', e); }
+    }, 24 * 60 * 60 * 1000);
 
     // 记忆衰减定时器（15 分钟）
     this.decayTimer = setInterval(() => {

@@ -143,6 +143,8 @@ maintenance.injectDeps({
   storage: () => storage,
   // 衰减维护（惰性）
   runDecay: () => storage?.runDecayMaintenance() ?? { total: 0, archived: 0 },
+  // 知识库过期未分类条目清理（90天—铁律，惰性）
+  runKnowledgeGc: () => (knowledgeBase as any)?.deleteExpiredUnclassified?.(90) ?? 0,
 });
 
 // ── 管道 ──
