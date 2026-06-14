@@ -58,3 +58,43 @@ describe('L2ContentExtractor — ref 格式', () => {
     expect(result.ref).toContain('00001');
   });
 });
+
+
+// ─── 新增：5 区异构映射测试（白皮书 §2.2）───
+
+describe('L2ContentExtractor — 5区扩展映射', () => {
+  it('身体感受+emotion类型 → embodied_perception_zone', () => {
+    const extractor = new L2ContentExtractor();
+    // 使用 daily 话题（不触发原2区规则），emotion 类型+身体词 → 命中具身区
+    const result = extractor.extract('user.daily.health', '心跳加速，呼吸急促', ['emotion']);
+    expect(result.leaf_zone).toBe('embodied_perception_zone');
+  });
+
+  it('人物+社会关系 → social_schema_zone', () => {
+    const extractor = new L2ContentExtractor();
+    const result = extractor.extract('user.misc.default', '我和同事的关系很好', ['person']);
+    expect(result.leaf_zone).toBe('social_schema_zone');
+  });
+
+  it('事件/地点 → spatiotemporal_episode_zone', () => {
+    const extractor = new L2ContentExtractor();
+    const result = extractor.extract('user.misc.default', '昨天在公园发生了那件事', ['event', 'place']);
+    expect(result.leaf_zone).toBe('spatiotemporal_episode_zone');
+  });
+
+  it('不传 entityTypes 时保持原行为（不进入5区判定）', () => {
+    const extractor = new L2ContentExtractor();
+    const result = extractor.extract('user.misc.default', '心跳加速，呼吸急促');
+    expect(result.leaf_zone).toBe('language_semantic_zone');
+  });
+
+  it('zone 缩写对应正确（body/space/soc）', () => {
+    const extractor = new L2ContentExtractor();
+    const r1 = extractor.extract('user.daily.health', '全身酸痛', ['emotion']);
+    expect(r1.ref).toContain('body');
+    const r2 = extractor.extract('user.misc.default', '昨天在公园', ['event', 'place']);
+    expect(r2.ref).toContain('space');
+    const r3 = extractor.extract('user.misc.default', '我的领导很信任我', ['person']);
+    expect(r3.ref).toContain('soc');
+  });
+});
