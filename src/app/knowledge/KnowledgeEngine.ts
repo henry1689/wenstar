@@ -112,6 +112,8 @@ function rowToEntry(r: Record<string, any>): KnowledgeItem {
     created_at: r.created_at as string,
     updated_at: r.updated_at as string,
     locked: r.locked === 1 || r.locked === true,
+    classification: r.classification as string | undefined,
+    classification_pending: r.classification_pending === 1 || r.classification_pending === true,
   };
 }
 
@@ -191,27 +193,35 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     tags?: string[];
     /** 关联的情绪上下文（pleasure, arousal, intimacy 等关键维度） */
     emotionalContext?: { pleasure: number; arousal: number; intimacy: number };
+    /** 知识分类（铁律：无分类不检索 — 不传则标记为待分类） */
+    classification?: string;
   }): Promise<KnowledgeItem> {
     const id = `kn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
     const allTags = [...(params.tags ?? [])];
-    // 将情绪编码到标签中
     if (params.emotionalContext) {
       const e = params.emotionalContext;
       allTags.push(`emotion:p${e.pleasure.toFixed(2)}_a${e.arousal.toFixed(2)}_i${e.intimacy.toFixed(2)}`);
     }
+    // 无分类标记为待分类
+    const hasClassification = !!params.classification;
+    const classification = params.classification || null;
+    const classificationPending = hasClassification ? 0 : 1;
     const entry: KnowledgeItem = {
       id, title: params.title, content: params.content,
       source_type: params.source_type ?? 'text', source_name: params.source_name ?? null,
       file_size: params.file_size ?? 0, tags: allTags,
       created_at: now, updated_at: now, locked: false,
+      classification: classification || undefined,
+      classification_pending: !hasClassification,
     };
     sqlite.writeRaw(
-      `INSERT INTO knowledge_base (id, title, content, source_type, source_name, file_size, tags, created_at, updated_at, locked)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO knowledge_base (id, title, content, source_type, source_name, file_size, tags, created_at, updated_at, locked, classification, classification_pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       entry.id, entry.title, entry.content, entry.source_type,
       entry.source_name, entry.file_size, JSON.stringify(entry.tags),
       entry.created_at, entry.updated_at, entry.locked ? 1 : 0,
+      classification, classificationPending ? 1 : 0,
     );
 
     // 异步分块 + 嵌入（不阻塞返回）
@@ -378,9 +388,29 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     return results;
   }
 
+  /** 更新知识分类（玉瑶反问用户后获得分类信息时调用） */
+  async function updateClassification(id: string, classification: string): Promise<boolean> {
+    const existing = getById(id);
+    if (!existing) return false;
+    sqlite.writeRaw(
+      `UPDATE knowledge_base SET classification = ?, classification_pending = 0, updated_at = ? WHERE id = ?`,
+      classification, new Date().toISOString(), id,
+    );
+    console.log(`[KE] 已分类: ${classification} → ${existing.title.substring(0, 30)}`);
+    return true;
+  }
+
+  /** 获取所有待分类的知识条目（玉瑶据此生成反问） */
+  function getUnclassified(limit = 10): KnowledgeItem[] {
+    return sqlite.queryAll(
+      `SELECT * FROM knowledge_base WHERE classification_pending = 1 ORDER BY created_at DESC LIMIT ?`, [limit],
+    ).map(rowToEntry);
+  }
+
   return {
     add, list, getById, update, delete: remove,
     search, count, upload, reindexAll,
     vectorSearchDebug, embedProvider, vectorStore,
+    updateClassification, getUnclassified,
   };
 }

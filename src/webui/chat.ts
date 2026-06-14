@@ -637,7 +637,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
             // 去重: 检查标题前缀是否已存在（修复: 之前每次匹配都新增导致"我工作在XX"存3次）
             const existing = await ctx.knowledgeBase.search(content.substring(0, 20), 1);
             if (existing.length === 0 || !existing.some((e: any) => e.title?.includes(pattern.prefix))) {
-              await ctx.knowledgeBase.add({ title: `${pattern.prefix}: ${content.substring(0, 20)}`, content, emotionalContext: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy } });
+              await ctx.knowledgeBase.add({ title: `${pattern.prefix}: ${content.substring(0, 20)}`, content, emotionalContext: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, classification: '用户资料' });
               if (!FALLBACK_REPLIES.includes(reply)) reply += `\n\n💡 我已悄悄记住啦～`;
             }
           }
@@ -645,6 +645,23 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         }
       }
     } catch (err) { console.warn('[KBChat] 建档失败:', err); }
+
+    // 铁律：知识分类反问 — 检查是否有待分类的知识条目，主动询问用途
+    try {
+      const unclassifiedItems = ctx.knowledgeBase.getUnclassified(1);
+      if (unclassifiedItems.length > 0) {
+        const item = unclassifiedItems[0];
+        const alreadyAsked = ctx.conversationHistory.some(
+          t => t.role === 'assistant' && t.content && t.content.includes(item.title.substring(0, 15))
+        );
+        if (!alreadyAsked) {
+          reply += '
+
+📋 你刚才提到的"' + item.title.substring(0, 20) + '"，我想好好记住。
+这是关于什么的呀？比如：工作资料、个人笔记、角色扮演、还是其他？';
+        }
+      }
+    } catch (err) { console.warn('[Classify] 知识分类反问失败:', err); }
 
     // M6 自我模型演化
     try {

@@ -43,4 +43,12 @@ export class KnowledgeBase {
   async upload(buffer: Buffer, fileName: string, mimeType: string): Promise<KnowledgeItem> {
     return this.engine.upload(buffer, fileName, mimeType);
   }
+
+  async updateClassification(id: string, classification: string): Promise<boolean> {
+    return this.engine.updateClassification(id, classification);
+  }
+
+  getUnclassified(limit = 10): KnowledgeItem[] {
+    return this.engine.getUnclassified(limit);
+  }
 }

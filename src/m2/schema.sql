@@ -97,7 +97,10 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     tags TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    locked INTEGER DEFAULT 0
+    locked INTEGER DEFAULT 0,
+    -- 知识分类（铁律：无分类不检索）
+    classification TEXT,
+    classification_pending INTEGER DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_created ON knowledge_base(created_at DESC);
