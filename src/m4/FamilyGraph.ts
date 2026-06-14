@@ -419,34 +419,34 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   async addFamilyMember(name: string, relation: string, aliases?: string[]): Promise<void> {
-    const userId = this.userNodeId ?? '我';
-    const uNodes = this.query('SELECT id FROM nodes WHERE name = ?', [userId]);
-    let uid: string;
+    const selfName = this.userNodeId ?? '我';
+    const uNodes = this.query('SELECT id FROM nodes WHERE name = ?', [selfName]);
+    let userNodeId: string;
     if (uNodes.length === 0) {
-      uid = this.generateId();
-      await this.addNode({ id: uid, type: 'person', name: userId });
+      userNodeId = uid();
+      await this.addNode({ id: userNodeId, type: 'person', name: selfName });
     } else {
-      uid = uNodes[0].id;
+      userNodeId = uNodes[0].id;
     }
 
     const pNodes = this.query('SELECT id FROM nodes WHERE name = ?', [name]);
-    let pid: string;
+    let personId: string;
     if (pNodes.length === 0) {
-      pid = this.generateId();
+      personId = uid();
       await this.addNode({
-        id: pid,
+        id: personId,
         type: 'person',
         name,
         aliases,
       });
     } else {
-      pid = pNodes[0].id;
+      personId = pNodes[0].id;
     }
 
-    await this.addEdge({ id: this.generateId(), source_id: uid, target_id: pid, relation });
+    await this.addEdge({ id: uid(), source_id: userNodeId, target_id: personId, relation });
     const reverse = REVERSE_RELATION[relation];
     if (reverse && reverse !== relation) {
-      await this.addEdge({ id: this.generateId(), source_id: pid, target_id: uid, relation: reverse });
+      await this.addEdge({ id: uid(), source_id: personId, target_id: userNodeId, relation: reverse });
     }
   }
 
@@ -478,10 +478,6 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   // ─── 辅助方法 ───
-
-  private generateId(): string {
-    return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
-  }
 
   private describeRelation(rel: string): string {
     const map: Record<string, string> = {

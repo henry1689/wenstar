@@ -3,8 +3,7 @@
 
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import type { DNA } from '../m1/types/dna.js';
-import type { MemorySummary, M4Context } from './types/index.js';
-import type { M3Action, M3Decision } from '../m3/types/perception.js';
+import type { MemorySummary } from './types/index.js';
 
 export class MemoryRetriever {
   private storage: FusionStorageAdapter;
@@ -23,7 +22,7 @@ export class MemoryRetriever {
   async retrieveMemories(
     locusPath: string,
     entities: Array<{ name: string; type: string }>,
-    options?: { limit?: number; minCalcium?: number }
+    options?: { limit?: number }
   ): Promise<DNA[]> {
     const limit = options?.limit ?? 5;
 
@@ -55,9 +54,9 @@ export class MemoryRetriever {
 
     if (keywords.size > 0) {
       try {
-        // 检索最近 60 条记录（含各分区）
+        // 检索最近 200 条记录（与 3001 MAX_SAVED_TURNS 对齐，覆盖完整对话上下文）
         // findBySeqPosRange 默认 DESC 排序，ascending 参数不被 QueryOptions 支持
-        const recent = await this.storage.findBySeqPosRange(0, 999_999_999, { limit: 60 });
+        const recent = await this.storage.findBySeqPosRange(0, 999_999_999, { limit: 200 });
         const seen = new Set<string>();
         for (const dna of recent) {
           for (const kw of keywords) {
@@ -141,27 +140,4 @@ export class MemoryRetriever {
     };
   }
 
-  /**
-   * 构建 M4Context
-   */
-  async buildContext(
-    decision: M3Decision,
-    locusPath: string,
-    entities: Array<{ name: string; type: string }>
-  ): Promise<M4Context> {
-    const memories = await this.retrieveMemories(locusPath, entities);
-    const memorySummary = this.compressMemories(memories);
-
-    return {
-      decision,
-      memory_summary: memorySummary,
-      current_time: new Date().toISOString(),
-      meta: {
-        has_history: memories.length > 0,
-        has_family_context: false,
-        calcium_level: decision.enhanced.calcium_level,
-        dominant_action: decision.actions[0] ?? 'memorize',
-      },
-    };
-  }
 }

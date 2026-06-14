@@ -63,7 +63,7 @@ export function rerank(
     }
 
     // 2. 时间连续性加分
-    //    记忆创建时间越接近现在，加分越多（半衰期 2 小时）
+    //    记忆创建时间越接近现在，加分越多（线性衰减，2小时内有效）
     try {
       const created = new Date(item.record.created_at).getTime();
       const now = Date.now();
