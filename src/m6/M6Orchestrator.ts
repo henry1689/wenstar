@@ -6,7 +6,7 @@ import { TraitEvolver } from './TraitEvolver.js';
 import { PreferenceManager } from './PreferenceManager.js';
 import { BoundaryManager } from './BoundaryManager.js';
 import { NarrativeBuilder } from './NarrativeBuilder.js';
-import type { EvolutionDecision } from './types/index.js';
+import type { EvolutionDecision, M6SelfModel, SelfModelTraits, Preference, Boundary, NarrativeLayer, CoreIdentityAnchors } from './types/index.js';
 
 export interface M6InputSignal {
   dimension: string;
@@ -20,10 +20,15 @@ export interface M6InputSignal {
 }
 
 export class M6Orchestrator {
+  /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法（getModel/getTraits 等） */
   public manager: SelfModelManager;
+  /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法（applyConfirmed 等） */
   public evolver: TraitEvolver;
+  /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法 */
   public prefs: PreferenceManager;
+  /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法 */
   public boundaries: BoundaryManager;
+  /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法 */
   public narrative: NarrativeBuilder;
 
   constructor(manager?: SelfModelManager) {
@@ -32,6 +37,18 @@ export class M6Orchestrator {
     this.prefs = new PreferenceManager(this.manager);
     this.boundaries = new BoundaryManager(this.manager);
     this.narrative = new NarrativeBuilder(this.manager);
+  }
+
+  // ─── 代理方法（收敛外部访问，替代直接访问内部引擎） ───
+
+  getModel(): M6SelfModel { return this.manager.getModel(); }
+  getTraits(): SelfModelTraits { return this.manager.getTraits(); }
+  getPreferences(): Preference[] { return this.manager.getPreferences(); }
+  getBoundaries(): Boundary[] { return this.manager.getBoundaries(); }
+  getNarrativeLayers(): NarrativeLayer[] { return this.manager.getNarrativeLayers(); }
+  getAnchors(): CoreIdentityAnchors { return this.manager.getAnchors(); }
+  applyConfirmed(dimension: string, direction: 'increase' | 'decrease', delta: number): EvolutionDecision {
+    return this.evolver.applyConfirmed(dimension, direction, delta);
   }
 
   /**
@@ -59,15 +76,14 @@ export class M6Orchestrator {
 
     // 第3步：叙事层（重大事件）
     if (signal.calcium >= 2) {
+      const narrativeText = signal.triggerEvent.substring(0, 60);
       // 冲突检测后添加
-      const conflictWarnings = this.narrative.detectConflict(
-        `多元感知到强烈信号: ${signal.dimension} ${signal.direction}`
-      );
+      const conflictWarnings = this.narrative.detectConflict(narrativeText);
       if (conflictWarnings.length > 0) {
         console.warn('[M6] 叙事冲突:', conflictWarnings);
       }
       this.narrative.addLayer(
-        `多元感知到强烈信号: ${signal.dimension} ${signal.direction}`,
+        narrativeText,
         signal.triggerEvent, signal.calcium
       );
     }

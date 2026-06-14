@@ -13,7 +13,20 @@ export class BoundaryManager {
     this.manager = manager;
   }
 
-  /** 记录边界触碰 */
+  /**
+   * 记录边界触碰
+   *
+   * ⚠️ 当前未被调用。
+   * 设计意图：每次 LLM 回复后检测用户是否触碰边界时调用此方法，
+   * 驱动边界动态强化/软化。但"边界触碰检测"逻辑在 DeepSeekLLMProvider
+   * 的回复解析链路中尚未实现，导致此方法处于待接入状态。
+   *
+   * 激活条件：需要在 chat.ts 的 M6 processSignal() 调用中传入
+   * boundaryHits 参数，或在 HumanisticCalibrator 中增加边界检测。
+   *
+   * 保留原因：方法实现完整（新边界自动学习/触碰计数/强化/软化/衰减），
+   * 接入检测链路后即可激活，无需重新编写逻辑。
+   */
   recordHit(rule: string, wasRejected: boolean, calcium: number, arousal: number): void {
     const boundaries = this.manager.getBoundaries();
     const boundary = boundaries.find(b => b.rule === rule);

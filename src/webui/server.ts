@@ -567,12 +567,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     // ── 全模块数据 M5-M8 ──
     if (req.method === 'GET' && url.pathname === '/api/modules') {
-      // M6: 自我模型（从 M6Orchestrator 读取）
-      const m6Model = m6?.manager?.getModel();
-      const m6Traits = m6?.manager?.getTraits() ?? getSelfModel().traits;
-      const m6Prefs = m6?.manager?.getPreferences() ?? [];
-      const m6Bounds = m6?.manager?.getBoundaries() ?? [];
-      const m6Layers = m6?.manager?.getNarrativeLayers() ?? [];
+      // M6: 自我模型（使用编排器代理方法，替代直接访问 manager）
+      const m6Model = m6?.getModel();
+      const m6Traits = m6?.getTraits() ?? getSelfModel().traits;
+      const m6Prefs = m6?.getPreferences() ?? [];
+      const m6Bounds = m6?.getBoundaries() ?? [];
+      const m6Layers = m6?.getNarrativeLayers() ?? [];
 
       // M7: 梦境（从活跃的 DreamQueue 读取）
       const m7Pending = m7?.queue?.getPending() ?? [];

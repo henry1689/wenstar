@@ -65,11 +65,11 @@ export class DreamInternalizer {
     // 第2步：无冲突 → 确认
     this.queue.updateStatus(dreamId, 'confirmed');
 
-    // 通知 M6：梦境确认后执行大幅演化（修复 applyConfirmed 死代码链路）
+    // 通知 M6：梦境确认后执行大幅演化（使用编排器代理方法）
     if (this._m6 && dream.affected_traits.length > 0) {
       for (const trait of dream.affected_traits) {
         try {
-          this._m6.evolver.applyConfirmed(trait, 'increase', 10);
+          this._m6.applyConfirmed(trait, 'increase', 10);
           console.log(`[Dream→M6] 梦境确认触发 ${trait} 演化`);
         } catch (err) {
           console.warn(`[Dream→M6] ${trait} 演化失败:`, err);
