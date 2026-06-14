@@ -20,11 +20,11 @@
 
 import type { DNA } from '../m1/types/dna.js';
 import { loadSet } from '../m1/LexiconLoader.js';
-/** 词表命中统计（用于调试 24D 感知分析） */
-const hitCounters = new Map<string, number>();
+/** 词级命中统计（用于调试 24D 感知分析 — 记录每个词在真实输入中命中了多少次） */
+const wordHitCounters = new Map<string, number>();
 export function getHitReport(): Record<string, number> {
-  const report = Object.fromEntries(hitCounters);
-  hitCounters.clear(); // 读取后清零，方便观测增量
+  const report = Object.fromEntries(wordHitCounters);
+  wordHitCounters.clear(); // 读取后清零，方便观测增量
   return report;
 }
 import type {
@@ -85,34 +85,26 @@ const SENSORY_CRAVING = loadSet('emotion_lexicon.json', 'sensory_craving');
 
 const ENERGY_MERGE = loadSet('emotion_lexicon.json', 'energy_merge');
 
-const POSSESSIVENESS = new Set([
-  '我的', '属于我', '不许', '不准', '吃醋', '嫉妒',
-  '只有我', '专属', '独占',
-]);
+const POSSESSIVENESS = loadSet('emotion_lexicon.json', 'possessiveness');
 
 const ECSTASY_WORDS = loadSet('emotion_lexicon.json', 'ecstasy');
 
-const SAFETY_WORDS = new Set([
-  '放心', '安心', '信任', '相信你', '安全', '踏实',
-  '可靠', '稳妥', '不怕',
-]);
+const SAFETY_WORDS = loadSet('emotion_lexicon.json', 'safety');
 
-const INSECURITY_WORDS = new Set([
-  '害怕', '担心', '不安', '焦虑', '不信任', '怀疑',
-  '恐惧', '慌', '没安全感',
-]);
+const INSECURITY_WORDS = loadSet('emotion_lexicon.json', 'insecurity');
 
 // ════════════════════════════════════════════════════════
 // 第二层：辅助函数
 // ════════════════════════════════════════════════════════
 
+/** 统计词集在文本中的匹配次数，并记录每个匹配词到调试面板 */
 function countHits(text: string, wordSet: Set<string>): number {
-  const key = [...wordSet].slice(0,1).join('');
-  if (hitCounters.has(key)) hitCounters.set(key, hitCounters.get(key)! + 1);
-  else hitCounters.set(key, 1);
   let hits = 0;
   for (const word of wordSet) {
-    if (text.includes(word)) hits++;
+    if (text.includes(word)) {
+      hits++;
+      wordHitCounters.set(word, (wordHitCounters.get(word) ?? 0) + 1);
+    }
   }
   return hits;
 }
@@ -482,17 +474,17 @@ export class PerceptionAnalyzer {
 
     const text = enhanced.raw_input;
 
-    // 时效性规则：时间词修正 C5 temporal_focus
+    // 时效性规则：时间词修正 C5 temporal_focus — 统一使用 emotion_lexicon.json 中的时间词集
     if (text.includes('今天') || text.includes('现在')) {
       enhanced.perception.temporal_focus = Math.max(enhanced.perception.temporal_focus, 0.2);
     }
     if (text.includes('刚才') || text.includes('刚刚')) {
       enhanced.perception.arousal = Math.min(enhanced.perception.arousal + 0.1, 1.0);
     }
-    if (text.includes('明天') || text.includes('将来') || text.includes('以后')) {
+    if (countHits(text, TEMPORAL_FUTURE) > 0) {
       enhanced.perception.temporal_focus = Math.max(enhanced.perception.temporal_focus, 0.3);
     }
-    if (text.includes('以前') || text.includes('过去') || text.includes('曾经')) {
+    if (countHits(text, TEMPORAL_PAST) > 0) {
       enhanced.perception.temporal_focus = Math.min(enhanced.perception.temporal_focus, -0.2);
     }
 
