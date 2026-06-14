@@ -107,8 +107,8 @@ const ENTITY_EXTRACTION_RULES: NormalizedEntityRule[] = [
   { name: '宠物', type: 'object', patterns: ['猫', '狗', '宠物'] },
   { name: '压力', type: 'event', patterns: ['压力', '压力大'] },
   { name: '失眠', type: 'event', patterns: ['失眠', '睡不好', '睡不着'] },
-  { name: '跑步', type: 'object', patterns: ['跑步', '晨跑', '夜跑'] },
-  { name: '散步', type: 'object', patterns: ['散步', '遛弯', '走走'] },
+  { name: '跑步', type: 'event', patterns: ['跑步', '晨跑', '夜跑'] },
+  { name: '散步', type: 'event', patterns: ['散步', '遛弯', '走走'] },
   { name: '咖啡', type: 'object', patterns: ['咖啡', '喝咖啡'] },
 
   // ── 情绪/状态型 event ──
