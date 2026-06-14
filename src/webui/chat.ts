@@ -399,11 +399,30 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[ClueAssistant] 失败:', err); }
 
-    // M4 知识融合
     const ctx_m4 = await ctx.m4.orchestrate(decision, emotionalMemories);
 
+    // M4 知识融合
     // ── 幻觉防护：检测用户提到不存在的事物 ──
     let hallucinationGuard = '';
+    // ═══════════════════════════════════════════════════════════════
+    // 三源熔铸 — 感知驱动的知识/记忆/家族动态权重（白皮书 §1.2 锚点5）
+    // 不修改现有检索逻辑，仅在最终组合时做一次感知驱动的重排
+    // ═══════════════════════════════════════════════════════════════
+    try {
+      const { fuseSources } = await import('../app/fusion/FusionEngine.js');
+      const fused = fuseSources({
+        perception: p,
+        knowledgeBaseText,
+        memorySummary: ctx_m4.memory_summary,
+        familyContext: ctx_m4.family_context,
+      });
+      if (fused.fusedText !== knowledgeBaseText) {
+        knowledgeBaseText = fused.fusedText;
+        console.log('[Fusion] ' + fused.decision);
+      }
+    } catch (err) { console.warn('[Fusion] 三源熔铸失败(降级为拼接):', err); }
+
+
 
     // 检测"X是我的Y"介绍模式，LLM 不能说"记得你说过"
     const introMatch = message.match(/([一-龥]{2,4})是我(?:的)?([一-龥]{2,4})/);
