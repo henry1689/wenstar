@@ -595,8 +595,12 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         if (match) {
           const content = match[0].trim();
           if (content.length > 4 && content.length < 100) {
-            await ctx.knowledgeBase.add({ title: `${pattern.prefix}: ${content.substring(0, 20)}`, content, emotionalContext: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy } });
-            if (!FALLBACK_REPLIES.includes(reply)) reply += `\n\n💡 我已悄悄记住啦～`;
+            // 去重: 检查标题前缀是否已存在（修复: 之前每次匹配都新增导致"我工作在XX"存3次）
+            const existing = await ctx.knowledgeBase.search(content.substring(0, 20), 1);
+            if (existing.length === 0 || !existing.some((e: any) => e.title?.includes(pattern.prefix))) {
+              await ctx.knowledgeBase.add({ title: `${pattern.prefix}: ${content.substring(0, 20)}`, content, emotionalContext: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy } });
+              if (!FALLBACK_REPLIES.includes(reply)) reply += `\n\n💡 我已悄悄记住啦～`;
+            }
           }
           break;
         }

@@ -31,21 +31,30 @@ export class TopicTracker {
   record(message: string): void {
     const now = Date.now();
     const rawKeywords = this.extractKeywords(message);
-    const roots = new Set<string>();
+    // 使用完整词（修复: 之前取前2字导致"陈都灵"变成"陈都"、研究条目变垃圾）
+    // 复合词合并: "纳米技术"+"纳米机器人"→提取公共前缀"纳米"作为同一话题
+    const merged = new Map<string, string[]>();
     for (const kw of rawKeywords) {
-      if (kw.length >= 2) roots.add(kw.substring(0, 2));
+      if (kw.length < 2) continue;
+      let parent = kw;
+      for (const existing of merged.keys()) {
+        if (kw.startsWith(existing) && kw.length > existing.length + 1) { parent = existing; break; }
+        if (existing.startsWith(kw) && existing.length > kw.length + 1) { merged.delete(existing); break; }
+      }
+      if (!merged.has(parent)) merged.set(parent, []);
+      merged.get(parent)!.push(kw);
     }
-    for (const root of roots) {
+    for (const [root, children] of merged) {
       const existing = this.topics.get(root);
       if (existing) {
-        existing.count++;
+        existing.count += children.length;
         existing.lastMentioned = now;
         if (existing.count >= this.RESEARCH_THRESHOLD && !existing.inKnowledgeBase) {
           existing.inKnowledgeBase = this.checkKnowledgeBase(root);
         }
       } else {
         this.topics.set(root, {
-          keyword: root, count: 1,
+          keyword: root, count: children.length,
           firstMentioned: now, lastMentioned: now,
           inKnowledgeBase: this.checkKnowledgeBase(root),
           researched: false,
