@@ -8,8 +8,9 @@ import { CognitionAssembler } from './CognitionAssembler.js';
 import { StrategySelector } from './StrategySelector.js';
 import { MockLLMProvider } from './MockLLMProvider.js';
 import { HumanisticCalibrator } from './HumanisticCalibrator.js';
-import { buildContextPrompt, updateAfterReply } from './ContextMemory.js';
-import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor } from './SceneAnchor.js';
+import { buildContextPrompt, updateAfterReply, resetContext } from './ContextMemory.js';
+import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor, resetAnchor } from './SceneAnchor.js';
+import { resetMockSession } from './MockLLMProvider.js';
 
 export class M5Orchestrator {
   private assembler: CognitionAssembler;
@@ -69,5 +70,12 @@ export class M5Orchestrator {
     updateAfterReply(calibrated, userMessage || '', strategy.params.tone, cognition.current.perception_snapshot);
 
     return calibrated;
+  }
+
+  /** 重置整个 M5 流水线的会话状态（对话重置时调用） */
+  resetSession(): void {
+    resetContext();       // ContextMemory 场景状态
+    resetAnchor();        // SceneAnchor 锚点
+    resetMockSession();   // MockLLMProvider 亲密基线
   }
 }

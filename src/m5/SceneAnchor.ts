@@ -22,7 +22,7 @@ export interface SceneAnchor {
 let _anchor: SceneAnchor = { location: '', action: '', nudity: 0, intimacy: false, isActive: false };
 let _prevTurns: ConversationTurn[] = [];
 
-/** 无锚点时的冲突词对（可扩展） */
+/** 无锚点时的冲突词对（可扩展，与 ContextMemory.updatePhysical 的地点保持对齐） */
 const CONFLICT_PAIRS: Record<string, string[]> = {
   '床上': ['沙发', '办公室', '阳台', '厨房', '车里', '浴室'],
   '沙发上': ['床上', '办公室', '阳台', '地上', '车里'],
@@ -30,6 +30,10 @@ const CONFLICT_PAIRS: Record<string, string[]> = {
   '咖啡馆': ['床上', '办公室', '浴室', '阳台', '车里', '家里'],
   '浴室': ['床上', '沙发上', '办公室', '咖啡馆', '车里'],
   '阳台': ['床上', '办公室', '咖啡馆', '车里'],
+  '厨房': ['床上', '沙发上', '办公室', '浴室', '阳台', '车里'],
+  '酒店': ['办公室', '阳台', '厨房', '浴室', '车里'],
+  '车里': ['床上', '沙发上', '办公室', '阳台', '厨房', '浴室', '酒店'],
+  '教室': ['床上', '沙发上', '浴室', '车里'],
 };
 
 /** 从最近 2 轮对话提取核心锚点 */

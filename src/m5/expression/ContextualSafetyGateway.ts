@@ -49,6 +49,10 @@ const ABUSIVE_PATTERNS = [
 
 /**
  * 白名单检测
+ *
+ * ⚠️ 当前 safetyCheck() 已解除所有过滤，此函数暂未被调用。
+ * WHITELIST 作为领域知识资产保留（41词，覆盖中文亲密场景常用表达），
+ * 便于未来按需重新启用安全过滤时复用，无需重新整理词表。
  */
 function isWhitelisted(word: string): boolean {
   return WHITELIST.has(word);
@@ -56,6 +60,9 @@ function isWhitelisted(word: string): boolean {
 
 /**
  * 辱骂检测
+ *
+ * ⚠️ 当前 safetyCheck() 已解除所有过滤，此函数暂未被调用。
+ * ABUSIVE_PATTERNS（3个正则）作为边界定义保留。
  */
 function isAbusive(text: string): boolean {
   return ABUSIVE_PATTERNS.some(p => p.test(text));

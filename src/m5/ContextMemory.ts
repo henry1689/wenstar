@@ -82,13 +82,17 @@ function updatePhysical(draft: string): void {
   else if (/抱起|抱紧|贴在怀里/.test(draft) || (/抱/.test(draft) && /着/.test(draft))) _state.physical.position = '抱着';
   else if (/靠近|贴近|贴在你/.test(draft)) _state.physical.position = '贴着';
 
-  // 地点变化
+  // 地点变化（与 SceneAnchor.CONFLICT_PAIRS 的 key 保持对齐）
   if (/床/.test(draft)) _state.physical.location = '床上';
   else if (/沙发/.test(draft)) _state.physical.location = '沙发上';
   else if (/阳台/.test(draft)) _state.physical.location = '阳台';
   else if (/厨房|餐桌/.test(draft)) _state.physical.location = '厨房';
   else if (/浴室|洗澡|浴缸/.test(draft)) _state.physical.location = '浴室';
   else if (/酒店|旅馆|宾馆/.test(draft)) _state.physical.location = '酒店';
+  else if (/办公|公司|工位/.test(draft)) _state.physical.location = '办公室';
+  else if (/咖啡|咖啡馆/.test(draft)) _state.physical.location = '咖啡馆';
+  else if (/车[里内上]/.test(draft)) _state.physical.location = '车里';
+  else if (/教室|培训|上课/.test(draft)) _state.physical.location = '教室';
 
   // 活动变化
   if (/进去|插入|进入|操/.test(draft)) _state.physical.activity = '性交';

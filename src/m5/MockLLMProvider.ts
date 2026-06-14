@@ -16,6 +16,9 @@ function pick<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)]; }
 // ── 会话记忆（持久化强度累加） ──
 let sessionIntimacy = 0.3; // 初始温暖基线, 随亲密轮次攀升
 
+/** 重置会话亲密强度基线（对话重置时调用） */
+export function resetMockSession(): void { sessionIntimacy = 0.3; }
+
 // ════════════════════════════════════════════════════════
 // 温暖 / 日常 / 关心
 // ════════════════════════════════════════════════════════
