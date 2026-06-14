@@ -27,3 +27,4 @@ node_modules/
 npm-debug.log*
 voxcpm2/
 voxcpm2/
+__m7_test_*.db
