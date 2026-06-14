@@ -94,6 +94,20 @@ export function isFamilyWord(word: string): boolean {
   return word in FAMILY_MAP;
 }
 
+/** 根据上下文推荐可能的社交关系选项（用于生成反问 — 玉瑶不清楚时主动询问） */
+export function guessRelationOptions(context: string): string[] {
+  const workHints = /开会|项目|方案|合同|客户|老板|公司|加班|汇报|同事|领导/;
+  const socialHints = /吃饭|聚会|朋友|喝酒|唱歌|逛街|聊|玩|约/;
+  const eduHints = /同学|老师|学校|上课|毕业|培训|学习/;
+  const medHints = /医生|医院|看病|治疗|手术/;
+
+  if (workHints.test(context)) return ['同事', '客户', '老板'];
+  if (socialHints.test(context)) return ['朋友', '同事', '合伙人'];
+  if (eduHints.test(context)) return ['同学', '老师', '同事'];
+  if (medHints.test(context)) return ['医生', '朋友'];
+  return ['同事', '朋友', '客户'];
+}
+
 /**
  * 从文本中检测人物提及。
  *
@@ -133,7 +147,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -148,7 +162,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -163,7 +177,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -179,7 +193,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -212,7 +226,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -227,7 +241,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
       seen.add(name);
       results.push({
         personName: name,
-        relation: '认识的人',
+        relation: '其他',
         rawRelation: '',
         context: extractContext(text, name),
       });
@@ -294,7 +308,7 @@ export function storeRelations(sqlite: any, relations: DetectedRelationship[], s
       } else {
         // 新建条目
         const id = `person_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
-        const title = rel.relation === '认识的人'
+        const title = rel.relation === '认识的人' || rel.relation === '其他'
           ? `人物: ${rel.personName}`
           : `人物: ${rel.personName} (${rel.relation})`;
         const content = `${rel.personName}：${rel.context}`;

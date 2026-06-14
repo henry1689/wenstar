@@ -24,7 +24,7 @@ import type { M3Decision } from '../m3/types/perception.js';
 import type { SelfModelV1 } from '../m1/types/dna.js';
 import { rerank } from '../m4/Reranker.js';
 import { decompose, mergeDecomposedResults } from '../m4/QueryDecomposer.js';
-import { extractRelations, storeRelations, FAMILY_MAP } from '../app/knowledge/RelationshipExtractor.js';
+import { extractRelations, storeRelations, FAMILY_MAP, guessRelationOptions } from '../app/knowledge/RelationshipExtractor.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
 
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
@@ -598,6 +598,28 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
             }
           }
         } catch (err) { console.warn('[SocialGraph] 社交图谱同步失败:', err); }
+        // 社交关系反问：检测到未明确的"其他"关系时，主动询问用户以精准归类
+        try {
+          const unclassified = relations.filter(r => r.relation === '其他' && !r.rawRelation);
+          for (const rel of unclassified) {
+            const personName = rel.personName;
+            // 避免重复追问同一人
+            const askedKey = 'asked_rel_' + personName;
+            const alreadyAsked = ctx.conversationHistory.some(
+              t => t.role === 'assistant' && t.content && t.content.includes(personName) && t.content.includes('同事')
+            );
+            if (!alreadyAsked) {
+              const options = guessRelationOptions(rel.context);
+              const optionText = options.length > 1
+                ? options.slice(0, -1).join('、') + '还是' + options[options.length - 1]
+                : options[0];
+              reply += '
+
+❓ 你说的' + personName + '是你的' + optionText + '呀？';
+              break; // 一次只问一个人
+            }
+          }
+        } catch (err) { console.warn('[ClarifyRelation] 反问失败:', err); }
       }
 
       const proactivePatterns: Array<{ match: RegExp; prefix: string }> = [
