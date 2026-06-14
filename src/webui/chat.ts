@@ -26,6 +26,7 @@ import { rerank } from '../m4/Reranker.js';
 import { decompose, mergeDecomposedResults } from '../m4/QueryDecomposer.js';
 import { extractRelations, storeRelations, FAMILY_MAP, guessRelationOptions } from '../app/knowledge/RelationshipExtractor.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
+import { decideMode, buildGuard, type MemoryGateOutput } from '../app/conversation/MemoryGate.js';
 
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
 import { bionic } from '../adapter/bionic-adapter.js';
@@ -215,9 +216,33 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     const hasContinuationMarkers = /嗯|对|好|行|是|是的|没错|就是|[那这]样/.test(message) && message.length < 20;
     const isTopicShift = hasNewEntity || (!isFollowUp && !hasContinuationMarkers);
 
+
+    // ═══════════════════════════════════════════════════════════════
+    // MemoryGate 记忆层级管控 — 判定对话模式，智能选择记忆/知识源
+    // ═══════════════════════════════════════════════════════════════
+    let memoryGate: MemoryGateOutput = { mode: 'casual', needsMemorySearch: false, needsKnowledgeSearch: false, fillerPhrase: '', hallucinationGuard: '', strictMode: false };
+    let memoryGateFillerUsed = false;
+    try {
+      const modeCtx = {
+        message,
+        recentHistory: ctx.conversationHistory.slice(-6),
+        isFollowUp,
+        hasNewEntity,
+        hasContinuationMarkers,
+        calciumLevel: decision.enhanced.calcium_level,
+        messageLength: message.length,
+      };
+      const modeDecision = decideMode(modeCtx);
+      memoryGate = buildGuard(modeDecision.mode, false, false);
+      // 如果用户明确在回忆或查知识，生成过渡话术
+      if (memoryGate.fillerPhrase && !/知识库|看过|记得|印象/.test(message)) {
+        // 过渡话术在进入 M5 前作为 reply 前缀注入
+        memoryGateFillerUsed = true;
+      }
+    } catch (err) { console.warn('[MemoryGate] 失败:', err); }
+
     try {
 
-      // 只在话题切换时才检索记忆，否则优先当前上下文
       if (isTopicShift) {
         const currentEntityNames = dna.entity_genes.map(g => g.name).filter(Boolean);
         const relatedEntities = currentEntityNames.length > 0
@@ -283,6 +308,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         }
       }
     } catch (err) { console.warn('[EmotionContagion] 检索失败:', err); }
+    } // end MemoryGate.needsMemorySearch
 
     // ═══════════════════════════════════════════════════════════════
     // 仿生智脑检索（仅话题切换时调用，且不覆盖当前上下文）
@@ -311,8 +337,10 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[SomaticContext] 注入失败:', err); }
 
-    // 知识库检索
+    // 知识库检索（由 MemoryGate 管控）
     let knowledgeBaseText = '';
+    if (memoryGate.needsKnowledgeSearch || /知识库|看过|知道.*吗|有没有|是否|曾经/.test(message)) {
+
     try {
       const searchMsg = /知识库|看过|知道.*吗/.test(message)
         ? message.replace(/你|在|知识库|看过|知道|吗|有没有|是否|曾经/g, '').replace(/[？?！!。，、：；]/g, '').trim()
@@ -343,6 +371,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         }
       } catch (err) { console.warn('[EntityOverlap] 关联知识检索失败:', err); }
     } catch (err) { console.warn('[KnowledgeSearch] 检索失败:', err); }
+    } // end MemoryGate knowledge gate
 
         // ═══════════════════════════════════════════════════════════════
     // 情感谱曲引擎(8100)VAD驱动 — 用数值驱动 tone，而非关键词
@@ -402,8 +431,18 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     const ctx_m4 = await ctx.m4.orchestrate(decision, emotionalMemories);
 
     // M4 知识融合
-    // ── 幻觉防护：检测用户提到不存在的事物 ──
+    // ── MemoryGate 幻觉防护 — 基于实际检索结果生成精确防护
     let hallucinationGuard = '';
+    try {
+      const hasMemory = emotionalMemories.length > 0;
+      const hasKnowledge = knowledgeBaseText.length > 0;
+      memoryGate = buildGuard(memoryGate.mode, hasMemory, hasKnowledge);
+      hallucinationGuard = memoryGate.hallucinationGuard;
+      // fillerPhrase 会在 M5 回复生成后由外层注入
+    } catch (err) { console.warn('[MemoryGate] 防护构建失败:', err); }
+
+    // ── 幻觉防护：检测用户提到不存在的事物 ──
+    if (!hallucinationGuard) hallucinationGuard = '';
     // ═══════════════════════════════════════════════════════════════
     // 三源熔铸 — 感知驱动的知识/记忆/家族动态权重（白皮书 §1.2 锚点5）
     // 不修改现有检索逻辑，仅在最终组合时做一次感知驱动的重排
@@ -433,6 +472,22 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         hallucinationGuard = `⚠️ 用户第一次向你介绍"${name}"，你之前不知道他。不要假装听说过或记得。`;
       }
     }
+
+    // ── 家族/社交关系幻觉防护（铁律：必须以记录为准，不得编造） ──
+    try {
+      const personEntities = ctx_m4.family_context || ctx_m4.social_context || [];
+      if (personEntities.length > 0) {
+        const knownRelations = personEntities.map((p: any) => p.entity + '（' + p.relation + '）').join('、');
+        if (knownRelations && !hallucinationGuard) {
+          hallucinationGuard = '📋 以下是鸿鸣的家庭/社交关系，以实际记录为准：' + knownRelations + '。如果用户问到这些记录中没有的人或关系，不要假装知道，委婉说"不太记得了"。';
+        }
+      }
+      const mentionedPerson = dna.entity_genes.find((g: any) => g.type === 'person' && g.name !== '我');
+      if (mentionedPerson && personEntities.length === 0 && !hallucinationGuard) {
+        const pName = mentionedPerson.name;
+        hallucinationGuard = '⚠️ 用户提到了"' + pName + '"，但你不认识这个人。不要假装知道他是谁。如果用户问你是否记得，就说"这个人我好像没什么印象，你跟我讲讲呗？"';
+      }
+    } catch (err) { console.warn('[FamilyGuard] 防护构建失败:', err); }
 
     const claimPatterns: Array<{ match: RegExp; guard: string }> = [
       { match: /上传(?:了)?(?:一[张份个])?(?:图片|照片|截图|文件)/, guard: '⚠️ 用户提到"上传"了文件，但实际上没有收到任何文件。不要假装你看到了什么。直接说没看到。' },
@@ -512,7 +567,16 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       } else {
         const guardMsg: ConversationTurn = { role: 'assistant', content: allGuardMsgs };
         const enrichedWithGuard = allGuardMsgs ? [...enrichedHistory, guardMsg] : enrichedHistory;
-        try { reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, knowledgeBaseText, message); } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
+        // MemoryGate: 如果有过渡话术且memory/knowledge模式，注入到知识库文本让LLM自然表达
+        let finalKnowledgeText = knowledgeBaseText;
+        if (memoryGate.fillerPhrase && (memoryGate.mode === 'memory_recall' || memoryGate.mode === 'vague_recall' || memoryGate.mode === 'knowledge_query')) {
+          const innerThought = '【内心独白】' + memoryGate.fillerPhrase.replace(/[。！？]/g, '…') + '…';
+          finalKnowledgeText = innerThought + (knowledgeBaseText ? '
+
+' + knowledgeBaseText : '');
+          memoryGateFillerUsed = true;
+        }
+        try { reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message); } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
       }
     }
 
