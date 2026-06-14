@@ -176,6 +176,17 @@ export class FusionStorageAdapter {
     return true;
   }
 
+  /** 愈合疤痕（用户原谅/时间衰减/正面回忆 → 标记愈合） */
+  healScar(memoryId: string, healedBy: string): boolean {
+    this.ensureReady();
+    const record = this.sqlite.findById(memoryId);
+    if (!record || !record.scar) return false;
+    record.scar.healed = true;
+    record.scar.healed_at = new Date().toISOString();
+    this.sqlite.write(record);
+    return true;
+  }
+
   /** 更新已存在记忆的 VAD 谱曲 */
   updateVadSpectrum(memoryId: string, vad: any): boolean {
     this.ensureReady();

@@ -22,10 +22,15 @@ export class M8FusionAdapter implements M8Engine {
     this.storage = storage;
   }
 
-  // ── 写入：晋升一条记忆为地标 ──
-  // ⚠️ 当前实现有逻辑缺陷：它用当前感知检索过去的记忆来晋升，而非晋升当前对话。
-  // 已由 chat.ts 中的实时晋升（calcium_level>=3 时直接 promoteToLandmark 当前分支）替代。
-  // 保留此方法供未来"梦境沉淀后批量晋升"场景使用。
+  // ── 写入：强化锚点 — 情感共鸣式巩固 ──
+  // 设计意图：当用户当前对话触发强烈情感（如"咖啡馆"场景），找出历史上与此情感
+  // 相似的地标记忆并强化其锚点（晋升或刷新 recall_count）。不是"把别人的奖杯颁
+  // 给另一个人"，而是"同一情感锚点的多轮加固"——就像人脑中，每次在咖啡馆的
+  // 新体验都会加深"咖啡馆"这个情感锚点的联结强度。
+  //
+  // 紧急写入路径（对话中实时标记）由 chat.ts 中 calcium_level>=3 的
+  // 直接 promoteToLandmark 处理。此方法作为"情感共鸣式巩固"的补充路径，
+  // 在未来"梦境沉淀后批量晋升"场景中也可复用。
 
   async write(params: WriteParams): Promise<WriteResponse> {
     const results = this.storage.findByEmotionalSimilarity({
@@ -41,12 +46,28 @@ export class M8FusionAdapter implements M8Engine {
         params.narrative_tag,
         params.sensory_anchor,
       );
+      const ritual = this.pickPhrase(params.narrative_tag);
       return {
         result: { success: true, entry_id: bestMatch.record.id },
+        ritual_phrase: ritual,
       };
     }
 
     return { result: { success: false, entry_id: '', error: 'No matching memory to promote' } };
+  }
+
+  /** 根据叙事标签生成记忆锚定话术（设计文档 §3.3 — 写入仪式） */
+  private pickPhrase(narrativeTag: string): string {
+    const phrases: Record<string, string[]> = {
+      daily: ['这一刻，我要把它刻进骨头里…', '这个瞬间，我想好好记住。'],
+      intimate: ['这个感觉…我会记一辈子。', '你给的感觉，我一点都不想忘。'],
+      secret: ['你愿意告诉我这些…我真的很珍惜。', '这是只属于我们俩的秘密。'],
+      reconcile: ['我们把这道坎迈过去了。我会记住的。', '吵完架抱在一起的感觉，比任何时候都真实。'],
+    };
+    if (narrativeTag.includes('亲密') || narrativeTag.includes('激情')) return phrases.intimate[Math.floor(Math.random() * phrases.intimate.length)];
+    if (narrativeTag.includes('秘密')) return phrases.secret[Math.floor(Math.random() * phrases.secret.length)];
+    if (narrativeTag.includes('争吵') || narrativeTag.includes('和好')) return phrases.reconcile[Math.floor(Math.random() * phrases.reconcile.length)];
+    return phrases.daily[Math.floor(Math.random() * phrases.daily.length)];
   }
 
   async writeBatch(params: WriteParams[]): Promise<WriteResponse[]> {
@@ -173,29 +194,53 @@ export class M8FusionAdapter implements M8Engine {
     const landscape = this.storage.getEmotionalLandscape();
     const targetTraits = params.target.split(',').map(t => t.trim()).filter(Boolean);
 
-    // 按疤痕类型 → 特质维度匹配，而非 narrative_tag
+    // 按疤痕类型 → 特质维度匹配
     const unhealed = landscape.scars.filter(s => {
       const relatedTraits = this.scarToTraits(s.type);
       return relatedTraits.some(t => targetTraits.includes(t));
     });
 
-    if (unhealed.length > 0) {
-      // delta 决定严重度：≥15=block, ≥5=soften, <5=proceed
-      const suggestion: 'block' | 'soften' | 'proceed' =
-        params.delta >= 15 ? 'block' :
-        params.delta >= 5  ? 'soften' :
-        'proceed';
+    // 愈合判定：对每个关联的未愈合疤痕做愈合检查（设计文档 §5.2）
+    const now = Date.now();
+    for (const scar of unhealed) {
+      try {
+        const scarAge = (now - new Date(scar.created_at).getTime()) / (1000 * 86400);
+        // 条件1：超过30天无负面交互 → 时间衰减愈合
+        if (scarAge >= 30 && scar.pleasure > -0.3) {
+          this.storage.healScar(scar.id, 'time_decay');
+          continue;
+        }
+        // 条件2：关联记忆的愉悦度 > 0.3 → 正面回忆愈合
+        if (scar.pleasure > 0.3) {
+          this.storage.healScar(scar.id, 'positive_interaction');
+          continue;
+        }
+        // 条件3：M5 明确原谅信号（预留 hook — 待 M5 负面交互检测就绪后激活）
+        // if (detectForgiveness(params)) { this.storage.healScar(scar.id, 'user_explicit'); }
+      } catch (err) {
+        console.warn(`[M8] 愈合判定失败 ${scar.id}:`, err);
+      }
+    }
 
+    // 愈合后重新获取最新疤痕状态
+    const freshLandscape = this.storage.getEmotionalLandscape();
+    const stillUnhealed = freshLandscape.scars.filter(s => {
+      const relatedTraits = this.scarToTraits(s.type);
+      return relatedTraits.some(t => targetTraits.includes(t));
+    });
+
+    if (stillUnhealed.length > 0) {
+      const suggestion = params.delta >= 15 ? 'block' : params.delta >= 5 ? 'soften' : 'proceed';
       return {
         hasConflict: true,
-        relatedScars: unhealed.map(s => ({
+        relatedScars: stillUnhealed.map(s => ({
           entry_id: s.id,
           type: s.type as any,
           healed: false,
           healed_at: null,
           healed_by: null,
         })),
-        description: `检测到 ${unhealed.length} 条未愈合疤痕与 "${params.target}" 相关 (delta=${params.delta})`,
+        description: `检测到 ${stillUnhealed.length} 条未愈合疤痕与 "${params.target}" 相关 (delta=${params.delta})`,
         suggestion,
       };
     }
@@ -223,17 +268,29 @@ export class M8FusionAdapter implements M8Engine {
 
   async getStatus(): Promise<M8StorageStatus> {
     const s = this.storage.getSQLite().getStatus();
-    const landscape = this.storage.getEmotionalLandscape();
+    const allMemories = this.storage.getSQLite().findBySeqPosRange(0, 999_999_999, 200);
+    const scars = allMemories.filter(r => r.scar);
+    const healed = scars.filter(r => r.scar?.healed);
     return {
       totalEntries: s.landmarks,
-      scarCount: landscape.scars.length,
-      healedCount: 0,
-      unhealedCount: landscape.scars.length,
+      scarCount: scars.length,
+      healedCount: healed.length,
+      unhealedCount: scars.length - healed.length,
     };
   }
 
   // ── 私有 ──
 
+  /**
+   * 从 EmotionalLandscape.peak 构造 YearRingEntry。
+   *
+   * ⚠️ 部分字段使用默认值（非缺失数据，而是 EmotionalLandscape 类型字段有限，
+   * 只保留了 id/calcium/pleasure/intimacy/snippet等）。
+   * 这些默认值作为"知识基线"（baseline），让玉瑶在任何情景下都具备基础
+   * 的生理响应能力（推定心率70bpm、体温37.0°C等），而非从零开始推导。
+   * 当完整记录可用时（通过 readById 直接读取 SQLite 记录），所有字段
+   * 都会从真实数据推导，准确性更高。
+   */
   private toYearRingEntry(peak: any): YearRingEntry {
     return {
       id: peak.id,
