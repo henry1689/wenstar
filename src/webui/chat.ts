@@ -24,7 +24,7 @@ import type { M3Decision } from '../m3/types/perception.js';
 import type { SelfModelV1 } from '../m1/types/dna.js';
 import { rerank } from '../m4/Reranker.js';
 import { decompose, mergeDecomposedResults } from '../m4/QueryDecomposer.js';
-import { extractRelations, storeRelations } from '../app/knowledge/RelationshipExtractor.js';
+import { extractRelations, storeRelations, FAMILY_MAP } from '../app/knowledge/RelationshipExtractor.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
 
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
@@ -579,8 +579,25 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         const sqlite = ctx.storage.getSQLite();
         const stored = storeRelations(sqlite, relations, message);
         if (stored > 0 && !FALLBACK_REPLIES.includes(reply)) {
-          reply += `\n\n👥 已记住「${relations.map(r => r.personName).join('、')}」的关系～`;
+          reply += `\n\nð¥已记住「${relations.map(r => r.personName).join('、')}」的关系～`;
         }
+        // 同步社交关系到 FamilyGraph（非家庭关系→社交图谱边，与家族图谱互补）
+        try {
+          const familyWords = new Set(Object.keys(FAMILY_MAP));
+          const socialTypeMap: Record<string, string> = {
+            '同事': 'colleague_of', '同学': 'classmate_of', '室友': 'roommate_of',
+            '老板': 'boss_of', '上司': 'boss_of', '领导': 'boss_of',
+            '下属': 'subordinate_of', '部下': 'subordinate_of',
+            '客户': 'client_of', '朋友': 'friend_of',
+            '合伙人': 'partner_of', '邻居': 'neighbor_of',
+            '老师': 'teacher_of', '医生': 'doctor_of', '顾问': 'consultant_of',
+          };
+          for (const rel of relations) {
+            if (rel.rawRelation && !familyWords.has(rel.rawRelation) && socialTypeMap[rel.rawRelation]) {
+              await ctx.m4.getFamilyGraph().integrateSocialRelation(rel.personName, socialTypeMap[rel.rawRelation], message);
+            }
+          }
+        } catch (err) { console.warn('[SocialGraph] 社交图谱同步失败:', err); }
       }
 
       const proactivePatterns: Array<{ match: RegExp; prefix: string }> = [

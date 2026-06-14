@@ -11,7 +11,7 @@
 import type { SQLiteAdapter } from '../../m2/SQLiteAdapter.js';
 
 /** 家庭关系词（精确映射）— 非家庭的统统归为"认识的人" */
-const FAMILY_MAP: Record<string, string> = {
+export const FAMILY_MAP: Record<string, string> = {
   '老公': '配偶', '老婆': '配偶', '妻子': '配偶', '丈夫': '配偶',
   '男朋友': '恋人', '女朋友': '恋人', '男友': '恋人', '女友': '恋人',
   '爸爸': '父亲', '父亲': '父亲', '爹': '父亲', '爸': '父亲',
@@ -90,7 +90,7 @@ function extractContext(text: string, name: string): string {
 }
 
 /** 判断某个词是否为纯家庭关系词 */
-function isFamilyWord(word: string): boolean {
+export function isFamilyWord(word: string): boolean {
   return word in FAMILY_MAP;
 }
 

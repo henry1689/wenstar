@@ -17,6 +17,8 @@ export interface M4Context {
   decision: M3Decision;
   memory_summary: MemorySummary;
   family_context?: Array<{ entity: string; relation: string; related_entity: string }>;
+  /** 社交关系上下文（从 FamilyGraph 社交边提取，与 family_context 互补） */
+  social_context?: Array<{ entity: string; relation: string; related_entity: string }>;
   current_time: string;
   meta: {
     has_history: boolean;

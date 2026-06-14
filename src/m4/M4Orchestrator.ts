@@ -42,13 +42,19 @@ export class M4Orchestrator {
       decision.enhanced.raw_input
     );
 
-    // 3. 获取家族知识摘要
+    // 3. 获取家族知识摘要 + 社交关系摘要
     const familySummary = await this.familyGraph.getFamilySummary();
+    const socialSummary = await this.familyGraph.getSocialSummary();
 
-    // 4. 构建家族上下文
+    // 4. 构建家族上下文 + 社交上下文
     const familyContext = familySummary.members.map((m) => ({
       entity: m.name,
       relation: m.relation_to_user,
+      related_entity: '我',
+    }));
+    const socialContext = socialSummary.connections.map((c) => ({
+      entity: c.name,
+      relation: c.relation_to_user,
       related_entity: '我',
     }));
 
@@ -69,6 +75,7 @@ export class M4Orchestrator {
       decision,
       memory_summary: memorySummary,
       family_context: familyContext.length > 0 ? familyContext : undefined,
+      social_context: socialContext.length > 0 ? socialContext : undefined,
       current_time: new Date().toISOString(),
       meta: {
         has_history: memories.length > 0,

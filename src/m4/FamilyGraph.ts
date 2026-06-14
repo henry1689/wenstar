@@ -42,6 +42,32 @@ const KINSHIP_MAP: Record<string, string> = {
   '外公': 'grandfather_of', '外婆': 'grandmother_of',
 };
 
+// ─── 社交关系 → 关系映射（与 KINSHIP_MAP 互补——同一人可同时拥有家族边和社交边）───
+// Ref: STRATEGIC_BLUEPRINT.md — 人际关系图谱
+const SOCIAL_MAP: Record<string, string> = {
+  '同事': 'colleague_of', '同学': 'classmate_of', '室友': 'roommate_of',
+  '老板': 'boss_of', '上司': 'boss_of', '领导': 'boss_of',
+  '下属': 'subordinate_of', '部下': 'subordinate_of', '手下': 'subordinate_of',
+  '客户': 'client_of', '顾客': 'client_of',
+  '朋友': 'friend_of', '好友': 'friend_of',
+  '合伙人': 'partner_of', '搭档': 'partner_of',
+  '邻居': 'neighbor_of',
+  '老师': 'teacher_of', '师父': 'teacher_of', '师傅': 'teacher_of',
+  '学生': 'student_of', '徒弟': 'student_of',
+  '医生': 'doctor_of',
+  '顾问': 'consultant_of',
+};
+
+const SOCIAL_REVERSE: Record<string, string> = {
+  colleague_of: 'colleague_of', classmate_of: 'classmate_of', roommate_of: 'roommate_of',
+  boss_of: 'subordinate_of', subordinate_of: 'boss_of',
+  client_of: 'server_of', friend_of: 'friend_of',
+  partner_of: 'partner_of', neighbor_of: 'neighbor_of',
+  teacher_of: 'student_of', student_of: 'teacher_of',
+  doctor_of: 'patient_of', consultant_of: 'client_of',
+  server_of: 'client_of',
+};
+
 const REVERSE_RELATION: Record<string, string> = {
   mother_of: 'child_of', father_of: 'child_of',
   spouse_of: 'spouse_of',
@@ -450,6 +476,101 @@ export class FamilyGraph implements FamilyGraphInterface {
     }
   }
 
+  /**
+   * 整合社交关系到图谱（与 integrateFromEntity 互补——它处理家族关系，这个处理社交关系）
+   *
+   * 当 chat.ts 中的 RelationshipExtractor 检测到非家庭人士时调用此方法。
+   * 同一人可同时拥有家族边（妈妈）和社交边（同事）——两边不冲突。
+   * 家族主线和社交副线彼此独立，但在同一张图中可交叉引用。
+   */
+  async integrateSocialRelation(personName: string, relationType: string, rawInput: string): Promise<InferenceResult> {
+    const details: string[] = [];
+    let nodesCreated = 0;
+    let edgesCreated = 0;
+
+    // 查找或创建"我"节点
+    const userNodes = this.query('SELECT id FROM nodes WHERE name = ?', ['我']);
+    let userId: string;
+    if (userNodes.length === 0) {
+      userId = uid();
+      await this.addNode({ id: userId, type: 'person', name: '我', aliases: ['我', '我自己'] });
+      nodesCreated++;
+    } else {
+      userId = userNodes[0].id;
+    }
+    this.userNodeId = userId;
+
+    // 查找或创建该人的节点
+    const existing = this.query('SELECT id FROM nodes WHERE name = ?', [personName]);
+    let personId: string;
+    if (existing.length === 0) {
+      personId = uid();
+      await this.addNode({ id: personId, type: 'person', name: personName });
+      nodesCreated++;
+      details.push(`创建社交节点: ${personName}`);
+    } else {
+      personId = existing[0].id;
+    }
+
+    // 检查是否已有此边（防止重复）
+    const existingEdge = this.query(
+      'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+      [userId, personId, relationType]
+    );
+    if (existingEdge.length === 0) {
+      await this.addEdge({ id: uid(), source_id: userId, target_id: personId, relation: relationType });
+      edgesCreated++;
+      details.push(`创建社交边: 我 --${relationType}--> ${personName}`);
+
+      // 自动创建反向边
+      const reverseRel = SOCIAL_REVERSE[relationType] || 'acquaintance_of';
+      if (reverseRel && reverseRel !== relationType) {
+        const revEdge = this.query(
+          'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+          [personId, userId, reverseRel]
+        );
+        if (revEdge.length === 0) {
+          await this.addEdge({ id: uid(), source_id: personId, target_id: userId, relation: reverseRel });
+          edgesCreated++;
+          details.push(`创建反向社交边: ${personName} --${reverseRel}--> 我`);
+        }
+      }
+    } else {
+      details.push(`社交边已存在: 我 --${relationType}--> ${personName}`);
+    }
+
+    return { nodes_created: nodesCreated, edges_created: edgesCreated, details };
+  }
+
+  /**
+   * 获取社交关系摘要（与 getFamilySummary 互补，只返回非家庭关系）
+   * 同一人若同时有家族边和社交边，在两个摘要中都会出现。
+   */
+  async getSocialSummary(): Promise<{ connections: Array<{ name: string; relation_to_user: string }> }> {
+    const connections: Array<{ name: string; relation_to_user: string }> = [];
+    const nodes = this.query('SELECT * FROM nodes');
+    const socialTypes = new Set(Object.values(SOCIAL_MAP));
+
+    for (const node of nodes) {
+      if (node.type === 'person' && node.name !== '我') {
+        const edges = this.query(
+          `SELECT e.relation FROM edges e WHERE (e.source_id = ? AND e.target_id = ?) OR (e.source_id = ? AND e.target_id = ?)`,
+          [node.id, this.userNodeId ?? '', this.userNodeId ?? '', node.id]
+        );
+        for (const edge of edges) {
+          if (socialTypes.has(edge.relation)) {
+            connections.push({
+              name: node.name,
+              relation_to_user: this.describeSocialRelation(edge.relation),
+            });
+            break; // 一个人只出现一次
+          }
+        }
+      }
+    }
+    return { connections };
+  }
+
   async getFamilySummary(): Promise<FamilySummary> {
     const members: FamilySummary['members'] = [];
     const locations = new Set<string>();
@@ -478,6 +599,19 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   // ─── 辅助方法 ───
+
+  /** 社交关系 → 中文描述 */
+  private describeSocialRelation(rel: string): string {
+    const map: Record<string, string> = {
+      colleague_of: '同事', classmate_of: '同学', roommate_of: '室友',
+      boss_of: '老板/上级', subordinate_of: '下属/部下',
+      client_of: '客户', friend_of: '朋友', partner_of: '合伙人',
+      neighbor_of: '邻居', teacher_of: '老师', student_of: '学生',
+      doctor_of: '医生', consultant_of: '顾问',
+      server_of: '服务方',
+    };
+    return map[rel] ?? rel;
+  }
 
   private describeRelation(rel: string): string {
     const map: Record<string, string> = {
