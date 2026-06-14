@@ -114,6 +114,31 @@ export class WorkingMemory {
   }
 
   /** 巩固：毕业高价值记录到 M2，丢弃噪音 */
+  //
+  // 毕业/丢弃阈值说明（引用 M3 钙质等级规范）:
+  //   钙质等级: 0=粉末(噪音)  1=液体(普通)  2=固体(值得记)  3=晶体(刻骨铭心)
+  //   液体级停留超过 GRADUATE_CYCLE_MAX 轮未有实体 → 毕业
+  //   粉末级 → 直接丢弃
+  //   无实体且超过 DISCARD_CYCLE_MAX 轮 → 丢弃
+  //   安全阀 FORCE_GRADUATE_CYCLE: 超过此轮数强制处理
+  private static readonly GRADUATE_CYCLE_MAX = 3;       // 液体级最长停留轮数
+  private static readonly DISCARD_CYCLE_MAX = 2;        // 无实体条目最长停留轮数
+  private static readonly FORCE_GRADUATE_CYCLE = 6;     // 安全阀：强制处理阈值
+
+  /** 判断条目是否应毕业（共享方法，供 consolidate 和 getStatus 使用） */
+  private shouldGraduate(entry: WorkingEntry): boolean {
+    return entry.calciumLevel >= 2 ||
+      (entry.calciumLevel === 1 && entry.hasMeaningfulEntity) ||
+      (entry.calciumLevel === 1 && entry.cycleCount >= WorkingMemory.GRADUATE_CYCLE_MAX) ||
+      (entry.cycleCount >= WorkingMemory.FORCE_GRADUATE_CYCLE && entry.calciumLevel >= 1 && entry.hasMeaningfulEntity);
+  }
+
+  /** 判断条目是否应丢弃 */
+  private shouldDiscard(entry: WorkingEntry): boolean {
+    return entry.calciumLevel === 0 ||
+      (!entry.hasMeaningfulEntity && entry.cycleCount >= WorkingMemory.DISCARD_CYCLE_MAX);
+  }
+
   async consolidate(): Promise<WriteResult[]> {
     const results: WriteResult[] = [];
 
@@ -121,24 +146,13 @@ export class WorkingMemory {
     const snapshot = [...this.buffer];
     snapshot.sort((a, b) => a.createdAt - b.createdAt);
 
-    // 逐条判定
+    // 逐条判定（使用共享方法 shouldGraduate/shouldDiscard）
     const keep: WorkingEntry[] = [];
     for (const entry of snapshot) {
       entry.cycleCount++;
 
-      // ─── 毕业判定 ───
-      const shouldGraduate =
-        entry.calciumLevel >= 2 ||
-        (entry.calciumLevel === 1 && entry.hasMeaningfulEntity) ||
-        (entry.calciumLevel === 1 && entry.cycleCount >= 3);
-
-      // ─── 丢弃判定 ───
-      const shouldDiscard =
-        entry.calciumLevel === 0 ||
-        (!entry.hasMeaningfulEntity && entry.cycleCount >= 2);
-
-      // ─── 安全阀：cycleCount ≥ 6 强制处理（防止堆积） ───
-      if (entry.cycleCount >= 6) {
+      // ─── 安全阀：cycleCount ≥ FORCE_GRADUATE_CYCLE 强制处理（防止堆积） ───
+      if (entry.cycleCount >= WorkingMemory.FORCE_GRADUATE_CYCLE) {
         if (entry.calciumLevel >= 1 && entry.hasMeaningfulEntity) {
           const result = await this.writeEntry(entry);
           results.push(result);
@@ -146,10 +160,10 @@ export class WorkingMemory {
         continue;
       }
 
-      if (shouldGraduate) {
+      if (this.shouldGraduate(entry)) {
         const result = await this.writeEntry(entry);
         results.push(result);
-      } else if (!shouldDiscard) {
+      } else if (!this.shouldDiscard(entry)) {
         keep.push(entry);
       }
     }
@@ -172,10 +186,7 @@ export class WorkingMemory {
 
   /** 获取缓冲状态 */
   getStatus(): { size: number; maxSize: number; utilization: number; pendingGraduates: number } {
-    const pending = this.buffer.filter(e =>
-      e.calciumLevel >= 2 ||
-      (e.calciumLevel === 1 && e.hasMeaningfulEntity)
-    ).length;
+    const pending = this.buffer.filter(e => this.shouldGraduate(e)).length;
     return {
       size: this.buffer.length,
       maxSize: this.maxSize,
