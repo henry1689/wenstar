@@ -164,6 +164,11 @@ export class M8FusionAdapter implements M8Engine {
     return this.storage.markScar(memoryId, scarType);
   }
 
+  /** 记忆沉淀：M7 梦境确认后晋升关联记忆为地标（与 markScar 对称） */
+  async promoteMemory(memoryId: string, narrativeTag?: string, sensoryAnchor?: string): Promise<boolean> {
+    return this.storage.promoteToLandmark(memoryId, narrativeTag, sensoryAnchor);
+  }
+
   async checkConflict(params: ConflictCheckParams): Promise<ConflictCheckResult> {
     const landscape = this.storage.getEmotionalLandscape();
     const targetTraits = params.target.split(',').map(t => t.trim()).filter(Boolean);

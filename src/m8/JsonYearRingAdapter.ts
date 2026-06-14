@@ -246,6 +246,11 @@ export class JsonYearRingAdapter implements M8Engine {
     return false;
   }
 
+  /** 记忆沉淀（存根 — 已由 M8FusionAdapter 实现） */
+  async promoteMemory(_memoryId: string, _narrativeTag?: string, _sensoryAnchor?: string): Promise<boolean> {
+    return false;
+  }
+
   /** 添加测试年轮条目 */
   addEntry(entry: YearRingEntry): void {
     this.entries.push(entry);

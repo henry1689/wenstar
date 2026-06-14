@@ -518,9 +518,10 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     }
     const m5s = deriveM5Strategy(decision);
 
-    // 梦境生成
+    // 梦境生成（修复: 改为 calcium>=2 才触发，避免每轮对话都生成低质量梦境条目）
+    // 设计文档 §3.1 — 只对固体级(钙化≥2)以上的重要交互生成梦境
     try {
-      if (ctx.m7 && dna.entity_genes.length > 0) {
+      if (ctx.m7 && dna.entity_genes.length > 0 && decision.enhanced.calcium_level >= 2) {
         const existing = ctx.m7.queue.getPending();
         const alreadyQueued = existing.some((d: any) => d.content?.includes(message.substring(0, 20)));
         if (!alreadyQueued && ctx.m7.queue.getCount() < 20) {

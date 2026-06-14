@@ -195,15 +195,18 @@ async function initPipeline(): Promise<void> {
   loadConversationHistory();
   maintenance.start(); // 启动维护引擎
   console.log('  维护引擎已启动 ✓');
-  inductionScheduler = new InductionScheduler(storage);
+
+  // 先创建 M8+M7（使 DreamQueue 可供 CQ/IS 联动注入）
+  m8 = new M8FusionAdapter(storage);
+  m7 = new M7Orchestrator(m8);
+
+  inductionScheduler = new InductionScheduler(storage, m7.queue);
   inductionScheduler.start();
   console.log('  归纳调度器已启动 ✓');
-  consolidationQueue = new ConsolidationQueue(storage);
+  consolidationQueue = new ConsolidationQueue(storage, m7.queue);
   consolidationQueue.start();
   console.log('  巩固队列已启动 ✓');
 
-  m8 = new M8FusionAdapter(storage);
-  m7 = new M7Orchestrator(m8);
   m7Timer = startM7Interval(m7);
   console.log('  梦境引擎已启动 ✓');
 

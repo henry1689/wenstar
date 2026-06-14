@@ -4,22 +4,32 @@
  * 当系统空闲时（无用户消息 >30s），从近期记忆中挑选高钙化候选，
  * 验证其钙化是否维持高水平，晋升符合条件的到 M8 地标。
  *
+ * 与 DreamQueue 联动：晋升为地标的记忆同时生成梦境条目，
+ * 让巩固发现的"值得记住的事"进入梦境处理流水线
+ *（修复: 将三个独立后台合并为联动闭环）
+ *
  * @module M7-Consolidation
  */
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
+import type { DreamQueue } from './DreamQueue.js';
 
 export class ConsolidationQueue {
   private storage: FusionStorageAdapter;
+  private dreamQueue: DreamQueue | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastActivity = Date.now();
-  private readonly IDLE_THRESHOLD = 30_000; // 30s 无消息视为空闲
-  private readonly CHECK_INTERVAL = 10_000;  // 每 10s 检查一次
+  private readonly IDLE_THRESHOLD = 30_000;
+  private readonly CHECK_INTERVAL = 10_000;
 
-  constructor(storage: FusionStorageAdapter) {
+  constructor(storage: FusionStorageAdapter, dreamQueue?: DreamQueue) {
     this.storage = storage;
+    this.dreamQueue = dreamQueue ?? null;
   }
 
-  /** 记录用户活动（由 server.ts 在每次聊天时调用） */
+  /** 注入 DreamQueue（可选 — 联动: 晋升→梦境） */
+  setDreamQueue(dq: DreamQueue): void { this.dreamQueue = dq; }
+
+  /** 记录用户活动 */
   recordActivity(): void {
     this.lastActivity = Date.now();
   }
@@ -59,7 +69,24 @@ export class ConsolidationQueue {
             candidate.calcium_score >= 0.7 ? '重要时刻' : '日常印记',
             candidate.entity_genes.map(g => g.name).join('、'),
           );
-          if (success) promoted++;
+          if (success) {
+            promoted++;
+            // 联动: 晋升地标的同时生成梦境条目，让"值得记住的事"进入梦境流水线
+            if (this.dreamQueue && this.dreamQueue.getCount() < 20) {
+              try {
+                const traits: string[] = ['extraversion'];
+                if (candidate.calcium_score > 0.4) traits.push('agreeableness');
+                this.dreamQueue.add({
+                  source: 'Consolidation',
+                  content: `系统注意到一条重要记忆: ${candidate.raw_input.substring(0, 40)}`,
+                  affected_traits: traits,
+                  related_memory_id: candidate.id,
+                });
+              } catch (err) {
+                console.warn('[Consolid→Dream] 联动失败:', err);
+              }
+            }
+          }
         }
       }
 

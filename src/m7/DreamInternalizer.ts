@@ -77,6 +77,16 @@ export class DreamInternalizer {
       }
     }
 
+    // 第3步：记忆沉淀 — 将关联记忆晋升为地标（设计文档 §1.1 第四项职责 — 修复: 补全 M7→M8 写入链路）
+    if (dream.related_memory_id) {
+      try {
+        await this.m8.promoteMemory(dream.related_memory_id, '梦境沉淀', dream.content.substring(0, 20));
+        console.log(`[Dream→M8] 已沉淀为地标: ${dream.related_memory_id}`);
+      } catch (err) {
+        console.warn(`[Dream→M8] 沉淀失败:`, err);
+      }
+    }
+
     return {
       id: dreamId, status: 'confirmed',
       feedback: { adaption_text: `这个${dream.content.substring(0, 10)}让我耳朵发烫…但心里是甜的。` },

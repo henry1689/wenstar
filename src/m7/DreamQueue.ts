@@ -78,9 +78,23 @@ export class DreamQueue {
     this.save();
   }
 
-  /** 批量处理触发器 */
+  /**
+   * 批量处理触发器（修复: 阈值改回10条+24h超时兜底）
+   * 设计文档 §3.1 定义的三种触发条件:
+   *   1. pending ≥ 10 条（批量处理）
+   *   2. 任一条等待超过 24h（超时兜底，防止低频对话永远不触发）
+   *   3. 用户主动说"你记住了吗？"（chat.ts 中检测后立即调用，预留）
+   */
   shouldProcess(): boolean {
-    return this.getPending().length >= 3;
+    if (this.getPending().length >= 10) return true;
+    const now = Date.now();
+    for (const d of this.dreams) {
+      if (d.status === 'pending') {
+        const age = (now - new Date(d.created_at).getTime()) / (1000 * 3600);
+        if (age >= 24) return true;
+      }
+    }
+    return false;
   }
 
   getCount(): number { return this.dreams.length; }

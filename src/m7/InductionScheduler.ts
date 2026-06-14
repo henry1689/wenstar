@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
+import type { DreamQueue } from './DreamQueue.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,13 +37,18 @@ interface InductionRecord {
 
 export class InductionScheduler {
   private storage: FusionStorageAdapter;
+  private dreamQueue: DreamQueue | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inductionPath: string;
 
-  constructor(storage: FusionStorageAdapter) {
+  constructor(storage: FusionStorageAdapter, dreamQueue?: DreamQueue) {
     this.storage = storage;
+    this.dreamQueue = dreamQueue ?? null;
     this.inductionPath = join(PROJECT_ROOT, 'data', 'inductions');
   }
+
+  /** 注入 DreamQueue（可选 — 联动: 高钙化模式→梦境生成） */
+  setDreamQueue(dq: DreamQueue): void { this.dreamQueue = dq; }
 
   start(): void {
     if (!existsSync(this.inductionPath)) mkdirSync(this.inductionPath, { recursive: true });
@@ -144,6 +150,23 @@ export class InductionScheduler {
       }
 
       console.log(`[Induction] ✅ ${recent.length}条 · ${reflection ? 'LLM感悟' : '规则摘要'} · ${summary.substring(0, 40)}...`);
+
+      // 联动: 高钙化时刻→生成梦境条目（让每小时归纳发现的"重要时刻"进入梦境流水线）
+      if (this.dreamQueue && highCalcium.length > 0 && this.dreamQueue.getCount() < 20) {
+        for (let i = 0; i < Math.min(highCalcium.length, 3); i++) {
+          try {
+            const snippet = highCalcium[i].substring(0, 40);
+            const exists = this.dreamQueue.getPending().some((d: any) => d.content?.includes(snippet));
+            if (!exists) {
+              this.dreamQueue.add({
+                source: 'Induction',
+                content: '小时归纳发现一段高钙化记忆: ' + snippet,
+                affected_traits: topEntities.length > 0 ? topEntities.slice(0, 3) : ['extraversion'],
+              });
+            }
+          } catch (err) { console.warn('[Induction→Dream] 联动失败:', err); }
+        }
+      }
     } catch (err) {
       console.error('[Induction] 失败:', err);
     }

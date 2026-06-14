@@ -47,6 +47,9 @@ export interface M8Engine {
   checkConflict(params: ConflictCheckParams): Promise<ConflictCheckResult>;
   markScar(memoryId: string, scarType: string): Promise<boolean>;
 
+  // ── 记忆沉淀（M7 确认后调用，与 markScar 对称） ──
+  promoteMemory(memoryId: string, narrativeTag?: string, sensoryAnchor?: string): Promise<boolean>;
+
   // ── 维护 ──
   getStatus(): Promise<M8StorageStatus>;
 }
