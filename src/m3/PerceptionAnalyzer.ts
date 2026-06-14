@@ -207,14 +207,23 @@ class EmotionScorer {
 }
 
 class CognitionScorer {
+  /**
+   * 事实性评分：只认具体日期/时间/量化数据，不认随意数字。
+   * 避免"加班到10点"、"第3次"这种主观叙述被误判为事实性高。
+   */
   static factual(text: string): number {
-    const hasNumbers = /\d+/.test(text);
+    // 具体日期/时间/量化模式（不匹配"1个"、"2天"这类随意数）
+    const datePattern = /\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|\d{4}年/;
+    const timePattern = /\d{1,2}:\d{2}(:\d{2})?|\d{1,2}点\d{0,2}分/;
+    const quantPattern = /第\d+[次轮个位]|\d+[天小时分周月元年]|\d+(\.\d+)[%％]|\d{4,}/;
+    const hasSpecificFact = datePattern.test(text) || timePattern.test(text) || quantPattern.test(text);
     let score = 0.2;
-    if (hasNumbers) score += 0.3;
-    if (text.length > 20) score += 0.2;
-    if (text.length > 50) score += 0.1;
+    if (hasSpecificFact) score += 0.3;
+    // 长文本整体倾向叙事，加分幅度缩小
+    if (text.length > 40) score += 0.1;
+    // 情感词密集 → 主观表达，降低事实性
     const emoCount = countHits(text, POSITIVE_WORDS) + countHits(text, NEGATIVE_WORDS);
-    if (emoCount > 3) score -= 0.2;
+    if (emoCount >= 2) score = Math.max(0.1, score - emoCount * 0.1);
     return clamp(score, 0, 1);
   }
 
