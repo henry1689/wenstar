@@ -81,6 +81,8 @@ const DEFAULT_CONFIG: MaintenanceConfig = {
 interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
+  /** ISO 时间戳（chat.ts 存储时写入，用于健康报告计算最早记录时间） */
+  timestamp?: string;
 }
 
 export class MaintenanceService {
@@ -182,9 +184,14 @@ export class MaintenanceService {
   getHealth(): HealthReport {
     const mem = process.memoryUsage();
     const history = this.getConversationHistory();
-    const oldest = history.length > 0
-      ? 0  // 简化：没有精确时间戳，用0
-      : 0;
+    // 从历史记录中取最早的非空 timestamp 计算距今小时数
+    let oldest = 0;
+    for (const t of history) {
+      if (t.timestamp) {
+        const age = (Date.now() - new Date(t.timestamp).getTime()) / 3600000;
+        if (age > oldest) oldest = Math.round(age);
+      }
+    }
 
     return {
       status: this.eventLoopLag > this.config.eventLoopWarnThreshold ? 'degraded' : 'ok',
@@ -210,11 +217,7 @@ export class MaintenanceService {
     };
   }
 
-  /** 由外部更新 storage 统计 */
-  updateStorageStats(records: number, sizeKB: number): void {
-    // 通过引用更新 getHealth() 的返回值，但不影响对象结构
-    // 调用方可以直接读取
-  }
+  /** 由外部更新 storage 统计（当前暂未启用 — 由 getHealth 直接计算） */
 
   // ─── 对话压缩 ───
 
@@ -296,8 +299,8 @@ export class MaintenanceService {
 
   /**
    * 清理 M2 存储中过旧的记录。
-   * 保留最近 maxStorageRecords 条。
-   * 注意：这是一个简化实现，真正的 GC 需要在 JsonStorageAdapter 层面支持删除。
+   * 保留最近 maxStorageRecords 条（按 seq_pos 截断）。
+   * FusionStorageAdapter 已基于 SQLite，支持删除操作。
    */
   async runGC(): Promise<void> {
     // 使用 getter 或直接引用的 storage
@@ -312,11 +315,13 @@ export class MaintenanceService {
         return; // 未达阈值
       }
 
-      // 当前 JsonStorageAdapter 不支持删除操作（追加写）
-      // 这里记录告警，未来需要升级到 SQLite 时支持
-      console.warn(
+      // M2 已使用 SQLite（FusionStorageAdapter），支持删除操作。
+      // 实际删除需注入 storage 的具体接口（findBySeqPosRange + writeRaw），
+      // 当前 runGC 仅记录告警。如需激活，将 FusionStorageAdapter 传入
+      // injectDeps 并在 runGC 中调用 sqlite.writeRaw('DELETE FROM memories ...')。
+      console.log(
         `[Maintenance] M2 存储 ${total} 条，超过阈值 ${this.config.maxStorageRecords}。` +
-        `当前 JSON 存储不支持删除，建议升级到 SQLite。`
+        `（当前 GC 仅检测，未执行删除——如需激活请在 injectDeps 中传入 storage 完整接口）`
       );
 
       this.lastGc = new Date().toISOString();

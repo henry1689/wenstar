@@ -6,6 +6,7 @@
  * 停顿时长、呼吸节奏、打字波动、沉默的深度——这些信号成为所有亲密回应的底层情感基调。
  */
 import type { SQLiteAdapter } from '../../m2/SQLiteAdapter.js';
+import { loadSet } from '../../m1/LexiconLoader.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,8 +56,8 @@ export interface SomaticFingerprint {
   timeEnd: number;
   /** 信号数量 */
   signalCount: number;
-  /** 归一化特征向量 (10维) */
-  // [长度, 标点密度, 犹豫度, 感叹度, 表情度, 重复度, 亲密密度, 片段率, 间隔, 暂停倾向]
+  /** 归一化特征向量 (11维) */
+  // [长度, 标点密度, 犹豫度, 感叹度, 表情度, 重复度, 亲密密度, 片段率, 间隔, 暂停倾向, 综合强度]
   vector: Float64Array;
 }
 
@@ -73,6 +74,21 @@ interface StoredPattern {
   activationCount: number;
   /** 元标签 */
   tags: string[];
+}
+
+// 亲密/脏话词集 — 从统一情感词表加载（与 M3 PerceptionAnalyzer 同源）
+const INTIMATE_WORDS = new Set([
+  ...Array.from(loadSet('emotion_lexicon.json', 'sexual_attraction')),
+  ...Array.from(loadSet('emotion_lexicon.json', 'sensory_craving')),
+]);
+
+/** 统计词集在文本中的匹配次数 */
+function countIntimateHits(text: string): number {
+  let hits = 0;
+  for (const word of INTIMATE_WORDS) {
+    if (text.includes(word)) hits++;
+  }
+  return hits;
 }
 
 // ════════════════════════════════════════
@@ -135,9 +151,8 @@ export class SomaticMemory {
       repRatio = len > 0 ? repLen / len : 0;
     }
 
-    // 亲密/脏话密度
-    const intimateWords = ['操','干','日','插','顶','舔','吸','咬','揉','捏','掐','摸','吻','骚','浪','贱','奶','鸡巴','肉棒','阴','淫'];
-    const intimateHits = intimateWords.filter(w => text.includes(w)).length;
+    // 亲密/脏话密度（从统一情感词表 sexual_attraction + sensory_craving 加载）
+    const intimateHits = countIntimateHits(text);
     const intimateDensity = len > 0 ? Math.min(1, intimateHits * 0.15) : 0;
 
     // 短片段比例
