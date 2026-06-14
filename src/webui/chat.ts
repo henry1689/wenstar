@@ -328,6 +328,20 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
           try { sqlite.writeRaw(`INSERT OR IGNORE INTO knowledge_memories (knowledge_id, memory_id, relevance) VALUES (?, ?, ?)`, k.id, dna.branch_id, 0.8); } catch {}
         }
       }
+
+      // 实体重叠 → 关联知识检索（即使关键词搜索无结果，也能通过相同实体找到关联知识）
+      try {
+        const entityNames = dna.entity_genes.map(e => e.name);
+        if (entityNames.length > 0) {
+          const overlapResults = ctx.storage.findKnowledgeByEntityOverlap(entityNames, 3);
+          if (overlapResults.length > 0) {
+            const overlapText = overlapResults.map(k => `📄 ${k.title}\n${k.content.substring(0, 1500)}`).join('\n\n');
+            knowledgeBaseText = knowledgeBaseText
+              ? knowledgeBaseText + '\n\n【关联知识】\n' + overlapText
+              : overlapText;
+          }
+        }
+      } catch (err) { console.warn('[EntityOverlap] 关联知识检索失败:', err); }
     } catch (err) { console.warn('[KnowledgeSearch] 检索失败:', err); }
 
         // ═══════════════════════════════════════════════════════════════
@@ -608,6 +622,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         });
         if (vadSpectrum) console.log('[BionicStore] 歌单已存入（含VAD谱曲）');
         else console.log('[BionicStore] 歌单已存入（纯歌词，待谱曲）');
+
+        // 3. 同步 VAD 谱曲到本地 M2 SQLite（歌单完整性）
+        try {
+          ctx.storage.updateVadSpectrum(dna.branch_id, vadSpectrum);
+        } catch (err) { console.warn('[BionicStore] 本地VAD同步失败:', err); }
       } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
     })();
 

@@ -169,12 +169,23 @@ export class FusionStorageAdapter {
 
   markScar(memoryId: string, scarType: string): boolean {
     this.ensureReady();
-    // 只允许标记非地标记忆的疤痕（地标由 ConsolidationQueue 晋升产生）
     const record = this.sqlite.findById(memoryId);
     if (!record || record.is_landmark) return false;
     record.scar = { type: scarType as any, healed: false, healed_at: null };
     this.sqlite.write(record);
     return true;
+  }
+
+  /** 更新已存在记忆的 VAD 谱曲 */
+  updateVadSpectrum(memoryId: string, vad: any): boolean {
+    this.ensureReady();
+    return this.sqlite.updateVadSpectrum(memoryId, vad);
+  }
+
+  /** 实体重叠 → 关联知识检索 */
+  findKnowledgeByEntityOverlap(entityNames: string[], limit = 5) {
+    this.ensureReady();
+    return this.sqlite.findKnowledgeByEntityOverlap(entityNames, limit);
   }
 
   runDecayMaintenance(): { total: number; archived: number } {

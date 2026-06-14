@@ -49,6 +49,9 @@ export interface EmotionalMemoryRecord {
   entity_genes: EntityGene[];
   leaf_zone: string;
 
+  /** ── VAD 谱曲（情感谱曲引擎产出，歌单完整性的曲谱部分）── */
+  vad_spectrum?: any | null;
+
   /** ── 记忆动力学 ── */
   recall_count: number;
   last_recalled_at: string | null;

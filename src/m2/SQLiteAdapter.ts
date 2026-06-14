@@ -97,6 +97,10 @@ export class SQLiteAdapter {
     // 执行 DDL
     const ddl = readFileSync(SCHEMA_PATH, 'utf-8');
     this.db.run(ddl);
+
+    // 迁移：为已有数据库追加 vad_spectrum 列（SQLite 不支持 IF NOT EXISTS）
+    try { this.db.run("ALTER TABLE memories ADD COLUMN vad_spectrum TEXT"); } catch { /* 列已存在 */ }
+
     this.ready = true;
     console.log(`[SQLiteAdapter] 初始化完成: ${this.dbPath}`);
   }
@@ -133,14 +137,16 @@ export class SQLiteAdapter {
        recall_count, last_recalled_at,
        reinforcement_accumulator, effective_strength, strength_updated_at,
        is_landmark, landmarked_at, narrative_tag, sensory_anchor,
-       scar_type, scar_healed)
+       scar_type, scar_healed,
+       vad_spectrum)
       VALUES (?, ?, ?, ?,
               ?, ?,
               ?, ?, ?,
               ?, ?,
               ?, ?, ?,
               ?, ?, ?, ?,
-              ?, ?)`,
+              ?, ?,
+              ?)`,
       [
         record.id, record.seq_pos, record.created_at, pJson,
         record.calcium_score, record.calcium_level,
@@ -150,6 +156,7 @@ export class SQLiteAdapter {
         record.is_landmark ? 1 : 0, record.landmarked_at,
         record.narrative_tag ?? null, record.sensory_anchor ?? null,
         record.scar?.type ?? null, record.scar?.healed ? 1 : record.scar ? 0 : null,
+        record.vad_spectrum ? JSON.stringify(record.vad_spectrum) : null,
       ],
     );
 
@@ -493,6 +500,65 @@ export class SQLiteAdapter {
     };
   }
 
+  /** 更新已存在记忆的 VAD 谱曲字段（异步谱曲完成后调用） */
+  updateVadSpectrum(memoryId: string, vad: any): boolean {
+    this.ensureReady();
+    try {
+      const vadJson = JSON.stringify(vad);
+      this.runSql(
+        `UPDATE memories SET vad_spectrum = ? WHERE id = ?`,
+        [vadJson, memoryId],
+      );
+      this.save();
+      return true;
+    } catch (err) {
+      console.warn(`[SQLite] updateVadSpectrum 失败:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * 通过实体重叠查找关联的知识条目。
+   * 找到与当前实体同现的过往记忆 → 通过 knowledge_memories 反向查出知识条目。
+   * 用于在关键词搜索之外提供"情感关联"维度的知识补充。
+   */
+  findKnowledgeByEntityOverlap(entityNames: string[], limit = 5): Array<{ id: string; title: string; content: string; source_type: string; tags: string }> {
+    this.ensureReady();
+    if (entityNames.length === 0) return [];
+
+    const placeholders = entityNames.map(() => '?').join(',');
+    try {
+      const results = this.execSql(
+        `SELECT DISTINCT kb.id, kb.title, kb.content, kb.source_type, kb.tags
+         FROM knowledge_base kb
+         JOIN knowledge_memories km ON km.knowledge_id = kb.id
+         JOIN memories m ON m.id = km.memory_id
+         JOIN memory_entities me ON me.memory_id = m.id
+         JOIN entities e ON e.id = me.entity_id
+         WHERE e.name IN (${placeholders})
+         ORDER BY km.relevance DESC
+         LIMIT ?`,
+        [...entityNames, limit],
+      );
+      if (results.length === 0) return [];
+      const { columns, values } = results[0];
+      return values.map((row: any[]) => {
+        const obj: Record<string, any> = {};
+        columns.forEach((col: string, idx: number) => { obj[col] = row[idx]; });
+        return {
+          id: obj.id as string,
+          title: obj.title as string,
+          content: obj.content as string,
+          source_type: obj.source_type as string,
+          tags: obj.tags as string,
+        };
+      });
+    } catch (err) {
+      console.warn('[SQLite] findKnowledgeByEntityOverlap 失败:', err);
+      return [];
+    }
+  }
+
   /** 直接执行 SQL */
   writeRaw(sql: string, ...params: any[]): void {
     this.ensureReady();
@@ -719,6 +785,7 @@ export class SQLiteAdapter {
         healed: obj.scar_healed === 1,
         healed_at: null,
       } : undefined,
+      vad_spectrum: obj.vad_spectrum ? JSON.parse(obj.vad_spectrum) : null,
     };
   }
 

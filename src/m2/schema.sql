@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS memories (
     effective_strength REAL DEFAULT 1.0,
     strength_updated_at TEXT NOT NULL,
 
+    -- VAD 谱曲（情感谱曲引擎产出，JSON字符串，可为NULL表示待谱曲）
+    vad_spectrum TEXT,
+
     -- 年轮/地标
     is_landmark INTEGER DEFAULT 0,
     landmarked_at TEXT,
