@@ -1015,7 +1015,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         // MemoryGate: 如果有过渡话术且memory/knowledge模式，注入到知识库文本让LLM自然表达
 
-        let finalKnowledgeText = knowledgeBaseText;
+                let memoryText = memoryFragments.length > 0 ? memoryFragments.slice(0, 2).join('\n') : '';
+let finalKnowledgeText = knowledgeBaseText;
 
         if (memoryGate.fillerPhrase && (memoryGate.mode === 'memory_recall' || memoryGate.mode === 'vague_recall' || memoryGate.mode === 'knowledge_query')) {
 
