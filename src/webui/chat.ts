@@ -533,8 +533,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         if (finalMemories.length > 0 && !hasContinuationMarkers) {
           const top = finalMemories[0];
           const userSaid = top.record.raw_input.substring(0, 60);
-          const feeling = top.record.calcium_score > 0.6 ? '（这件事当时对你很重要）' : '（我记得你那时候的感觉）';
-          memoryFragments.push('【相关记忆】你记得用户南经说过:"' + userSaid + '" ' + feeling);
+          // 【相关记忆】仅供 LLM 参考，不记得就说"不太记得了"，不要编造
+          memoryFragments.push('【用户曾提到】"' + userSaid + '"——这是用户以前说的，不记得就说"不太记得了"');
         }
 
       }
@@ -557,7 +557,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         if (bionicMemories.length > 0 && !memoryFragments.some(f => f.includes(bionicMemories[0].core_facts?.substring(0, 40) || ''))) {
           const text = bionicMemories[0].core_facts || bionicMemories[0].topic || '';
-          memoryFragments.push('【记忆联想】' + text.substring(0, 100));
+          memoryFragments.push('【用户曾提到】' + text.substring(0, 100));
 
           enrichedHistory.unshift({ role: 'assistant', content: inject });
 
@@ -576,7 +576,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         const somaticContext = ctx.somaticMemory.getActiveSomaticContext();
 
         if (somaticContext) {
-          memoryFragments.push('【当下感受】' + somaticContext);
+          // 【当下感受】是躯体感知信息，反映用户当前的身体/情绪状态
+          memoryFragments.push('【用户状态】' + somaticContext);
         }
 
       }
@@ -745,7 +746,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         const top = clueResult.searchResult.entries[0];
 
-        memoryFragments.push('【线索回忆】找到了相关的记忆片段');
+        memoryFragments.push('【线索参考】用户可能在回忆某件事，但如果你不确定具体内容就说不记得了');
 
       }
 
