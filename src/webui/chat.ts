@@ -531,21 +531,10 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         const finalMemories = freshMemories.length > 0 ? freshMemories : emotionalMemories.slice(0, 1);
 
         if (finalMemories.length > 0 && !hasContinuationMarkers) {
-
-          const inject = finalMemories.slice(0, 1).map((m, i) => {
-
-            const feeling = m.record.calcium_score > 0.6 ? '（这件事当时对你很重要）' : '（我记得你那时候的感觉）';
-
-            const action = m.record.perception.pleasure > 0 ? '温暖的感觉' : '那种心情';
-
-            const userSaid = m.record.raw_input.substring(0, 60);
-
-            return ('[内心: 看到鸿鸣现在的样子，让我想起' + action + '……鸿鸣曾说过:"' + userSaid + '"' + feeling + ']');
-
-          }).join('\n');
-
-          enrichedHistory.unshift({ role: 'assistant', content: inject });
-
+          const top = finalMemories[0];
+          const userSaid = top.record.raw_input.substring(0, 60);
+          const feeling = top.record.calcium_score > 0.6 ? '（这件事当时对你很重要）' : '（我记得你那时候的感觉）';
+          memoryFragments.push('【相关记忆】你记得用户南经说过:"' + userSaid + '" ' + feeling);
         }
 
       }
@@ -566,15 +555,9 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         bionicMemories = await bionic.search(message);
 
-        if (bionicMemories.length > 0 && !enrichedHistory.some(e => e.content?.includes(bionicMemories[0].core_facts?.substring(0, 40) || ''))) {
-
-          const inject = bionicMemories.slice(0, 1).map(m => {
-
-            const text = m.core_facts || m.topic || '';
-
-            return `[这让我想起了一件事……${text.substring(0, 100)}]`;
-
-          }).join('\n');
+        if (bionicMemories.length > 0 && !memoryFragments.some(f => f.includes(bionicMemories[0].core_facts?.substring(0, 40) || ''))) {
+          const text = bionicMemories[0].core_facts || bionicMemories[0].topic || '';
+          memoryFragments.push('【记忆联想】' + text.substring(0, 100));
 
           enrichedHistory.unshift({ role: 'assistant', content: inject });
 
