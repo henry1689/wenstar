@@ -548,6 +548,18 @@ export default function ChatPanel({ inline }: Props) {
                 <motion.div key={msg.id} className={`chat-msg ${msg.role}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} layout>
                   <div className="chat-msg-content">{msg.content}</div>
                   <div className="chat-msg-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+              {msg.role === 'assistant' && (msg as any).candidates && (
+                <div className="chat-candidates">
+                  <button className="chat-candidate-btn" onClick={() => handleCandidateSelect(msg.id, 'a', (msg as any).candidates)}
+                    title="试试这个风格">
+                    {(msg as any).candidates.a.label}
+                  </button>
+                  <button className="chat-candidate-btn" onClick={() => handleCandidateSelect(msg.id, 'b', (msg as any).candidates)}
+                    title="试试这个长度">
+                    {(msg as any).candidates.b.label}
+                  </button>
+                </div>
+              )}
                 </motion.div>
               ))}
               {isTyping && (

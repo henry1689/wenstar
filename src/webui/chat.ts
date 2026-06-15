@@ -968,6 +968,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const timeGuard = `[当前时间] ${beijingTime}（北京时间）——回答时间问题时必须以此为准，不能编造。`;
 
+    // 通用幻觉防护：禁止编造过去事件、日期、用户生活细节
+    const memoryGuard = '注意：你没有记忆的过去事件、日期、穿着、对话内容绝对不能编造。不确定就说不记得了。宁可少说，不能说错。';
     const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard].filter(Boolean).join('\n');
 
     let reply: string;
@@ -1025,7 +1027,6 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
           const innerThought = '【内心独白】' + memoryGate.fillerPhrase.replace(/[。！？]/g, '…') + '…';
 
           finalKnowledgeText = innerThought + (knowledgeBaseText ? '\n\n' + knowledgeBaseText : '');
-
 
           memoryGateFillerUsed = true;
 
