@@ -27,6 +27,7 @@ import { decompose, mergeDecomposedResults } from '../m4/QueryDecomposer.js';
 import { extractRelations, storeRelations, FAMILY_MAP, guessRelationOptions } from '../app/knowledge/RelationshipExtractor.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
 import { decideMode, buildGuard, type MemoryGateOutput } from '../app/conversation/MemoryGate.js';
+import { generateCandidates, type CandidateSet } from '../m5/CandidateSelector.js';
 
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
 import { bionic } from '../adapter/bionic-adapter.js';
@@ -89,6 +90,8 @@ export interface ChatResponse {
   emotionalFlash: boolean;
   triggeredMemoryId: string | null;
   vad_spectrum?: any | null;
+  /** 候选回复（用户可选择偏好风格） */
+  candidates?: any | null;
 }
 
 
@@ -576,7 +579,28 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 ' + knowledgeBaseText : '');
           memoryGateFillerUsed = true;
         }
-        try { reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message); } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
+        try {
+        reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message);
+        // 候选回复生成（不阻塞主回复 — 默认不活跃，待前端请求时使用）
+        // 只有非线索回复、非时间回答时才生成候选
+        if (!clueReply && !timeMatch) {
+          try {
+            const primaryStrategy = deriveM5Strategy(decision);
+            const candidates = generateCandidates({
+              m4ctx: ctx_m4,
+              conversationHistory: enrichedWithGuard,
+              knowledgeBase: finalKnowledgeText,
+              userMessage: message,
+              primaryStrategy: { strategy_id: primaryStrategy.strategy_id, params: { tone: primaryStrategy.tone, max_length: primaryStrategy.max_length, include_entity: [], include_history: false, include_family: false }, description: primaryStrategy.description },
+              primaryTone: primaryStrategy.tone,
+              primaryDepth: primaryStrategy.depth,
+            });
+            // 将候选注入到返回对象（通过 closure 变量的方式）
+            // 实际在最终 return 中使用
+            (globalThis as any).__lastCandidates = candidates;
+          } catch (err) { console.warn('[Candidates] 候选生成失败:', err); }
+        }
+      } catch (err) { console.error('[Chat] M5失败:', err); reply = FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)]; }
       }
     }
 
@@ -782,6 +806,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
     })();
 
+    const candidates = (globalThis as any).__lastCandidates;
+    (globalThis as any).__lastCandidates = null;
     return {
       reply, turn_count: Math.floor(ctx.conversationHistory.length / 2),
       vad_spectrum: vadSpectrum,
@@ -791,6 +817,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       m5: deriveM5Strategy(decision),
       emotionalFlash: emotionalMemories.length > 0 && isDirectedEmotion(message),
       triggeredMemoryId: emotionalMemories[0]?.record?.id ?? null,
+      candidates: candidates || null,
     };
   } catch (err) {
     console.error('[chat]', err);
@@ -803,6 +830,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       emotionalFlash: false,
       triggeredMemoryId: null,
       vad_spectrum: null,
+      candidates: null,
     };
   }
 }

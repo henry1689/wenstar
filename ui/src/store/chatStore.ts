@@ -8,6 +8,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  /** 候选回复（语气/深度变体，供用户选择偏好） */
+  candidates?: { a: { text: string; label: string }; b: { text: string; label: string } } | null;
 }
 
 interface ChatStore {
@@ -31,6 +33,7 @@ interface ChatStore {
   setError: (error: string | null) => void;
   setTurnCount: (count: number) => void;
   setM3Data: (data: any) => void;
+  setLastMessageCandidates: (candidates: any) => void;
   clearMessages: () => void;
   triggerFlash: (memoryId?: string) => void;
   /** SSE 流式操作 */
@@ -70,6 +73,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setError: (error) => set({ error }),
   setTurnCount: (count) => set({ turnCount: count }),
   clearMessages: () => set({ messages: [], turnCount: 0, emotionalFlash: false, triggeredMemoryId: null }),
+  setLastMessageCandidates: (candidates) =>
+    set((s) => {
+      const msgs = [...s.messages];
+      if (msgs.length > 0) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], candidates };
+      return { messages: msgs };
+    }),
   setM3Data: (data) => set({ m3Data: data }),
   triggerFlash: (memoryId) => {
     set({ emotionalFlash: true, triggeredMemoryId: memoryId ?? null });

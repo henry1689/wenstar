@@ -164,6 +164,30 @@ export default function ChatPanel({ inline }: Props) {
     }
   }, [ttsEnabled, addMessage]);
 
+  /** 用户选择候选回复（记录偏好到 M6） */
+  const handleCandidateSelect = useCallback(async (msgId: string, chosen: 'a' | 'b', candidates: any) => {
+    const chosenCand = chosen === 'a' ? candidates.a : candidates.b;
+    const store = useChatStore.getState();
+    // 更新消息内容为用户选择的版本
+    const updated = store.messages.map(m =>
+      m.id === msgId ? { ...m, content: chosenCand.text, candidates: null } : m
+    );
+    store.setLastMessageCandidates(null);
+    // 重新设置 messages
+    useChatStore.setState({ messages: updated });
+    // 记录偏好到后端
+    try {
+      const tags: string[] = [];
+      if (candidates.a.strategy) tags.push('tone:' + chosenCand.strategy.tone);
+      if (candidates.a.strategy) tags.push('depth:' + chosenCand.strategy.depth);
+      await fetch('/api/chat/prefer-candidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chosen, tags }),
+      });
+    } catch {}
+  }, []);
+
   const togglePhone = useCallback(() => {
     unlockAudio();
     if (voiceModeRef.current === 'phone') {
@@ -364,6 +388,18 @@ export default function ChatPanel({ inline }: Props) {
               <div className="chat-msg-time">
                 {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
+              {msg.role === 'assistant' && (msg as any).candidates && (
+                <div className="chat-candidates">
+                  <button className="chat-candidate-btn" onClick={() => handleCandidateSelect(msg.id, 'a', (msg as any).candidates)}
+                    title="试试这个风格">
+                    {(msg as any).candidates.a.label}
+                  </button>
+                  <button className="chat-candidate-btn" onClick={() => handleCandidateSelect(msg.id, 'b', (msg as any).candidates)}
+                    title="试试这个长度">
+                    {(msg as any).candidates.b.label}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {isTyping && (

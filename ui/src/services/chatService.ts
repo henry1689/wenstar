@@ -62,6 +62,7 @@ interface ChatResponse {
   emotionalFlash?: boolean;
   triggeredMemoryId?: string | null;
   audio_url?: string | null;
+  candidates?: any;
 }
 
 /** 发送消息给玉瑶（SSE 流式输出） */
@@ -118,6 +119,9 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
     const data: ChatResponse = await res.json();
     store.setTurnCount(data.turn_count);
     store.addMessage('assistant', data.reply);
+    if (data.candidates) {
+      store.setLastMessageCandidates(data.candidates);
+    }
     store.setTyping(false);
 
     // 播放 TTS 语音（iPhone 需要绝对路径）

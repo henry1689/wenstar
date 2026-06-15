@@ -357,6 +357,27 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 候选回复偏好记录（用户选择了哪个候选，记录到 M6） ──
+    if (req.method === 'POST' && url.pathname === '/api/chat/prefer-candidate') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const tags = body.tags;
+        if (m6 && tags && Array.isArray(tags)) {
+          for (const tag of tags) {
+            m6.prefs.recordMention(tag, 0.8);
+          }
+          console.log('[Preference] 候选偏好已记录:', tags.join(', '));
+        }
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        console.error('[Preference] 记录失败:', err);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: false }));
+      }
+      return;
+    }
+
     // ── 聊天 SSE 流式输出（先发头再处理，避免 EventSource 超时） ──
     if (req.method === 'GET' && url.pathname === '/api/chat/stream') {
       const rawMessage = url.searchParams.get('message') || '';
