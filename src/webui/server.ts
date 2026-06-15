@@ -95,7 +95,7 @@ function getSelfModel(): SelfModelV1 {
 
 // ── 对话记忆 ──
 let conversationHistory: ConversationTurn[] = [];
-const MAX_SAVED_TURNS = 200; // 保留最近 100 轮完整对话（鸿鸣要求）
+const MAX_SAVED_TURNS = 200; // 保留最近 100 轮完整对话（鸿艺要求）
 function loadConversationHistory(): void {
   try {
     if (existsSync(CONV_LOG_PATH)) {

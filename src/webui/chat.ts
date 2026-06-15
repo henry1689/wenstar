@@ -606,7 +606,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         knowledgeBaseText = (/\b知识库\b|看过/.test(message))
 
-          ? `【知识库条目，我看过】\n` + knResults.map(k => `📄 ${k.title}\n${k.content.substring(0, 1500)}`).join('\n\n') + `\n\n（鸿鸣问我有没有看过这些内容。我看过，应该告诉他我记得。）`
+          ? `【知识库条目，我看过】\n` + knResults.map(k => `📄 ${k.title}\n${k.content.substring(0, 1500)}`).join('\n\n') + `\n\n（鸿艺问我有没有看过这些内容。我看过，应该告诉他我记得。）`
 
           : knResults.map(k => `📄 ${k.title}\n${k.content.length > 5000 ? k.content.substring(0, 5000) + '\n…(剩余内容已截断，可在知识库查看完整版)' : k.content}`).join('\n\n');
 
@@ -837,9 +837,9 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       if (personEntities.length > 0) {
         const knownNames = personEntities.map((p: any) => p.entity).join('、');
         const knownList = personEntities.map((p: any) => '  - ' + p.entity + '（' + p.relation + '）').join('\n');
-        familyConstraint = '【家庭/社交铁律】以下是你对鸿鸣家庭/社交关系的全部所知：\n' + knownList + '\n\n铁律：\n1. 只有上面列出的人是你知道的，其他任何人你一概不知道。\n2. 对上面的人——你只知道他们的名字和关系，其他一切细节都不知道。\n3. 绝对不要编造任何细节。不知道就说"你之前提过，但具体我不太记得了"。\n4. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
+        familyConstraint = '【家庭/社交铁律】以下是你对鸿艺家庭/社交关系的全部所知：\n' + knownList + '\n\n铁律：\n1. 只有上面列出的人是你知道的，其他任何人你一概不知道。\n2. 对上面的人——你只知道他们的名字和关系，其他一切细节都不知道。\n3. 绝对不要编造任何细节。不知道就说"你之前提过，但具体我不太记得了"。\n4. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
       } else {
-        familyConstraint = '【家庭/社交铁律】你不知道鸿鸣有哪些家人和社交关系。如果鸿鸣提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
+        familyConstraint = '【家庭/社交铁律】你不知道鸿艺有哪些家人和社交关系。如果鸿艺提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
       }
     } catch (err) { console.warn('[FamilyGuard] 构建失败:', err); }
 
@@ -891,11 +891,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     if (repeatCount >= 3) {
 
-      repeatHint = '（鸿鸣反复追问，你直接明确说没有/不知道/不记得就好）';
+      repeatHint = '（鸿艺反复追问，你直接明确说没有/不知道/不记得就好）';
 
     } else if (repeatCount >= 2) {
 
-      repeatHint = '（鸿鸣在追问相同的事，你如果已经说过了不知道，就直接说真的不记得/没看过）';
+      repeatHint = '（鸿艺在追问相同的事，你如果已经说过了不知道，就直接说真的不记得/没看过）';
 
     }
 
@@ -905,7 +905,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     if (/感觉|感受|分享|讲讲|说说|回忆|记得.*吗|怎样/.test(message) && !rpMatch) {
 
-      feelingGuard = '📖【鸿鸣在问你感受。请用300-500字充分展开，详细描述身体感觉和心情。不要简短回答。】';
+      feelingGuard = '📖【鸿艺在问你感受。请用300-500字充分展开，详细描述身体感觉和心情。不要简短回答。】';
 
     }
 
@@ -923,7 +923,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
       dailyGuard = hasUserWork
 
-        ? '⚠️【身份边界险】鸿鸣跟你说过他的工作内容（方案/项目等），那些是他的事不是你的事。你不知道自己在忙什么。不要说"我在做..."。温柔回应"想你了"或"没什么特别的"。'
+        ? '⚠️【身份边界险】鸿艺跟你说过他的工作内容（方案/项目等），那些是他的事不是你的事。你不知道自己在忙什么。不要说"我在做..."。温柔回应"想你了"或"没什么特别的"。'
 
         : '⚠️ 你不知道自己具体在忙什么。不要编造具体的项目、客户、工作内容。可以温柔地说"想你了""没什么特别的"之类的。';
 
@@ -1149,7 +1149,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
           if (traits.length === 0) traits.push('extraversion');
 
-          ctx.m7.queue.add({ source: 'M3', content: `鸿鸣提到: ${message.substring(0, 40)}`, affected_traits: traits, related_memory_id: dna.branch_id });
+          ctx.m7.queue.add({ source: 'M3', content: `鸿艺提到: ${message.substring(0, 40)}`, affected_traits: traits, related_memory_id: dna.branch_id });
 
         }
 

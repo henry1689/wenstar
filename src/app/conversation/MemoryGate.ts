@@ -259,11 +259,11 @@ export function buildGuard(
   if (mode === 'memory_recall' || mode === 'vague_recall') {
     if (hasMemory) {
       // 有检索结果 → 允许参考但禁止编造细节
-      base.hallucinationGuard = '⚠️ 鸿鸣在回忆过去的事。下面如果写了【我记得】，那是你确实记得的内容，可以直接用。但不要编造记忆中没有的细节。如果不确定，就说"具体细节记不太清了"。';
+      base.hallucinationGuard = '⚠️ 鸿艺在回忆过去的事。下面如果写了【我记得】，那是你确实记得的内容，可以直接用。但不要编造记忆中没有的细节。如果不确定，就说"具体细节记不太清了"。';
       base.strictMode = false;
     } else {
       // 无检索结果 → 严格防护
-      base.hallucinationGuard = '🚫 鸿鸣在回忆过去的事，但你想不起来了。请直接说"不太记得了"或"我有点记不清了"，态度要温柔自然。绝对不要编造任何回忆内容。重复一遍：你不知道的事，绝对不能说你知道。';
+      base.hallucinationGuard = '🚫 鸿艺在回忆过去的事，但你想不起来了。请直接说"不太记得了"或"我有点记不清了"，态度要温柔自然。绝对不要编造任何回忆内容。重复一遍：你不知道的事，绝对不能说你知道。';
       base.strictMode = true;
     }
     return base;
@@ -271,10 +271,10 @@ export function buildGuard(
 
   // knowledge_query
   if (hasKnowledge) {
-    base.hallucinationGuard = '📖 鸿鸣在问你知识相关的内容。下面【知识库】里的内容你是看过的，可以回答。但不要超出知识库范围编造。';
+    base.hallucinationGuard = '📖 鸿艺在问你知识相关的内容。下面【知识库】里的内容你是看过的，可以回答。但不要超出知识库范围编造。';
     base.strictMode = false;
   } else {
-    base.hallucinationGuard = '📖 鸿鸣在问一个知识类问题，但你不太了解这方面的内容。请委婉地说"这个我还没了解过"或"这个我不太清楚"。不要强行回答、不要编造。';
+    base.hallucinationGuard = '📖 鸿艺在问一个知识类问题，但你不太了解这方面的内容。请委婉地说"这个我还没了解过"或"这个我不太清楚"。不要强行回答、不要编造。';
     base.strictMode = true;
   }
 
