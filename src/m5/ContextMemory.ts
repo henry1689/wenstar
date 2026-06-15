@@ -189,6 +189,23 @@ export function updateAfterReply(draft: string, userMessage: string, tone: strin
   updateFacts(draft, userMessage, tone);
 }
 
+/**
+ * 从用户输入更新场景（在 LLM 生成前调用）
+ * 修复：ContextMemory 原本只看 draft（AI回复），不看用户消息，
+ * 用户说"这是在办公室"→ContextMemory不知道→返回旧场景→LLM被误导
+ */
+export function updateFromUserMessage(userMessage: string): void {
+  if (!userMessage) return;
+  // 办公场景（用户明确告知）→ 强制切换
+  if (/办公|公司|工位|电脑|文件|打印|会议|开会/.test(userMessage) && !/家里|床|卧室|沙发/.test(userMessage)) {
+    _state.physical.location = '办公室';
+    _state.physical.activity = '工作';
+    _state.physical.nudityLevel = 0;
+    _state.physical.position = '坐着';
+    return;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 场景一致性校验（同 HumanisticCalibrator 配合使用）
 // ═══════════════════════════════════════════════════════════════
