@@ -970,6 +970,32 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     // 通用幻觉防护：禁止编造过去事件、日期、用户生活细节
     const memoryGuard = '注意：你没有记忆的过去事件、日期、穿着、对话内容绝对不能编造。不确定就说不记得了。宁可少说，不能说错。';
+
+    // 知识分类反问（仅在casual/中性场景触发，以guard message形式注入，不追加到reply末尾）
+    let classificationGuard = '';
+    try {
+      const isIntimate = (p && (p.intimacy > 0.3 || p.sexual_attraction > 0.2 || p.sensory_craving > 0.3));
+      const isDistressed = (p && p.pleasure < -0.2);
+      const isCasual = !isIntimate && !isDistressed;
+      if (isCasual) {
+        const oneDayMs = 86400000;
+        const unclassifiedItems = ctx.knowledgeBase.getUnclassified(3);
+        for (const item of unclassifiedItems) {
+          const title = (item.title || '').substring(0, 20);
+          const alreadyAsked = ctx.conversationHistory.some(
+            (t) => t.role === 'assistant' && t.content && t.content.includes(title)
+          );
+          if (!alreadyAsked) {
+            const age = Date.now() - new Date(item.created_at).getTime();
+            if (age > oneDayMs && age > 30 * oneDayMs) {
+              classificationGuard = '📋 用户之前提到过"' + title + '"还没分类，有空跟我说说这是关于什么的？';
+              break;
+            }
+          }
+        }
+      }
+    } catch (err) { console.warn('[Classify] 分类反问失败:', err); }
+
     const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard].filter(Boolean).join('\n');
 
     let reply: string;

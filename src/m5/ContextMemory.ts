@@ -184,26 +184,17 @@ export function setSceneSnapshot(s: Partial<ContextSnapshot>): void {
  * 更新记忆（由 M5 在每次回复后调用）
  */
 export function updateAfterReply(draft: string, userMessage: string, tone: string, perception?: any): void {
-  updatePhysical(draft);
-  updateAtmosphere(draft, perception);
-  updateFacts(draft, userMessage, tone);
-}
-
-/**
- * 从用户输入更新场景（在 LLM 生成前调用）
- * 修复：ContextMemory 原本只看 draft（AI回复），不看用户消息，
- * 用户说"这是在办公室"→ContextMemory不知道→返回旧场景→LLM被误导
- */
-export function updateFromUserMessage(userMessage: string): void {
-  if (!userMessage) return;
-  // 办公场景（用户明确告知）→ 强制切换
-  if (/办公|公司|工位|电脑|文件|打印|会议|开会/.test(userMessage) && !/家里|床|卧室|沙发/.test(userMessage)) {
+  // 修复：从用户消息更新场景。原来只看 draft，不看 userMessage，
+  // 用户说"这是在办公室"→updatePhysical 不知道→下一轮返回旧场景→LLM被误导
+  if (userMessage && /办公|公司|工位|电脑|文件|打印|会议|开会/.test(userMessage) && !/家里|床|卧室|沙发/.test(userMessage)) {
     _state.physical.location = '办公室';
     _state.physical.activity = '工作';
     _state.physical.nudityLevel = 0;
     _state.physical.position = '坐着';
-    return;
   }
+  updatePhysical(draft);
+  updateAtmosphere(draft, perception);
+  updateFacts(draft, userMessage, tone);
 }
 
 // ═══════════════════════════════════════════════════════════════

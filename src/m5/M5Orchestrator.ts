@@ -8,7 +8,7 @@ import { CognitionAssembler } from './CognitionAssembler.js';
 import { StrategySelector } from './StrategySelector.js';
 import { MockLLMProvider } from './MockLLMProvider.js';
 import { HumanisticCalibrator } from './HumanisticCalibrator.js';
-import { buildContextPrompt, updateFromUserMessage, updateAfterReply, resetContext } from './ContextMemory.js';
+import { buildContextPrompt, updateAfterReply, resetContext } from './ContextMemory.js';
 import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor, resetAnchor } from './SceneAnchor.js';
 import { resetMockSession } from './MockLLMProvider.js';
 
@@ -42,10 +42,6 @@ export class M5Orchestrator {
     // Step 2.5: 提取场景锚点 → 生成强制约束
     extractAnchor(conversationHistory, userMessage);
     const anchorConstraint = buildAnchorConstraint();
-
-    // Step 2.55: 从用户消息更新场景（修复：ContextMemory只看draft不看用户消息）
-    // 用户说"这是在办公室"→更新ContextMemory→buildContextPrompt返回正确场景
-    updateFromUserMessage(userMessage || '');
 
     // Step 2.6: 注入场景上下文记忆
     const sceneContext = buildContextPrompt();

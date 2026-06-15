@@ -19,7 +19,7 @@ import { StrategySelector } from '../StrategySelector.js';
 import { HumanisticCalibrator } from '../HumanisticCalibrator.js';
 import { MockLLMProvider, resetMockSession } from '../MockLLMProvider.js';
 import { DeepSeekLLMProvider, isAvailable } from '../DeepSeekLLMProvider.js';
-import { buildContextPrompt, updateFromUserMessage, updateAfterReply, resetContext, getSceneSnapshot, setSceneSnapshot, fixSceneConflict } from '../ContextMemory.js';
+import { buildContextPrompt, updateAfterReply, resetContext, getSceneSnapshot, setSceneSnapshot, fixSceneConflict } from '../ContextMemory.js';
 import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor, getAnchor, resetAnchor } from '../SceneAnchor.js';
 import { injectThinkingPause } from '../expression/ThinkingPauseInjector.js';
 import { calcExpressionSpec, validateLength } from '../expression/ExpressionSpecController.js';
@@ -132,9 +132,8 @@ describe('[M5守卫] M5ClueAssistant 方法签名', () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe('[M5守卫] ContextMemory 模块导出', () => {
-  it('导出 buildContextPrompt 等 7 个函数（含 updateFromUserMessage）', () => {
+  it('导出 6 个核心函数（updateAfterReply 已内化 userMessage 场景同步）', () => {
     expect(typeof buildContextPrompt).toBe('function');
-    expect(typeof updateFromUserMessage).toBe('function');
     expect(typeof updateAfterReply).toBe('function');
     expect(typeof resetContext).toBe('function');
     expect(typeof getSceneSnapshot).toBe('function');
