@@ -830,35 +830,18 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     }
 
-    // ── 家族/社交关系幻觉防护（铁律：必须以记录为准，不得编造） ──
-
+    // ── 家族/社交关系铁律（硬约束 — LLM 绝对不得编造，以 FamilyGraph 记录为准） ──
+    let familyConstraint = '';
     try {
-
       const personEntities = ctx_m4.family_context || ctx_m4.social_context || [];
-
       if (personEntities.length > 0) {
-
-        const knownRelations = personEntities.map((p: any) => p.entity + '（' + p.relation + '）').join('、');
-
-        if (knownRelations && !hallucinationGuard) {
-
-          hallucinationGuard = '📋 以下是鸿鸣的家庭/社交关系，以实际记录为准：' + knownRelations + '。如果用户问到这些记录中没有的人或关系，不要假装知道，委婉说"不太记得了"。';
-
-        }
-
+        const knownNames = personEntities.map((p: any) => p.entity).join('、');
+        const knownList = personEntities.map((p: any) => '  - ' + p.entity + '（' + p.relation + '）').join('\n');
+        familyConstraint = '【家庭/社交铁律】以下是你对鸿鸣家庭/社交关系的全部所知：\n' + knownList + '\n\n铁律：\n1. 只有上面列出的人是你知道的，其他任何人你一概不知道。\n2. 对上面的人——你只知道他们的名字和关系，其他一切细节都不知道。\n3. 绝对不要编造任何细节。不知道就说"你之前提过，但具体我不太记得了"。\n4. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
+      } else {
+        familyConstraint = '【家庭/社交铁律】你不知道鸿鸣有哪些家人和社交关系。如果鸿鸣提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
       }
-
-      const mentionedPerson = dna.entity_genes.find((g: any) => g.type === 'person' && g.name !== '我');
-
-      if (mentionedPerson && personEntities.length === 0 && !hallucinationGuard) {
-
-        const pName = mentionedPerson.name;
-
-        hallucinationGuard = '⚠️ 用户提到了"' + pName + '"，但你不认识这个人。不要假装知道他是谁。如果用户问你是否记得，就说"这个人我好像没什么印象，你跟我讲讲呗？"';
-
-      }
-
-    } catch (err) { console.warn('[FamilyGuard] 防护构建失败:', err); }
+    } catch (err) { console.warn('[FamilyGuard] 构建失败:', err); }
 
     const claimPatterns: Array<{ match: RegExp; guard: string }> = [
 
@@ -1046,9 +1029,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         // 将记忆碎片合并到 finalKnowledgeText（干净注入，不污染对话历史）
         if (memoryText && !finalKnowledgeText.includes('【相关记忆】')) {
-          finalKnowledgeText = memoryText + (finalKnowledgeText ? '
-
-' + finalKnowledgeText : '');
+          finalKnowledgeText = memoryText + (finalKnowledgeText ? '\n\n' + finalKnowledgeText : '');
+        }
+        // 家族/社交铁律注入（硬约束 — LLM 不得编造，以 FamilyGraph 记录为准）
+        if (familyConstraint) {
+          finalKnowledgeText = familyConstraint + '\n\n' + finalKnowledgeText;
         }
 
         try {
