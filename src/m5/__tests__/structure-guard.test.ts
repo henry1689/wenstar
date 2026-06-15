@@ -19,7 +19,7 @@ import { StrategySelector } from '../StrategySelector.js';
 import { HumanisticCalibrator } from '../HumanisticCalibrator.js';
 import { MockLLMProvider, resetMockSession } from '../MockLLMProvider.js';
 import { DeepSeekLLMProvider, isAvailable } from '../DeepSeekLLMProvider.js';
-import { buildContextPrompt, updateAfterReply, resetContext, getSceneSnapshot, setSceneSnapshot, fixSceneConflict } from '../ContextMemory.js';
+import { buildContextPrompt, updateFromUserMessage, updateAfterReply, resetContext, getSceneSnapshot, setSceneSnapshot, fixSceneConflict } from '../ContextMemory.js';
 import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor, getAnchor, resetAnchor } from '../SceneAnchor.js';
 import { injectThinkingPause } from '../expression/ThinkingPauseInjector.js';
 import { calcExpressionSpec, validateLength } from '../expression/ExpressionSpecController.js';
@@ -132,7 +132,16 @@ describe('[M5守卫] M5ClueAssistant 方法签名', () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe('[M5守卫] ContextMemory 模块导出', () => {
-  it('导出 buildContextPrompt 等 6 个函数', () => {
+  it('导出 buildContextPrompt 等 7 个函数（含 updateFromUserMessage）', () => {
+    expect(typeof buildContextPrompt).toBe('function');
+    expect(typeof updateFromUserMessage).toBe('function');
+    expect(typeof updateAfterReply).toBe('function');
+    expect(typeof resetContext).toBe('function');
+    expect(typeof getSceneSnapshot).toBe('function');
+    expect(typeof setSceneSnapshot).toBe('function');
+    expect(typeof fixSceneConflict).toBe('function');
+  });
+  it('原 6 个导出函数也存在', () => {
     expect(typeof buildContextPrompt).toBe('function');
     expect(typeof updateAfterReply).toBe('function');
     expect(typeof resetContext).toBe('function');
