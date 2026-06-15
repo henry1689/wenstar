@@ -366,7 +366,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     ctx.consolidationQueue.recordActivity();
 
-    let enrichedHistory = [...ctx.conversationHistory];
+    // 修复：enrichedHistory 只保留最近 20 轮对话原文，干净不掺杂记忆注入
+    // 记忆以【相关记忆】标签注入到 knowledgeBaseText，不伪装成对话内容
+    // 修复：干净的三层注入结构——对话原文/enrichedHistory、记忆/memoryFragments、知识/knowledgeBaseText
+    let memoryFragments: string[] = [];
+    let enrichedHistory = ctx.conversationHistory.slice(-20);
 
     let emotionalMemories: ScoredMemory[] = [];
 
@@ -589,9 +593,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         const somaticContext = ctx.somaticMemory.getActiveSomaticContext();
 
         if (somaticContext) {
-
-          enrichedHistory.push({ role: 'assistant', content: `[躯体感知: ${somaticContext}]` });
-
+          memoryFragments.push('【当下感受】' + somaticContext);
         }
 
       }
@@ -760,7 +762,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         const top = clueResult.searchResult.entries[0];
 
-        enrichedHistory.unshift({ role: 'assistant', content: `[线索检索: "${top.entry.sensory_anchor ?? top.entry.created_at}" (置信度 ${(top.composite_score * 100).toFixed(0)}%)]` });
+        memoryFragments.push('【线索回忆】找到了相关的记忆片段');
 
       }
 
@@ -1056,6 +1058,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
           memoryGateFillerUsed = true;
 
+        }
+
+        // 将记忆碎片合并到 finalKnowledgeText（干净注入，不污染对话历史）
+        if (memoryText && !finalKnowledgeText.includes('【相关记忆】')) {
+          finalKnowledgeText = memoryText + (finalKnowledgeText ? '
+
+' + finalKnowledgeText : '');
         }
 
         try {
