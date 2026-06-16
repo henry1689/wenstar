@@ -53,23 +53,63 @@ export class M5Orchestrator {
 
     // Step 3: LLM 受控生成（唯一LLM调用点）
     let draft: string;
+    let usedMockFallback = false;
     try {
       const currentTime = new Date().toISOString();
-      const result = await this.llm.generate({ strategy, cognition, conversationHistory, knowledgeBase: combinedKnowledge, currentTime });
+      const result = await this.llm.generate({ strategy, cognition, conversationHistory, knowledgeBase: combinedKnowledge, currentTime, userMessage });
       draft = result.text;
+      // 检查是否太短或为 fallback 回复（DeepSeek API 调用失败时的降级标记）
+      if (!draft || draft.length <= 6) {
+        console.warn(`[M5] LLM产出过短("${draft}")，降级到MockLLMProvider`);
+        draft = '';
+      }
     } catch (err) {
       console.error('[M5] LLM生成失败:', err);
       draft = '';
     }
 
+    // 如果主 LLM 失败（空/过短），自动降级到 MockLLMProvider
+    if (!draft) {
+      try {
+        console.log('[M5] ⛑️ 启动 MockLLMProvider 降级');
+        const mockLlm = new MockLLMProvider();
+        const mockResult = await mockLlm.generate({ strategy, cognition, conversationHistory, knowledgeBase: combinedKnowledge, userMessage });
+        draft = mockResult.text;
+        usedMockFallback = true;
+      } catch (err2) {
+        console.error('[M5] MockLLM 降级也失败了:', err2);
+        draft = '';
+      }
+    }
+
     // Step 4: 场景锚点校验（替换冲突词）→ 人文校准 → 降级兜底
-    const anchorValidated = validateAgainstAnchor(draft);
-    const calibrated = this.calibrator.calibrate(anchorValidated, cognition);
+    let final: string;
+    try {
+      const anchorValidated = validateAgainstAnchor(draft);
+      final = this.calibrator.calibrate(anchorValidated, cognition);
+    } catch (err) {
+      console.warn('[M5] 后处理失败，使用LLM原始输出:', err);
+      final = draft || '';
+    }
 
     // Step 5: 更新场景记忆（供下一轮使用）
-    updateAfterReply(calibrated, userMessage || '', strategy.params.tone, cognition.current.perception_snapshot);
+    try {
+      updateAfterReply(final, userMessage || '', strategy.params.tone, cognition.current.perception_snapshot);
+    } catch (err) {
+      console.warn('[M5] 场景记忆更新失败:', err);
+    }
 
-    return calibrated;
+    if (!final || final.length <= 2) {
+      // 终极兜底 — 用 userMessage 检测常见场景
+      if (/你好|嗨|hi|hello|嘿/.test(userMessage || '')) return '嗯～你好呀。你找我我开心着呢。';
+      if (/你是谁|介绍/.test(userMessage || '')) return '我是玉瑶，你的私人秘书兼小情人呀～18岁，你说好不好？';
+      if (/在干嘛|忙什么/.test(userMessage || '')) return '在想你呀～不然还能干嘛。你呢？';
+      if (/晚安|睡了/.test(userMessage || '')) return '晚安～梦里有我哦。';
+      if (/早安|早上好/.test(userMessage || '')) return '早呀～昨晚梦到我了吗？';
+      return '嗯～我在呢。你说，我听着。';
+    }
+
+    return final;
   }
 
   /** 重置整个 M5 流水线的会话状态（对话重置时调用） */

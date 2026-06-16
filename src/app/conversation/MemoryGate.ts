@@ -1,33 +1,20 @@
 /**
- * MemoryGate — 记忆层级管控器
+ * MemoryGate — 记忆层级管控器（纯模式分类器）
  *
- * 核心原则（对话记忆三定律）:
- *   ① 以上下文的对话记忆为主（最近对话上下文 > 一切）
- *   ② 以记忆库和知识库为辅（只在需要时才查询）
- *   ③ 分层级但要无缝衔接过渡自然（绝不能让用户感觉"在查数据库"）
+ * 只做一件事：判断当前对话属于哪种模式
+ * 不做的事：不生成过渡话术、不构建幻觉防护（那些在 MemoryRecallEngine）
  *
  * 判定矩阵:
  *   ┌──────────────────┬──────────────────┬──────────────────┐
  *   │ 用户输入                  │ 模式                      │ 行为                                              │
  *   ├──────────────────┼──────────────────┼──────────────────┤
- *   │ 日常闲聊/普通回复     │ casual                    │ 只使用对话上下文，不查记忆库                         │
- *   │ "那后来呢""上次说到"   │ memory_recall             │ 查记忆库 + 过渡话术                                  │
- *   │ "你记得那个…"           │ vague_recall              │ 线索检索 + 过渡话术                                  │
- *   │ "知识库/看过/知道吗"    │ knowledge_query           │ 查知识库 + 过渡话术 "让我想想有没有看过相关的内容"     │
+ *   │ 日常闲聊/普通回复     │ casual                    │ 只使用对话上下文，不查任何记忆库                     │
+ *   │ "那后来呢""上次说到"   │ memory_recall             │ 查记忆库 + 幻觉防护                                  │
+ *   │ "你记得那个…"           │ vague_recall              │ 线索检索 + 幻觉防护                                  │
+ *   │ "知识库/看过/知道吗"    │ knowledge_query           │ 查知识库                                             │
  *   └──────────────────┴──────────────────┴──────────────────┘
  *
- * 过渡话术规则:
- *   - memory_recall: "你说的这个我有点印象…让我想想" → 检索后回复
- *   - knowledge_query: "你提到的这个我之前了解过一点" → 检索后回复
- *   - 检索耗时 > 500ms时必须使用过渡话术（防冷场）
- *
- * 幻觉防护铁律:
- *   - LLM 不知道的过去事件 → 必须说"记不清了"或"不太记得了"
- *   - LLM 不知道的知识内容 → 委婉说"这个我还没了解过"
- *   - 记忆库中存在的 → 不能假装不记得
- *   - 所有"记不清"都必须基于真实检索结果，不能是 LLM 的编造
- *
- * Ref: 战略改善 — 记忆层级管控
+ * 更精细的回忆规则（topic_resonance / entity_match）在 MemoryRecallEngine 处理
  */
 
 import type { ConversationTurn } from '../../m5/types/index.js';
@@ -69,48 +56,6 @@ export interface MemoryGateContext {
   messageLength: number;
 }
 
-// ─── 管控输出 ───
-
-export interface MemoryGateOutput {
-  /** 判定模式 */
-  mode: ConversationMode;
-  /** 是否需要检索（调用方根据此决定是否调 M4/M8） */
-  needsMemorySearch: boolean;
-  /** 是否需要检索知识库 */
-  needsKnowledgeSearch: boolean;
-  /** 过渡话术（检索前使用，防冷场，空字符串表示不需要过渡） */
-  fillerPhrase: string;
-  /** 幻觉防护指令（注入到 LLM 的 system prompt） */
-  hallucinationGuard: string;
-  /** 是否严格限制 LLM 编造（true = 必须基于检索回复） */
-  strictMode: boolean;
-}
-
-// ─── 过渡话术池（按场景分类，随机选择） ───
-
-const FILLERS: Record<string, string[]> = {
-  memory_recall: [
-    '你说的这个…我有点印象，让我想想……',
-    '嗯…你一说这个我好像有印象。等一下，我想想……',
-    '这个事我记得一些，让我在脑海里翻一翻……',
-    '哦…你说的是那个啊，我想想细节……',
-  ],
-  vague_recall: [
-    '你描述的这些我好像在哪听过…让我好好回想一下……',
-    '嗯…你说的让我有点触动，我找找相关的记忆……',
-    '这个说法好熟悉……给我一点时间回忆一下……',
-  ],
-  knowledge_query: [
-    '你问的这个我之前了解过一些，我翻一翻……',
-    '这个我之前看过相关的资料，让我理一理……',
-    '嗯…我记得好像接触过这方面的内容，让我查证一下……',
-  ],
-};
-
-function pick(arr: string[]): string {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 // ─── 过去时标记词 ───
 
 const PAST_MARKERS = [
@@ -136,6 +81,8 @@ const CASUAL_MARKERS = [
 
 /**
  * 判定当前对话模式
+ *
+ * 只做基础分类，不涉及过渡话术/幻觉防护（那些在 MemoryRecallEngine）
  */
 export function decideMode(ctx: MemoryGateContext): ModeDecision {
   const { message, isFollowUp, hasContinuationMarkers, calciumLevel } = ctx;
@@ -189,6 +136,7 @@ export function decideMode(ctx: MemoryGateContext): ModeDecision {
   }
 
   // 话题延续 + 钙化≥2 → 轻量记忆联想（不主导回复，只做背景参考）
+  // 此模式由 MemoryRecallEngine 的 topic_resonance 逻辑接管
   if (isFollowUp && calciumLevel >= 2) {
     return {
       mode: 'memory_recall',
@@ -209,16 +157,49 @@ export function decideMode(ctx: MemoryGateContext): ModeDecision {
   };
 }
 
-/**
- * 生成过渡话术
- *
- * 规则:
- *   - memory_recall: 检索前使用"我有点印象，让我想想"
- *   - vague_recall: 检索前使用"这个好熟悉，我找找记忆"
- *   - knowledge_query: "这个我了解过，让我查证一下"
- *   - casual: 不使用过渡话术
- */
-export function getFiller(mode: ConversationMode): string {
+// ─── 管控输出（供 chat.ts 使用） ───
+
+export interface MemoryGateOutput {
+  /** 判定模式 */
+  mode: ConversationMode;
+  /** 是否需要检索（调用方根据此决定是否调 M4/M8） */
+  needsMemorySearch: boolean;
+  /** 是否需要检索知识库 */
+  needsKnowledgeSearch: boolean;
+  /** 过渡话术（检索前使用，防冷场，空字符串表示不需要过渡） */
+  fillerPhrase: string;
+  /** 幻觉防护指令（注入到 LLM 的 system prompt） */
+  hallucinationGuard: string;
+  /** 是否严格限制 LLM 编造（true = 必须基于检索回复） */
+  strictMode: boolean;
+}
+
+// ─── 过渡话术池（按场景分类，随机选择） ───
+
+const FILLERS: Record<string, string[]> = {
+  memory_recall: [
+    '你说的这个…我有点印象，让我想想……',
+    '嗯…你一说这个我好像有印象。等一下，我想想……',
+    '这个事我记得一些，让我在脑海里翻一翻……',
+    '哦…你说的是那个啊，我想想细节……',
+  ],
+  vague_recall: [
+    '你描述的这些我好像在哪听过…让我好好回想一下……',
+    '嗯…你说的让我有点触动，我找找相关的记忆……',
+    '这个说法好熟悉……给我一点时间回忆一下……',
+  ],
+  knowledge_query: [
+    '你问的这个我之前了解过一些，我翻一翻……',
+    '这个我之前看过相关的资料，让我理一理……',
+    '嗯…我记得好像接触过这方面的内容，让我查证一下……',
+  ],
+};
+
+function pick(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function getFiller(mode: ConversationMode): string {
   if (mode === 'casual') return '';
   const pool = FILLERS[mode];
   if (!pool || pool.length === 0) return '';
@@ -258,23 +239,20 @@ export function buildGuard(
 
   if (mode === 'memory_recall' || mode === 'vague_recall') {
     if (hasMemory) {
-      // 有检索结果 → 允许参考但禁止编造细节
       base.hallucinationGuard = '⚠️ 鸿艺在回忆过去的事。下面如果写了【我记得】，那是你确实记得的内容，可以直接用。但不要编造记忆中没有的细节。如果不确定，就说"具体细节记不太清了"。';
       base.strictMode = false;
     } else {
-      // 无检索结果 → 严格防护
-      base.hallucinationGuard = '🚫 鸿艺在回忆过去的事，但你想不起来了。请直接说"不太记得了"或"我有点记不清了"，态度要温柔自然。绝对不要编造任何回忆内容。重复一遍：你不知道的事，绝对不能说你知道。';
+      base.hallucinationGuard = '🚫 鸿艺在回忆过去的事，但你想不起来了。请直接说"不太记得了"或"我有点记不清了"，态度要温柔自然。绝对不要编造任何回忆内容。';
       base.strictMode = true;
     }
     return base;
   }
 
-  // knowledge_query
   if (hasKnowledge) {
     base.hallucinationGuard = '📖 鸿艺在问你知识相关的内容。下面【知识库】里的内容你是看过的，可以回答。但不要超出知识库范围编造。';
     base.strictMode = false;
   } else {
-    base.hallucinationGuard = '📖 鸿艺在问一个知识类问题，但你不太了解这方面的内容。请委婉地说"这个我还没了解过"或"这个我不太清楚"。不要强行回答、不要编造。';
+    base.hallucinationGuard = '📖 鸿艺在问一个知识类问题，但你不太了解这方面的内容。请委婉地说"这个我还没了解过"或"这个我不太清楚"。';
     base.strictMode = true;
   }
 

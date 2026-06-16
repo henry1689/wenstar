@@ -104,7 +104,10 @@ export interface ChatContext {
 
 }
 
-export const FALLBACK_REPLIES = ['嗯，我在听。你说。','好呀，你接着说～','唔…我在呢。你继续说吧。','嗯～你说什么我都喜欢听。'];
+export const FALLBACK_REPLIES = [
+  '嗯～我在呢。你说，我听着。','嗯，我在听。你说。','唔…好呀，你说吧。',
+  '嗯～好呀。你说。','好嘞～你说吧，我听着呢。','诶～你说，我在听。',
+];
 
 const LEVEL_NAMES = ['粉末','液体','固体','晶体'];
 
@@ -370,7 +373,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // 记忆以【相关记忆】标签注入到 knowledgeBaseText，不伪装成对话内容
     // 修复：干净的三层注入结构——对话原文/enrichedHistory、记忆/memoryFragments、知识/knowledgeBaseText
     let memoryFragments: string[] = [];
-    let enrichedHistory = ctx.conversationHistory.slice(-20);
+    let enrichedHistory = ctx.conversationHistory.slice(-60);
 
     let emotionalMemories: ScoredMemory[] = [];
 
@@ -388,7 +391,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const hasContinuationMarkers = /嗯|对|好|行|是|是的|没错|就是|[那这]样/.test(message) && message.length < 20;
 
-    const isTopicShift = hasNewEntity || (!isFollowUp && !hasContinuationMarkers);
+    // 日常闲聊检测 — 短消息/日常问候 → 不触发记忆检索
+    const isCasualChat = /^(在干嘛|忙什么|吃了吗|睡了|晚安|早安|早上好|晚上好|刚起来|下班|到家|今天天气|好开心|好难过|好累|心情|感觉|今天.*不错|今天.*好|嗯|好|行|对|是|好的|知道了|没事|算了|哈哈|嘿嘿|哎|唉)$/i.test(message.trim())
+      || (message.length < 10 && /今天|天气|吃|睡|累|困|忙|下班|到家|早安|晚安/.test(message));
+
+    const isTopicShift = hasNewEntity || (!isFollowUp && !hasContinuationMarkers && !isCasualChat);
 
     // ═══════════════════════════════════════════════════════════════
 
@@ -1419,6 +1426,15 @@ let finalKnowledgeText = knowledgeBaseText;
     const candidates = (globalThis as any).__lastCandidates;
 
     (globalThis as any).__lastCandidates = null;
+
+    // 自介直接回复（绕过M5管线）
+    const _isIntro = /^(你是谁|你叫|你.*谁|叫什么名字|介绍一下你自己|介绍|能介绍一下|你多大了|你多大|介绍一下玉瑶)/.test(message.trim());
+    if (_isIntro) {
+      if (/多大了|多大/.test(message)) reply = '我18岁呀。怎么啦，嫌我小？';
+      else if (/介绍/.test(message)) reply = '我是玉瑶，你的私人秘书兼小情人。18岁，鸿艺的人。';
+      else reply = '我叫玉瑶呀。';
+    }
+
 
     return {
 

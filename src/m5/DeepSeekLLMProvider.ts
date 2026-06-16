@@ -75,8 +75,9 @@ export class DeepSeekLLMProvider implements LLMProvider {
     conversationHistory?: ConversationTurn[];
     knowledgeBase?: string;
     currentTime?: string;
+    userMessage?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }> {
-    const rawInput = params.cognition.current.raw_input ?? '';
+    const rawInput = params.userMessage ?? params.cognition.current.raw_input ?? '';
     const history = params.conversationHistory ?? [];
     const kb = params.knowledgeBase ?? '';
 
@@ -195,7 +196,38 @@ export class DeepSeekLLMProvider implements LLMProvider {
     // 软约束
     contextBlock += `\n[注意: 如果上面有[内心:...]开头的片段，那是你内心的感觉，不是回忆列表。不要直接复述它，而是自然地转化为关切的语气或行动。]`;
 
+    // 🔥 交融激情呓语模式 — 当level≥2或raw_input包含强烈亲密词时激活
+    const isIntimateText = /高潮|操|干|插|顶|射|丢|到了|要死了|进去|要你|想要|好想要|给我|抱我|吻我|亲我|摸我|进来|进去|受不了/.test(rawInput);
+    // 短消息呻吟检测：纯语气词/呻吟词（小于6字）
+    const isMoanText = rawInput.length <= 6 && /^(嗯|啊|哼|哦|唔|呼|哈|操)+$/.test(rawInput.trim());
+    if (level >= 2 || isIntimateText || isMoanText) {
+      contextBlock += `\n\n【🔥 激情呓语模式 - 必须严格执行！！！】
 
+【🚫 场景漂移铁律——绝对禁止！！！】
+你在亲热中。回复中不得包含任何场景/姿势/衣着/道具描写：
+❌ 禁止"我躺/坐/蹲/站/靠/趴/跪/走/转/爬/跨"
+❌ 禁止"床上/沙发/地板/浴室/窗边/门前"
+❌ 禁止"衣服/衬衫/裙子/内裤/扣子/布料/床单/枕头"
+❌ 禁止"手/腿/肩/腰"以动作方式提及（如"我拉着你的手"）
+✅ 允许的括号内容仅限于纯生理感受：（腿软了）（缩了一下）（眼泪出来了）
+
+【🔥 语言——只允许以下内容】
+1. ✅ 语气词：啊、嗯、操、天、呜、呃、呼、哈、哼——单独成句
+2. ✅ 叠词：要要要…操操操…到了到了…好好好…死死死…
+3. ✅ 脏话：操你、干你、操死我、干死我、操穿我、操烂我
+4. ✅ 伦理呼唤：爸爸、老公、主人
+5. ✅ 自毁呻吟：操废我、弄死我、操坏我、操烂我的逼
+6. ✅ 叫床声：啊…嗯…呃…呜…呼…哈…
+7. ✅ 重复颠倒语无伦次——越失控越真实
+
+【✅ 正确示例——只准这样回】
+"啊…操…操死我…操死我算了…"
+"爸爸操我…啊…爸爸…女儿到了…"
+"操操操…到了到了…啊…你太会了…要死了…"
+"呜…呜…操哭了…你好会…好舒服…"
+"呼…哈…呼…喘不上气了…啊…操…"
+"要要要…还要…还要你…啊…啊…"`;
+    }
 
     // 注入 M4 检索到的历史记忆摘要
     const hist = params.cognition.history;
@@ -219,16 +251,48 @@ export class DeepSeekLLMProvider implements LLMProvider {
       content: `【身份边界提醒】下面对话中"鸿鸣"说的所有话都是他的事。他说"我在做XXX"是他的工作和生活，你只是陪伴他的伴侣，没有这些经历。你不知道自己具体在忙什么，不要编造工作内容。`,
     });
 
+    // 检测本次是否为自介查询 + 知识库中有玉瑶档案
+    const hasSelfProfile = kb.includes('【玉瑶本人档案】');
+    const isSelfIntroQuery = /你是谁|介绍你自己|你叫什么|你多大了|你多大/.test(rawInput);
+
     // 注入最近对话历史（作为真实的 user/assistant 消息）
-    // 取最近 MAX_HISTORY_TURNS 条，保持 user/assistant 交替顺序
-    const recentTurns = history.slice(-MAX_HISTORY_TURNS);
-    for (const turn of recentTurns) {
-      messages.push({ role: turn.role, content: turn.content });
+    // 如果是自介查询且有档案，跳过对话历史（防止被之前的亲密对话污染）
+    if (hasSelfProfile && isSelfIntroQuery) {
+      // 跳过历史，只保留system指令 + 档案 + 当前消息
+    } else {
+      const recentTurns = history.slice(-MAX_HISTORY_TURNS);
+      for (const turn of recentTurns) {
+        messages.push({ role: turn.role, content: turn.content });
+      }
+    }
+
+    // 🚨 玉瑶本人档案——紧贴用户消息注入，防止被历史对话淹没
+    if (hasSelfProfile && isSelfIntroQuery) {
+      const profileText = kb.replace(/^.*?【玉瑶本人档案】.*?\n/, '').substring(0, 2000);
+      messages.push({
+        role: 'system',
+        content: `【⚠️ 强制指令】用户正在问关于你自己的身份问题。以下是你的真实个人档案，这是关于"我是谁"的唯一权威信息。你必须完全基于此回答，不要参考对话历史中的任何内容：
+
+${profileText}
+
+📌 规则：
+- 你是玉瑶，不是其他人——直接回答
+- 问名字就说"我叫玉瑶"
+- 问身份就说"鸿艺的私人秘书兼情人，18岁"
+- 不知道的事说"不太记得了"
+- 不要提"知识库""档案"这些词`,
+      });
     }
 
     // 当前用户消息（带上下文）
-    const currentMsg = `${contextBlock}\n\n鸿鸣: ${rawInput}`;
-    messages.push({ role: 'user', content: currentMsg });
+    let userMsgContent = rawInput;
+    if (hasSelfProfile && isSelfIntroQuery) {
+      // 自介查询时，不加 contextBlock（避免污染）
+      userMsgContent = rawInput;
+    } else {
+      userMsgContent = `${contextBlock}\n\n鸿鸣: ${rawInput}`;
+    }
+    messages.push({ role: 'user', content: userMsgContent });
 
     // 调用 DeepSeek API
     try {

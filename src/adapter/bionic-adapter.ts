@@ -181,6 +181,22 @@ class BionicAdapter {
     const r = await bionicFetch<any>(`/docs/diamonds?user_id=${encodeURIComponent(userId)}&page=${page}`);
     return r?.items ?? [];
   }
+
+  /** 存入金库（仿生智脑永久存储） */
+  async storeGold(params: { title: string; content: string; tags?: string[]; userId?: string }): Promise<boolean> {
+    const body: any = {
+      topic: params.title.substring(0, 100),
+      raw_dialogue: params.content.substring(0, 50000),
+      user_id: params.userId || 'default_user',
+    };
+    if (params.tags) body.tags = params.tags;
+    const r = await bionicFetch<any>('/docs/upload', { method: 'POST', body: JSON.stringify(body) }, 15000);
+    if (r?.id) {
+      console.log('[BionicGold] ✅ 已存入金库:', params.title.substring(0, 40));
+      return true;
+    }
+    return false;
+  }
 }
 
 export const bionic = new BionicAdapter();

@@ -67,8 +67,8 @@ const DEFAULT_CONFIG: MaintenanceConfig = {
   compactionInterval: 5 * 60 * 1000,      // 5 分钟
   gcInterval: 30 * 60 * 1000,             // 30 分钟
   decayInterval: 15 * 60 * 1000,          // 15 分钟
-  compactionThreshold: 40,                 // 40 轮触发压缩
-  keepFullTurns: 20,                       // 保留最近 20 轮完整
+  compactionThreshold: 200,                // 200 轮触发压缩（之前40太小，一超20轮就吞原文）
+  keepFullTurns: 100,                      // 保留最近 100 轮完整原文
   maxStorageRecords: 500,                  // M2 最多 500 条
   healthCheckInterval: 15 * 1000,         // 15 秒
   eventLoopWarnThreshold: 200,            // 200ms 告警

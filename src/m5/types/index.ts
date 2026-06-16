@@ -70,5 +70,7 @@ export interface LLMProvider {
     knowledgeBase?: string;
     /** 当前系统时间（Asia/Shanghai） */
     currentTime?: string;
+    /** 用户本轮原始输入（未经过 M1-M4 管线处理，用于精确关键词匹配） */
+    userMessage?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }>;
 }

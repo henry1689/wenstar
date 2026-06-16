@@ -133,3 +133,20 @@ CREATE TABLE IF NOT EXISTS decay_log (
     days_elapsed REAL,
     PRIMARY KEY (memory_id, checked_at)
 );
+
+-- 黑钻库（精选歌单·永恒珍藏 — 景幻仙姑管理）
+CREATE TABLE IF NOT EXISTS black_diamond (
+    id TEXT PRIMARY KEY,
+    summary TEXT NOT NULL,
+    emotion_tag TEXT,
+    source_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    calcium_level INTEGER DEFAULT 1,
+    recall_count INTEGER DEFAULT 0,
+    tags TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_black_diamond_emotion ON black_diamond(emotion_tag);
+CREATE INDEX IF NOT EXISTS idx_black_diamond_created ON black_diamond(created_at DESC);
