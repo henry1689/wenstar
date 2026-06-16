@@ -146,6 +146,8 @@ maintenance.injectDeps({
   runDecay: () => storage?.runDecayMaintenance() ?? { total: 0, archived: 0 },
   // 知识库过期未分类条目清理（90天—铁律，惰性）
   runKnowledgeGc: () => (knowledgeBase as any)?.deleteExpiredUnclassified?.(90) ?? 0,
+  // 砂金库→金库关联：压缩时查 M2
+  _sqliteGetter: () => storage?.getSQLite?.() ?? null,
 });
 
 // ── 管道 ──

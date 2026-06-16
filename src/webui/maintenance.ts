@@ -103,6 +103,7 @@ export class MaintenanceService {
   private saveConversationHistory: () => void = () => {};
   private storage: AnyStorage | null = null;
   private runDecay: () => { total: number; archived: number } = () => ({ total: 0, archived: 0 });
+  private _sqliteGetter: (() => any | null) | null = null;
 
   constructor(config?: Partial<MaintenanceConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -122,6 +123,8 @@ export class MaintenanceService {
     runDecay?: () => { total: number; archived: number };
     /** 知识库过期无分类条目清理（铁律：3个月无分类视为垃圾） */
     runKnowledgeGc?: () => number;
+    /** 砂金库→金库关联：压缩时查 M2 是否已存（提供 SQLite queryAll） */
+    _sqliteGetter?: () => any | null;
   }): void {
     this.conversationHistory = deps.conversationHistory;
     this.getConversationHistory = deps.getConversationHistory;
@@ -133,6 +136,7 @@ export class MaintenanceService {
     }
     if (deps.runDecay) this.runDecay = deps.runDecay;
     if (deps.runKnowledgeGc) this._runKnowledgeGc = deps.runKnowledgeGc;
+    if (deps._sqliteGetter) this._sqliteGetter = deps._sqliteGetter;
   }
 
   private _runKnowledgeGc: () => number = () => 0;
@@ -247,8 +251,11 @@ export class MaintenanceService {
     const toCompact = history.slice(0, history.length - keep);
     const remaining = history.slice(history.length - keep);
 
-    // 将旧对话压缩为摘要轮次
-    const summaries = this.compressTurns(toCompact);
+    // 获取 SQLite（用于检测 M2 中是否已存）
+    const sqlite = this._sqliteGetter ? this._sqliteGetter() : null;
+
+    // 将旧对话压缩为摘要轮次（带 M2 关联检测）
+    const summaries = await this.compressTurnsSmart(toCompact, sqlite);
 
     // 如果之前已有摘要，追加到新摘要前面
     const compacted: ConversationTurn[] = [
@@ -267,42 +274,50 @@ export class MaintenanceService {
   }
 
   /**
-   * 将一批对话轮次压缩为摘要轮次。
-   * 每 4 轮（2 问 2 答）合并为一条 "user: 摘要" + "assistant: 摘要"。
+   * 智能压缩 — 关联 M2 金库检测。
+   * 已存入 M2 的记忆标记为"(已存金库)"并保留摘要头，
+   * 未存的日常对话直接丢弃（释放空间）。
+   * 未来在此处插入 AQC 质检队列。
    */
-  private compressTurns(turns: ConversationTurn[]): ConversationTurn[] {
+  private async compressTurnsSmart(turns: ConversationTurn[], sqlite: any | null): Promise<ConversationTurn[]> {
     const result: ConversationTurn[] = [];
     const CHUNK_SIZE = 4;
 
     for (let i = 0; i < turns.length; i += CHUNK_SIZE) {
       const chunk = turns.slice(i, i + CHUNK_SIZE);
-      const userParts: string[] = [];
-      const assistantParts: string[] = [];
+      const userTexts = chunk.filter(t => t.role === 'user').map(t => t.content);
+      const combinedUser = userTexts.join('').substring(0, 60);
+      if (!combinedUser.trim()) continue;
 
-      for (const turn of chunk) {
-        const text = turn.content.length > 60
-          ? turn.content.substring(0, 60) + '…'
-          : turn.content;
-        if (turn.role === 'user') userParts.push(text);
-        else assistantParts.push(text);
+      // 查 M2：这条对话的关键词是否已被巩固为情感记忆
+      let inGold = false;
+      if (sqlite && combinedUser.length > 4) {
+        try {
+          const keyword = combinedUser.substring(0, 20).replace(/[^一-鿿\w]/g, '');
+          if (keyword.length > 1) {
+            const rows = sqlite.queryAll(
+              `SELECT COUNT(*) as cnt FROM memories WHERE raw_input LIKE ?`,
+              [`%${keyword}%`]
+            );
+            inGold = (rows?.[0]?.cnt ?? 0) > 0;
+          }
+        } catch { /* sqlite 不可用，降级为无检测压缩 */ }
       }
 
-      if (userParts.length > 0) {
-        result.push({
-          role: 'user',
-          content: `[历史摘要] ${userParts.join(' | ')}`,
-        });
+      if (inGold) {
+        // 已存金库 → 保留一行标记，便于追溯
+        result.push({ role: 'user', content: `(已存金库) ${combinedUser.substring(0, 40)}` });
       }
-      if (assistantParts.length > 0) {
-        result.push({
-          role: 'assistant',
-          content: `[历史摘要] ${assistantParts.join(' | ')}`,
-        });
-      }
+      // 未存且在 AQC 阈值以上 → 未来在此插入 AQC 质检队列
+      // 当前阶段：未存金库的日常对话直接丢弃，不占用空间
     }
 
+    console.log(`[Compaction] 智能压缩: ${turns.length} 轮 → ${result.length} 条摘要 ` +
+      `(关联 M2 金库检测)`);
     return result;
   }
+
+  /** 旧版压缩方法已替换为 compressTurnsSmart（保留 `已存金库` 检测） */
 
   // ─── 存储 GC ───
 

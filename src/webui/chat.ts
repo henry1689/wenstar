@@ -548,6 +548,32 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     } catch (err) { console.warn('[EmotionContagion] 检索失败:', err); }
 
+    // ── 黑钻库检索：提炼过的珍藏记忆优先注入 ──
+    try {
+      if (isTopicShift && !hasContinuationMarkers && message.trim().length > 1) {
+        const _sqlite = ctx.storage.getSQLite();
+        if (_sqlite && typeof _sqlite.queryAll === 'function') {
+          const _kw = message.replace(/[？！！。、，：；s]/g, '').trim();
+          if (_kw.length > 1) {
+            const _rows = _sqlite.queryAll(
+              'SELECT id, summary, emotion_tag, tags FROM black_diamond WHERE summary LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 2',
+              ['%' + _kw + '%', '%' + _kw + '%']
+            );
+            for (const _r of _rows) {
+              const _tag = _r.emotion_tag ? '【' + _r.emotion_tag + '】' : '';
+              memoryFragments.push('【珍藏记忆】' + _tag + (_r.summary || '').substring(0, 120));
+              try {
+                _sqlite.writeRaw('UPDATE black_diamond SET recall_count = recall_count + 1, updated_at = ? WHERE id = ?',
+                  [new Date().toISOString(), _r.id]);
+              } catch {}
+            }
+            if (_rows.length > 0) console.log('[BlackDiamond] 命中 ' + _rows.length + ' 条珍藏记忆');
+          }
+        }
+      }
+    } catch (err) { console.warn('[BlackDiamond] 检索失败:', err); }
+
+
     // ═══════════════════════════════════════════════════════════════
 
     // 仿生智脑检索（仅话题切换时调用，且不覆盖当前上下文）
