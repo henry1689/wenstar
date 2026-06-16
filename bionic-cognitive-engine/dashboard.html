@@ -177,7 +177,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
   <div class="cd fe" id="fe"><div class="h"><span class="n">Fusion</span><span class="t" style="background:rgba(251,191,36,.15);color:var(--fe)">三源</span></div><div class="v" id="fec" style="font-size:13px">⚡</div><div class="s">融合</div></div>
   <div class="cd rag" id="ke"><div class="h"><span class="n">KnowEng</span><span class="t" style="background:rgba(244,114,182,.15);color:var(--rag)">RAG</span></div><div class="v" id="knc" style="font-size:13px">-</div><div class="s">知识</div></div>
   <div class="cd sd" id="fg"><div class="h"><span class="n">家族图谱</span><span class="t">图</span></div><div class="v" id="fc">0</div><div class="s">亲属关系</div></div>
-	  <div class="cd" id="sg" style="border-left:2px solid #34d399"><div class="h"><span class="n" style="color:#34d399">人际图谱</span><span class="t" style="background:rgba(52,211,153,.15);color:#34d399">社</span></div><div class="v" style="font-size:13px">-</div><div class="s">同事/朋友</div></div>
+	  <div class="cd" id="sg" style="border-left:2px solid #34d399"><div class="h"><span class="n" style="color:#34d399">人际图谱</span><span class="t" style="background:rgba(52,211,153,.15);color:#34d399">社</span></div><div class="v" style="font-size:13px" id="sgc">-</div><div class="s">同事/朋友</div></div>
   <div class="cd adp" id="ba"><div class="h"><span class="n">Bionic</span><span class="t" style="background:rgba(96,165,250,.15);color:var(--adp)">桥</span></div><div class="v" id="bs" style="font-size:13px">-</div><div class="s">7200</div></div>
 </div>
 <div class="r">
@@ -259,7 +259,7 @@ async function rm(){
   if(_pt>=0&&t!==_pt){_hb++;document.getElementById('hn').textContent=_hb;document.getElementById('hbl').textContent='❤️#'+_hb;da(true);setTimeout(()=>da(false),4e3)}_pt=t;
   const s=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
   s('tc',t);s('rc',t);s('m1e',h.memory?.entities||0);s('m9b',Math.min(h.conversations?.total||0,50));s('m2c',gt);
-  s('m4m',gt);s('fc',h.memory?.entities||0);fetch(W+'/api/knowledge',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>{const items=d.items||d;const list=Array.isArray(items)?items:Array.isArray(d)?d:[];document.getElementById('knc').textContent=list.length}).catch(()=>{});s('va',al);s('vg',gt);s('vd',dt);
+  s('m4m',gt);s('fc',h.memory?.entities||0);fetch(W+'/api/social',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>{const n=d.connections?d.connections.length:0;document.getElementById('sgc').textContent=n}).catch(()=>{});fetch(W+'/api/knowledge',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>{const items=d.items||d;const list=Array.isArray(items)?items:Array.isArray(d)?d:[];document.getElementById('knc').textContent=list.length}).catch(()=>{});s('va',al);s('vg',gt);s('vd',dt);
   document.getElementById('m3c').textContent=(h.memory?.decay?.avgStrength||0).toFixed(2);
   document.getElementById('fec').style.color=t>0?'var(--fe)':'var(--dim)';document.getElementById('m5s').textContent=t>0?'活跃':'待机';
   s('m6p',h.memory?.entities||0);document.getElementById('m7s').textContent=v?.gold?.total?'⏳':'待机';

@@ -696,6 +696,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 社交图谱 ──
+    if (req.method === 'GET' && url.pathname === '/api/social') {
+      const summary = await familyGraph.getSocialSummary().catch(() => ({ connections: [] }));
+      res.writeHead(200); res.end(JSON.stringify(summary));
+      return;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // 景幻仙姑 · 三库管理 API
     // ═══════════════════════════════════════════════════════════════
