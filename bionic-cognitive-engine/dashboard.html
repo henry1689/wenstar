@@ -176,7 +176,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
   <div class="cd m4 wd" id="m4"><div class="h"><span class="n">M4 知识融合</span><span class="t" style="background:rgba(167,139,250,.15);color:var(--m4)">检索</span></div><div class="v" id="m4m">0</div><div class="s">记忆·家族</div></div>
   <div class="cd fe" id="fe"><div class="h"><span class="n">Fusion</span><span class="t" style="background:rgba(251,191,36,.15);color:var(--fe)">三源</span></div><div class="v" id="fec" style="font-size:13px">⚡</div><div class="s">融合</div></div>
   <div class="cd rag" id="ke"><div class="h"><span class="n">KnowEng</span><span class="t" style="background:rgba(244,114,182,.15);color:var(--rag)">RAG</span></div><div class="v" id="knc" style="font-size:13px">-</div><div class="s">知识</div></div>
-  <div class="cd sd" id="fg"><div class="h"><span class="n">家族图谱</span><span class="t">图</span></div><div class="v" id="fc">0</div><div class="s">关系</div></div>
+  <div class="cd sd" id="fg"><div class="h"><span class="n">家族图谱</span><span class="t">图</span></div><div class="v" id="fc">0</div><div class="s">亲属关系</div></div>
+	  <div class="cd" id="sg" style="border-left:2px solid #34d399"><div class="h"><span class="n" style="color:#34d399">人际图谱</span><span class="t" style="background:rgba(52,211,153,.15);color:#34d399">社</span></div><div class="v" style="font-size:13px">-</div><div class="s">同事/朋友</div></div>
   <div class="cd adp" id="ba"><div class="h"><span class="n">Bionic</span><span class="t" style="background:rgba(96,165,250,.15);color:var(--adp)">桥</span></div><div class="v" id="bs" style="font-size:13px">-</div><div class="s">7200</div></div>
 </div>
 <div class="r">
@@ -279,14 +280,14 @@ async function rm(){
 function da(hb){
   const svg=document.getElementById('asvg'),wrap=document.getElementById('tw');if(!svg||!wrap)return;
   svg.setAttribute('width',wrap.offsetWidth);svg.setAttribute('height',wrap.offsetHeight);
-    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','fg','ba','m5','llm','m6','m8','tts','m7','m0','mo','va0','va1','va2'];
+    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','fg','sg','ba','m5','llm','m6','m8','tts','m7','m0','mo','va0','va1','va2'];
   const r={};for(const id of ids){const el=document.getElementById(id);if(!el)continue;const b=el.getBoundingClientRect(),wb=wrap.getBoundingClientRect();
     r[id]={cx:b.left-wb.left+b.width/2,cy:b.top-wb.top+b.height/2,right:b.right-wb.left,left:b.left-wb.left,top:b.top-wb.top,bottom:b.bottom-wb.top}}
   const c=[];
   function af(a,b){c.push({from:a,to:b,t:1})}function ar(a,b){c.push({from:a,to:b,t:0})}
   af('mu','m1');af('m1','m9');c.push({from:'m9',to:'m2',t:1});af('m1','m3');af('m3','m4');
   af('m4','fe');af('fe','m5');af('m5','llm');af('llm','tts');af('tts','mo');af('m5','mo');
-  ar('fg','m4');ar('ke','m4');ar('m6','m5');ar('m8','m5');
+  ar('fg','m4');ar('sg','m4');ar('ke','m4');ar('m6','m5');ar('m8','m5');
 ar('ba','m5');af('mo','ba');
 af('m2','m7');af('m7','m8');af('m7','m6');
 af('va0','va1');af('va1','va2');ar('va1','m4');
