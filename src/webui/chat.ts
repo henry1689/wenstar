@@ -860,10 +860,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
           if (_pr.length > 0 && !knowledgeBaseText.includes(_pr[0].content.substring(0, 30))) {
             var _pc = _pr[0].content;
             if (_pc.length > 300) _pc = _pc.substring(0, 300) + '...';
-            knowledgeBaseText = '【玉瑶想起】' + _pc + '
-
-' + knowledgeBaseText;
-            console.log('[ActivePush] ' + _pk + ' -> 已推送知识');
+            knowledgeBaseText = '【玉瑶想起】' + _pc + String.fromCharCode(10,10) + knowledgeBaseText;         console.log('[ActivePush] ' + _pk + ' -> 已推送知识');
           }
         }
       }

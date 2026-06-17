@@ -8,6 +8,8 @@
  *   .docx — mammoth 提取原始文本
  *   .xlsx / .xls / .csv — SheetJS 解析为表格文本
  *   .jpg / .jpeg / .png / .gif / .webp — tesseract.js OCR 识别文字
+ *   .mp3 / .wav / .ogg / .flac / .m4a — 音频元数据提取
+ *   .mp4 / .avi / .mov / .mkv / .webm — 视频元数据提取
  *
  * 所有解析结果统一返回 { title, content, source_type, source_name, file_size }
  */
@@ -72,6 +74,16 @@ export async function parseFile(
     ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)
   ) {
     content = await parseImage(buffer, originalName);
+  } else if (
+    /^audio\//.test(mimeType) ||
+    ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma'].includes(ext)
+  ) {
+    content = parseAudio(buffer, originalName);
+  } else if (
+    /^video\//.test(mimeType) ||
+    ['mp4', 'avi', 'mov', 'mkv', 'webm', 'flv'].includes(ext)
+  ) {
+    content = parseVideo(buffer, originalName);
   } else {
     // 兜底：未知类型尝试按文本读
     content = buffer.toString('utf-8').substring(0, 1000);
@@ -206,6 +218,31 @@ export function jsonToExcel(sheets: Array<{ name: string; data: any[][] }>): Buf
     XLSX.utils.book_append_sheet(workbook, ws, sheet.name);
   }
   return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+/** 音频文件解析：提取元数据，准备转文字接口 */
+function parseAudio(buffer: Buffer, fileName: string): string {
+  const durationSec = Math.round(buffer.length / 16000); // 粗略估算（16Kbps参考）
+  const sizeKB = (buffer.length / 1024).toFixed(1);
+  const durationStr = durationSec > 60 ? `${Math.floor(durationSec / 60)}分${durationSec % 60}秒` : `${durationSec}秒`;
+  return `🎵 音频文件: ${fileName}
+📐 格式: ${fileName.split('.').pop()?.toLowerCase() || '未知'}
+📦 大小: ${sizeKB} KB
+⏱️ 估计时长: ${durationStr}
+
+[说明] 音频文件已保存到知识库，暂不支持自动语音转文字。
+如需玉瑶聆听此音频，请与系统管理员联系安排语音识别处理。`;
+}
+
+/** 视频文件解析：提取元数据 */
+function parseVideo(buffer: Buffer, fileName: string): string {
+  const sizeMB = (buffer.length / 1024 / 1024).toFixed(1);
+  return `🎬 视频文件: ${fileName}
+📐 格式: ${fileName.split('.').pop()?.toLowerCase() || '未知'}
+📦 大小: ${sizeMB} MB
+
+[说明] 视频文件已保存到知识库。
+当前支持存储和查阅视频元数据，完整播放需在玉瑶主界面查看。`;
 }
 
 /** 去除 Markdown 语法标记 */
