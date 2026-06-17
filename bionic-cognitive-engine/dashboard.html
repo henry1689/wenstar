@@ -195,6 +195,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 <div class="r">
   <div class="cd m7" id="m7"><div class="h"><span class="n">M7 梦境</span><span class="t" style="background:rgba(251,146,60,.15);color:var(--m7)">待机</span></div><div class="v" id="m7s" style="font-size:13px">-</div><div class="s">巩固·归纳</div></div>
   <div class="cd m0" id="m0"><div class="h"><span class="n">🏥维护引擎</span><span class="t" style="background:rgba(255,158,196,.15);color:var(--m0)">定时</span></div><div class="v" id="ms2" style="font-size:13px">-</div><div class="s">压缩·GC</div></div>
+  <div class="cd" id="sq" style="border-left:2px solid var(--m7)"><div class="h"><span class="n" style="color:var(--m7)">🔍SandQC</span><span class="t" style="background:rgba(251,146,60,.15);color:var(--m7)">砂金</span></div><div class="v" style="font-size:13px" id="sqc">-</div><div class="s">砂金质检员</div></div>
+  <div class="cd" id="gq" style="border-left:2px solid var(--m7)"><div class="h"><span class="n" style="color:var(--m7)">🔍GoldQC</span><span class="t" style="background:rgba(251,146,60,.15);color:var(--m7)">金库</span></div><div class="v" style="font-size:13px" id="gqc">-</div><div class="s">金库质检员</div></div>
 
 <!-- 三库 -->
 <div class="r">
@@ -270,6 +272,7 @@ async function rm(){
   document.getElementById('fec').style.color=t>0?'var(--fe)':'var(--dim)';document.getElementById('m5s').textContent=t>0?'活跃':'待机';
   s('m6p',h.memory?.entities||0);document.getElementById('m7s').textContent=v?.gold?.total?'⏳':'待机';
   document.getElementById('m8c').textContent=h.memory?.landmarks?h.memory.landmarks+'条':'0';
+  fetch(W+'/api/aqc/report',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>{const e1=document.getElementById('sqc'),e2=document.getElementById('gqc');if(e1)e1.textContent=d.sand.approved+'/'+d.sand.pending;if(e2)e2.textContent=d.gold.approved+'/'+d.gold.rejected}).catch(()=>{});
   document.getElementById('ms2').textContent=h.status==='ok'?'✅':'⚠️';
   document.getElementById('vh').textContent=v?.overall==='健康'?'✅':'⚠️';
   const lb=document.getElementById('lb'),lt=document.getElementById('lt');
@@ -286,7 +289,7 @@ async function rm(){
 function da(hb){
   const svg=document.getElementById('asvg'),wrap=document.getElementById('tw');if(!svg||!wrap)return;
   svg.setAttribute('width',wrap.offsetWidth);svg.setAttribute('height',wrap.offsetHeight);
-    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','fg','sg','ba','m5','llm','m6','m8','tts','m7','m0','mo','va0','va1','va2'];
+    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','fg','sg','ba','m5','llm','m6','m8','tts','m7','m0','sq','gq','mo','va0','va1','va2'];
   const r={};for(const id of ids){const el=document.getElementById(id);if(!el)continue;const b=el.getBoundingClientRect(),wb=wrap.getBoundingClientRect();
     r[id]={cx:b.left-wb.left+b.width/2,cy:b.top-wb.top+b.height/2,right:b.right-wb.left,left:b.left-wb.left,top:b.top-wb.top,bottom:b.bottom-wb.top}}
   const c=[];
@@ -296,7 +299,7 @@ function da(hb){
   af('m4','fg');af('m4','sg');ar('fg','m4');ar('sg','m4');ar('ke','m4');ar('m6','m5');ar('m8','m5');
 ar('ba','m5');af('mo','ba');
 af('m2','m7');af('m7','m8');af('m7','m6');
-af('va0','va1');af('va1','va2');ar('va1','m4');ar('va2','m5');
+af('va0','va1');af('va1','va2');ar('va0','sq');ar('va1','gq');ar('va1','m4');ar('va2','m5');
   svg.innerHTML='';
   for(const x of c){const f=r[x.from],t=r[x.to];if(!f||!t)continue;
     const fwd=x.t===1,cls=fwd?(hb?'fwd-hb':'fwd-s'):(hb?'rev-hb':'rev-s'),ah=fwd?'ah-f':'ah-r';
