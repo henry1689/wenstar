@@ -150,3 +150,22 @@ CREATE TABLE IF NOT EXISTS black_diamond (
 
 CREATE INDEX IF NOT EXISTS idx_black_diamond_emotion ON black_diamond(emotion_tag);
 CREATE INDEX IF NOT EXISTS idx_black_diamond_created ON black_diamond(created_at DESC);
+
+-- AQC质检表（砂金质检员 / 金库质检员 — 独立标记，不阻塞现有流程）
+CREATE TABLE IF NOT EXISTS aqc_records (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL CHECK(source_type IN ('sand','gold')),
+    source_id TEXT NOT NULL,
+    content_snippet TEXT,
+    calcium_level INTEGER DEFAULT 0,
+    entity_count INTEGER DEFAULT 0,
+    recall_count INTEGER DEFAULT 0,
+    score REAL DEFAULT 0.0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+    tags TEXT,
+    created_at TEXT NOT NULL,
+    evaluated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_aqc_status ON aqc_records(status);
+CREATE INDEX IF NOT EXISTS idx_aqc_source ON aqc_records(source_type, status);

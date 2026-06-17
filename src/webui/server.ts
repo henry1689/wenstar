@@ -372,6 +372,32 @@ async function initPipeline(): Promise<void> {
   clueAssistant = new M5ClueAssistant(m8, clueTracker);
   console.log('  线索助理已启动 ✓');
 
+  // ── AQC 质检引擎启动（SandQC + GoldQC，定时独立运行） ──
+  const { runSandQC, runGoldQC } = await import('../app/aqc/AQCEngine.js');
+  // 砂金质检员（每小时扫描对话）
+  setInterval(async () => {
+    try {
+      const result = runSandQC(storage.getSQLite(), conversationHistory);
+      if (result.scanned > 0) console.log(`[SandQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条`);
+    } catch (err) { console.warn('[SandQC] 失败:', err); }
+  }, 60 * 60 * 1000);
+  // 金库质检员（每小时扫描 M2）
+  setInterval(async () => {
+    try {
+      const result = runGoldQC(storage.getSQLite());
+      if (result.scanned > 0) console.log(`[GoldQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条, 拒绝 ${result.rejected} 条`);
+    } catch (err) { console.warn('[GoldQC] 失败:', err); }
+  }, 60 * 60 * 1000);
+  // 启动后10分钟首次执行
+  setTimeout(async () => {
+    try {
+      const sandR = runSandQC(storage.getSQLite(), conversationHistory);
+      const goldR = runGoldQC(storage.getSQLite());
+      console.log(`[AQC] 首轮质检完成: 砂金 ${sandR.approved}/${sandR.scanned} 金库 ${goldR.approved}/${goldR.scanned}`);
+    } catch (err) { console.warn('[AQC] 首轮失败:', err); }
+  }, 10 * 60 * 1000);
+  console.log('  AQC 质检引擎已启动 ✓');
+
   console.log(`  融合存储已初始化 (${storage.getSQLite().getStatus().totalRecords} 条记忆 ✓`);
 }
 
@@ -811,7 +837,32 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
-    // ── 全模块数据 M5-M8 ──
+    // ═══════════════════════════════════════════════════════
+    // AQC 质检 API
+    // ═══════════════════════════════════════════════════════
+
+
+    if (req.method === "GET" && url.pathname === "/api/aqc/report") {
+      const { getAQCReport } = await import("../app/aqc/AQCEngine.js");
+      res.writeHead(200); res.end(JSON.stringify(getAQCReport(storage.getSQLite())));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/aqc/run") {
+      const { runSandQC, runGoldQC } = await import("../app/aqc/AQCEngine.js");
+      const sandR = runSandQC(storage.getSQLite(), conversationHistory);
+      const goldR = runGoldQC(storage.getSQLite());
+      res.writeHead(200); res.end(JSON.stringify({ status: "ok", sand: sandR, gold: goldR }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/aqc/records") {
+      const rows = storage.getSQLite().queryAll("SELECT * FROM aqc_records ORDER BY created_at DESC LIMIT 20");
+      res.writeHead(200); res.end(JSON.stringify({ total: rows.length, records: rows }));
+      return;
+    }
+
+// ── 全模块数据 M5-M8 ──
     if (req.method === 'GET' && url.pathname === '/api/modules') {
       // M6: 自我模型（使用编排器代理方法，替代直接访问 manager）
       const m6Model = m6?.getModel();

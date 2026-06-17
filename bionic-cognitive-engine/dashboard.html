@@ -151,6 +151,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
     <button onclick="ra()">⟳刷新</button>
   </div>
   <div style="font-size:6px;color:var(--dim);text-align:center;margin-top:auto">FAB=景幻仙姑</div>
+  <div class="h">🔍 AQC质检</div>
+  <div id="aqcInfo"><div class="ll">加载中...</div></div>
 </div>
 
 <!-- 中栏 -->
@@ -251,7 +253,7 @@ const W='http://localhost:3001';let _as=30,_hb=0,_pt=-1;
 const fj=(u,o)=>fetch(u,{headers:{'Accept':'application/json'},...o,signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)throw Error(''+r.status);return r.json()});
 setInterval(()=>{_as--;_as<=0&&(_as=30,ra());document.getElementById('as').textContent=_as},1e3);
 
-async function ra(){
+async function ra(){try{const a=await fetch(W+"/api/aqc/report",{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).catch(()=>null);if(a){document.getElementById("aqcInfo").innerHTML="<div class="ll">砂金⛏️通过:"+a.sand.approved+" 待审:"+a.sand.pending+"</div><div class="ll">金库📚通过:"+a.gold.approved+" 拒绝:"+a.gold.rejected+"</div>"}}catch{}
   document.getElementById('clk').textContent=new Date().toLocaleTimeString('zh-CN');_as=30;
   try{await Promise.all([rm(),rd(),rl()]);document.getElementById('od').className='status-dot dot-ok'}catch{document.getElementById('od').className='status-dot dot-err'}
 }
