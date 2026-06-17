@@ -845,6 +845,32 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     } catch (err) { console.warn('[Fusion] 三源熔铸失败(降级为拼接):', err); }
 
+    // ── 主动推送机制：玉瑶感知情绪/话题 → 主动检索知识库 → 注入对话 ──
+    try {
+      if (isTopicShift && !isCasualChat) {
+        var _pk = '';
+        if (p.pleasure < -0.3 && p.sincerity > 0.3) { _pk = '安慰 陪伴 温暖'; }
+        else if (p.intimacy > 0.4 || /家人|妈妈|爸爸|老婆|老公|家/.test(message)) { _pk = '家人 家庭 陪伴'; }
+        else if (dna.entity_genes.length > 0) {
+          var _pe = dna.entity_genes.filter(function(g){return g.type !== 'self'}).map(function(g){return g.name}).filter(Boolean);
+          if (_pe.length > 0) _pk = _pe[0];
+        }
+        if (_pk) {
+          var _pr = await ctx.knowledgeBase.search(_pk, 1);
+          if (_pr.length > 0 && !knowledgeBaseText.includes(_pr[0].content.substring(0, 30))) {
+            var _pc = _pr[0].content;
+            if (_pc.length > 300) _pc = _pc.substring(0, 300) + '...';
+            knowledgeBaseText = '【玉瑶想起】' + _pc + '
+
+' + knowledgeBaseText;
+            console.log('[ActivePush] ' + _pk + ' -> 已推送知识');
+          }
+        }
+      }
+    } catch (err) { console.warn('[ActivePush] 失败:', err); }
+
+
+
     // 检测"X是我的Y"介绍模式，LLM 不能说"记得你说过"
 
     const introMatch = message.match(/([一-龥]{2,4})是我(?:的)?([一-龥]{2,4})/);
