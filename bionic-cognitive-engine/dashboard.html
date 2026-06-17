@@ -150,7 +150,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
     <button onclick="sf()">➕新增</button>
     <button onclick="ra()">⟳刷新</button>
   </div>
-  <div style="font-size:6px;color:var(--dim);text-align:center;margin-top:auto">FAB=景幻仙姑</div>
+	  <button onclick="showSettings()" style="font-size:9px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--dim);cursor:pointer;padding:2px 6px">⚙️设置</button> <button onclick="showKB()" style="font-size:9px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--dim);cursor:pointer;padding:2px 6px">📚知识库</button>
   <div class="h">🔍 AQC质检</div>
   <div id="aqcInfo"><div class="ll">加载中...</div></div>
 </div>
@@ -239,6 +239,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 </div>
 
 <!-- 表单 -->
+
+<div id="settingsOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300" onclick="closeSettings()"></div>
+<div id="settingsPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;width:340px;z-index:301">
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px">⚙️ 设置</div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <label style="font-size:11px;color:var(--dim)">LLM API Key (DeepSeek)</label>
+    <input id="apiKeyInput" type="password" placeholder="sk-..." style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
+    <input id="apiKeyLabel" placeholder="备注(可选)" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:12px">
+    <div id="apiKeyStatus" style="font-size:10px;color:var(--m2)"></div>
+    <div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn" onclick="closeSettings()">取消</button>
+      <button class="btn btn-primary" onclick="saveApiKey()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="kbOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300" onclick="closeKB()"></div>
+<div id="kbPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;width:420px;max-height:80vh;z-index:301;display:flex;flex-direction:column">
+  <div style="font-size:13px;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+    <span>📚 系统知识库</span>
+    <input id="kbSearch" placeholder="搜索..." style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;width:140px">
+  </div>
+  <div id="kbList" style="flex:1;overflow-y:auto;font-size:11px;line-height:1.5;min-height:200px"><div class="empty">加载中...</div></div>
+  <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:6px"><button class="btn" onclick="closeKB()">关闭</button></div>
+</div>
+
 <div id="fo" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300" onclick="cf()"></div>
 <div id="fp" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;width:300px;z-index:301">
   <div style="font-size:12px;font-weight:600;margin-bottom:6px">✏️ 新增黑钻</div>
@@ -254,6 +280,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 const W='http://localhost:3001';let _as=30,_hb=0,_pt=-1;
 const fj=(u,o)=>fetch(u,{headers:{'Accept':'application/json'},...o,signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)throw Error(''+r.status);return r.json()});
 setInterval(()=>{_as--;_as<=0&&(_as=30,ra());document.getElementById('as').textContent=_as},1e3);
+
+function showSettings(){document.getElementById("settingsOverlay").style.display="block";document.getElementById("settingsPanel").style.display="block";fetch(W+"/api/keys").then(r=>r.json()).then(d=>{const ks=d.keys||[];const dk=ks.find(k=>k.name==="DEEPSEEK_API_KEY");if(dk){document.getElementById("apiKeyInput").value=dk.value;document.getElementById("apiKeyLabel").value=dk.label;document.getElementById("apiKeyStatus").textContent="Key已配置"}else{document.getElementById("apiKeyStatus").textContent="未配置DeepSeek API Key"}}).catch(()=>{})}
+function closeSettings(){document.getElementById("settingsOverlay").style.display="none";document.getElementById("settingsPanel").style.display="none"}
+function saveApiKey(){const k=document.getElementById("apiKeyInput").value.trim();if(!k){document.getElementById("apiKeyStatus").textContent="Key不能为空";return}const l=document.getElementById("apiKeyLabel").value.trim()||"DEEPSEEK_API_KEY";fetch(W+"/api/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:"DEEPSEEK_API_KEY",value:k,label:l})}).then(r=>r.json()).then(()=>{document.getElementById("apiKeyStatus").textContent="已保存(重启后生效)";setTimeout(closeSettings,1500)}).catch(e=>{document.getElementById("apiKeyStatus").textContent="保存失败: "+e.message})}
+function showKB(){document.getElementById("kbOverlay").style.display="block";document.getElementById("kbPanel").style.display="flex";loadKB()}
+function closeKB(){document.getElementById("kbOverlay").style.display="none";document.getElementById("kbPanel").style.display="none"}
+function loadKB(){
+  var s=document.getElementById("kbSearch").value.trim();
+  var u=s?W+"/api/knowledge?search="+encodeURIComponent(s)+"&limit=50":W+"/api/knowledge?limit=50";
+  document.getElementById("kbList").innerHTML="<div class='ll'>加载中...</div>";
+  fetch(u).then(function(r){return r.json()}).then(function(d){
+    var items=d.items||d||[];
+    var list=Array.isArray(items)?items:Array.isArray(d)?d:[];
+    if(list.length===0){document.getElementById("kbList").innerHTML="<div class='ll'>暂无知识条目</div>";return}
+    var html="";
+    for(var i=0;i<list.length;i++){
+      var t=(list[i].title||"").substring(0,50);
+      var co=(list[i].content||"").substring(0,80);
+      html+="<div class='ll' style='cursor:pointer' onclick='showToast(\""+t+"\")'><b>"+t+"</b><br><span style='color:var(--dim)'>"+co+"...</span></div>"
+    }
+    document.getElementById("kbList").innerHTML=html
+  }).catch(function(){document.getElementById("kbList").innerHTML="<div class='ll'>加载失败</div>"})
+document.getElementById("kbSearch")?.addEventListener("keydown",function(e){if(e.key==="Enter")loadKB()})
 
 async function ra(){try{const a=await fetch(W+"/api/aqc/report",{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).catch(()=>null);if(a){document.getElementById("aqcInfo").innerHTML="<div class='ll'>砂金⛏️通过:"+a.sand.approved+" 待审:"+a.sand.pending+"</div><div class='ll'>金库📚通过:"+a.gold.approved+" 拒绝:"+a.gold.rejected+"</div>"}}catch{}
   document.getElementById('clk').textContent=new Date().toLocaleTimeString('zh-CN');_as=30;
