@@ -60,6 +60,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .right .ci textarea{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;outline:none;resize:none;overflow:hidden;min-height:24px;font-family:inherit;line-height:1.4}
 .right .ci button{background:#58a6ff;border:none;border-radius:4px;padding:4px 8px;color:#fff;font-size:10px;cursor:pointer}
 .right .cs{font-size:9px;color:var(--dim);padding:3px 6px;border-top:1px solid var(--border);text-align:center}
+.right .ci-icons{display:flex;gap:2px;padding:2px 6px 0}
+.right .ci-icons button{background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;padding:2px 4px;transition:color .2s}
+.right .ci-icons button:hover{color:var(--text)}
 
 /* ── 拓扑模块 ── */
 .topo{position:relative}
@@ -211,6 +214,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
     <textarea id="ci" placeholder="输入..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sc()}"></textarea>
     <button onclick="sc()">发送</button>
   </div>
+  <div class="ci-icons"><button title="上传文件" onclick="document.getElementById('ciFile').click()">📎</button><button title="语音输入" onclick="startMic()">🎤</button><button title="电话模式" onclick="showToast('电话模式需在玉瑶主界面使用')">📞</button><input id="ciFile" type="file" style="display:none" onchange="uploadFile(this.files[0])"></div>
   <div class="cs" id="ss">等待...</div>
 </div>
 
@@ -312,6 +316,9 @@ async function rl(){try{const h=await fj(W+'/api/health');const items=[];items.p
 document.getElementById("ci")?.addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px"});
 // 输入框自动换行(景幻仙姑)
 document.getElementById("ji")?.addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px"});
+
+function uploadFile(f){if(!f)return;const fd=new FormData();fd.append('file',f);showToast('上传中: '+f.name);fetch(W+'/api/knowledge/upload',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{showToast('✅ 已上传: '+(d.title||f.name));ra()}).catch(e=>showToast('❌ 失败: '+e.message))}
+function startMic(){if(!('webkitSpeechRecognition'in window)){showToast('❌ 浏览器不支持');return}const r=new webkitSpeechRecognition();r.lang='zh-CN';r.continuous=false;r.interimResults=false;r.onresult=function(e){const t=e.results[0][0].transcript;document.getElementById('ci').value=t;sc()};r.onerror=function(){showToast('❌ 语音识别失败')};r.start();showToast('🎤 请说话...')}
 
 async function sc(){
   const i=document.getElementById('ci'),m=i.value.trim();if(!m)return;i.value='';
