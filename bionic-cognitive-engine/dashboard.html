@@ -262,7 +262,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
     <input id="kbSearch" placeholder="搜索..." style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;width:140px">
   </div>
   <div id="kbList" style="flex:1;overflow-y:auto;font-size:11px;line-height:1.5;min-height:200px"><div class="empty">加载中...</div></div>
-  <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:6px"><button class="btn" onclick="closeKB()">关闭</button></div>
+  <div style="display:flex;gap:4px;justify-content:space-between;margin-top:6px"><button class="btn" onclick="document.getElementById('kbUp').click()">📤 上传</button><button class="btn" onclick="closeKB()">关闭</button></div>
+<input id="kbUp" type="file" style="display:none" onchange="kbUp(this.files[0])">
 </div>
 
 <div id="fo" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300" onclick="cf()"></div>
@@ -301,8 +302,9 @@ function loadKB(){
       html+="<div class='ll' style='cursor:pointer' onclick='showToast(\""+t+"\")'><b>"+t+"</b><br><span style='color:var(--dim)'>"+co+"...</span></div>"
     }
     document.getElementById("kbList").innerHTML=html
-  }).catch(function(){document.getElementById("kbList").innerHTML="<div class='ll'>加载失败</div>"})
+  }).catch(function(){document.getElementById("kbList").innerHTML="<div class='ll'>加载失败</div>"})}
 document.getElementById("kbSearch")?.addEventListener("keydown",function(e){if(e.key==="Enter")loadKB()})
+function kbUp(f){if(!f)return;var fd=new FormData();fd.append("file",f);showToast("上传中...");fetch(W+"/api/knowledge/upload",{method:"POST",body:fd}).then(function(r){return r.json()}).then(function(){showToast("上传完成");loadKB()}).catch(function(e){showToast("上传失败")})}
 
 async function ra(){try{const a=await fetch(W+"/api/aqc/report",{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).catch(()=>null);if(a){document.getElementById("aqcInfo").innerHTML="<div class='ll'>砂金⛏️通过:"+a.sand.approved+" 待审:"+a.sand.pending+"</div><div class='ll'>金库📚通过:"+a.gold.approved+" 拒绝:"+a.gold.rejected+"</div>"}}catch{}
   document.getElementById('clk').textContent=new Date().toLocaleTimeString('zh-CN');_as=30;
