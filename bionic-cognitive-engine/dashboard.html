@@ -57,7 +57,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .right .cm .m.sf .bb{background:rgba(122,162,247,.12)}
 .right .cm .m.ot .bb{background:rgba(155,107,255,.08)}
 .right .ci{display:flex;gap:3px;padding:5px 6px;border-top:1px solid var(--border)}
-.right .ci input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;outline:none}
+.right .ci textarea{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;outline:none;resize:none;overflow:hidden;min-height:24px;font-family:inherit;line-height:1.4}
 .right .ci button{background:#58a6ff;border:none;border-radius:4px;padding:4px 8px;color:#fff;font-size:10px;cursor:pointer}
 .right .cs{font-size:9px;color:var(--dim);padding:3px 6px;border-top:1px solid var(--border);text-align:center}
 
@@ -112,7 +112,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 .jh .msg .bb{padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.04)}
 .jh .msg.sf .bb{background:rgba(122,162,247,.1)}.jh .msg.ot .bb{background:rgba(155,107,255,.08)}
 .jh .ia{display:flex;gap:3px;padding:5px 6px;border-top:1px solid var(--border)}
-.jh .ia input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;outline:none}
+.jh .ia textarea{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;outline:none;resize:none;overflow:hidden;min-height:24px;font-family:inherit;line-height:1.4}
 .jh .ia button{background:var(--diamond);border:none;border-radius:4px;padding:4px 8px;color:#fff;font-size:10px;cursor:pointer}
 .jh .cm{display:flex;gap:2px;padding:2px 4px;border-top:1px solid var(--border);flex-wrap:wrap}
 .jh .cm button{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:9px;cursor:pointer;color:var(--dim)}
@@ -208,7 +208,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
     <div class="m ot"><div class="lb">🌸 玉瑶</div><div class="bb">你好～想聊什么？我在呢。</div></div>
   </div>
   <div class="ci">
-    <input id="ci" placeholder="输入..." onkeydown="if(event.key==='Enter')sc()">
+    <textarea id="ci" placeholder="输入..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sc()}"></textarea>
     <button onclick="sc()">发送</button>
   </div>
   <div class="cs" id="ss">等待...</div>
@@ -221,7 +221,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 <div class="jh" id="jh">
   <div class="hd"><div class="hi"><span class="av">🏛️</span><div><div class="t">景幻仙姑</div><div class="st">三库掌管者</div></div></div><button class="x" onclick="tj()">✕</button></div>
   <div class="ms" id="jm"><div class="msg ot"><div class="bb">需要什么？</div></div></div>
-  <div class="ia"><input id="ji" placeholder="提问..." onkeydown="if(event.key==='Enter')sj()"><button onclick="sj()">发送</button></div>
+  <div class="ia"><textarea id="ji" placeholder="提问..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sj()}"></textarea><button onclick="sj()">发送</button></div>
   <div class="cm">
     <button onclick="jc('汇报三库状态')">📊汇报</button>
     <button onclick="jc('自动提炼')">🧠提炼</button>
@@ -307,6 +307,11 @@ setInterval(()=>da(false),4e3);
 
 async function rd(){try{const d=await fj(W+'/api/vault/diamond');const items=d.items||[];document.getElementById('vdp').innerHTML=items.length===0?'<div class="ld">暂无</div>':items.slice(0,3).map(i=>'<div class="ld">'+((i.summary||'').substring(0,35))+'</div>').join('')}catch{}}
 async function rl(){try{const h=await fj(W+'/api/health');const items=[];items.push({s:'🔄 '+new Date().toLocaleTimeString()});if(h.memory?.landmarks)items.push({s:'🧠 地标:'+h.memory.landmarks});document.getElementById('vl').innerHTML=items.map(i=>'<div class="ll">'+i.s+'</div>').join('')}catch{}}
+
+// 输入框自动换行(玉瑶)
+document.getElementById("ci")?.addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px"});
+// 输入框自动换行(景幻仙姑)
+document.getElementById("ji")?.addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px"});
 
 async function sc(){
   const i=document.getElementById('ci'),m=i.value.trim();if(!m)return;i.value='';
