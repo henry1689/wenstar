@@ -255,7 +255,7 @@ const W='http://localhost:3001';let _as=30,_hb=0,_pt=-1;
 const fj=(u,o)=>fetch(u,{headers:{'Accept':'application/json'},...o,signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)throw Error(''+r.status);return r.json()});
 setInterval(()=>{_as--;_as<=0&&(_as=30,ra());document.getElementById('as').textContent=_as},1e3);
 
-async function ra(){try{const a=await fetch(W+"/api/aqc/report",{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).catch(()=>null);if(a){document.getElementById("aqcInfo").innerHTML="<div class="ll">砂金⛏️通过:"+a.sand.approved+" 待审:"+a.sand.pending+"</div><div class="ll">金库📚通过:"+a.gold.approved+" 拒绝:"+a.gold.rejected+"</div>"}}catch{}
+async function ra(){try{const a=await fetch(W+"/api/aqc/report",{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).catch(()=>null);if(a){document.getElementById("aqcInfo").innerHTML="<div class='ll'>砂金⛏️通过:"+a.sand.approved+" 待审:"+a.sand.pending+"</div><div class='ll'>金库📚通过:"+a.gold.approved+" 拒绝:"+a.gold.rejected+"</div>"}}catch{}
   document.getElementById('clk').textContent=new Date().toLocaleTimeString('zh-CN');_as=30;
   try{await Promise.all([rm(),rd(),rl()]);document.getElementById('od').className='status-dot dot-ok'}catch{document.getElementById('od').className='status-dot dot-err'}
 }
@@ -299,7 +299,7 @@ function da(hb){
   af('m4','fg');af('m4','sg');ar('fg','m4');ar('sg','m4');ar('ke','m4');ar('m6','m5');ar('m8','m5');
 ar('ba','m5');af('mo','ba');
 af('m2','m7');af('m7','m8');af('m7','m6');
-af('va0','va1');af('va1','va2');ar('va0','sq');ar('va1','gq');ar('va1','m4');ar('va2','m5');
+af('va0','va1');af('va1','va2');ar('va0','sq');ar('va1','gq');af('sq','va0');af('gq','va1');ar('va1','m4');ar('va2','m5');
   svg.innerHTML='';
   for(const x of c){const f=r[x.from],t=r[x.to];if(!f||!t)continue;
     const fwd=x.t===1,cls=fwd?(hb?'fwd-hb':'fwd-s'):(hb?'rev-hb':'rev-s'),ah=fwd?'ah-f':'ah-r';
