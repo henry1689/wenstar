@@ -50,6 +50,11 @@ export interface EmotionalMemoryRecord {
   leaf_zone: string;
 
   /** ── VAD 谱曲（情感谱曲引擎产出，歌单完整性的曲谱部分）── */
+  /** ── M3 情绪标签（预计算，加速检索）── */
+  primary_emotion?: string;
+  secondary_emotions?: string[];
+
+  /** ── VAD 谱曲（情感谱曲引擎产出，歌单完整性的曲谱部分）── */
   vad_spectrum?: any | null;
 
   /** ── 记忆动力学 ── */
@@ -64,6 +69,7 @@ export interface EmotionalMemoryRecord {
   landmarked_at: string | null;
   narrative_tag?: string;
   sensory_anchor?: string;
+  promoted_to_diamond?: boolean;
   scar?: MemoryScar;
 }
 

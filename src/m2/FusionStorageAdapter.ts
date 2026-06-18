@@ -25,9 +25,12 @@ export class FusionStorageAdapter {
   private dataDir: string;
   private seqCounter = 0;
   private initialized = false;
+  /** P10: JSON Zone 备份开关（默认开启保持兼容，生产环境可关闭减少IO） */
+  private enableJsonZone: boolean;
 
-  constructor(dataDir?: string) {
+  constructor(dataDir?: string, options?: { enableJsonZone?: boolean }) {
     this.dataDir = dataDir ?? join(PROJECT_ROOT, 'data', 'webui');
+    this.enableJsonZone = options?.enableJsonZone ?? true;
     this.sqlite = new SQLiteAdapter(join(this.dataDir, 'fusion_memory.db'));
   }
 
@@ -47,7 +50,7 @@ export class FusionStorageAdapter {
     return this.seqCounter;
   }
 
-  async write(dna: DNA, perception: Perception24D): Promise<WriteResult> {
+  async write(dna: DNA, perception: Perception24D, primaryEmotion?: string, secondaryEmotions?: string[]): Promise<WriteResult> {
     this.ensureReady();
     // 优先用 dna.seq_pos（预分配），否则自增
     const pos = dna.seq_pos > 0 ? dna.seq_pos : (this.seqCounter + 1);
@@ -69,6 +72,8 @@ export class FusionStorageAdapter {
       locus_path: dna.locus_path,
       entity_genes: dna.entity_genes,
       leaf_zone: dna.leaf_zone,
+      primary_emotion: primaryEmotion,
+      secondary_emotions: secondaryEmotions,
       recall_count: 0,
       last_recalled_at: null,
       reinforcement_accumulator: 0,
@@ -81,8 +86,10 @@ export class FusionStorageAdapter {
     // SQLite 写入（主存储）
     this.sqlite.write(record);
 
-    // JSON Zone 写入（备份）
-    this.appendToJsonZone(dna, perception);
+    // JSON Zone 写入（备份）— P10: 可关闭
+    if (this.enableJsonZone) {
+      this.appendToJsonZone(dna, perception);
+    }
 
     return {
       success: true,

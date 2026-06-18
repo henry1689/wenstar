@@ -88,6 +88,8 @@ export function addBlackDiamond(
   const id = `bd_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
   const now = new Date().toISOString();
   const tags = params.tags || [];
+  // P3: mark as promoted in memories table
+  sqlite.writeRaw(`UPDATE memories SET promoted_to_diamond = 1 WHERE id = ?`, [params.source_id]);
   sqlite.writeRaw(
     `INSERT INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, recall_count, tags, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
@@ -134,7 +136,20 @@ export function deleteBlackDiamond(sqlite: SQLiteAdapter, id: string): boolean {
 }
 
 /** 搜索黑钻库 */
+const KNOWN_EMOTION_TAGS = ["中性","平静","快乐","思念","委屈","焦虑","不安","恐惧","愤怒","沮丧","愧疚","无奈","麻木","怀念","空虚","爱意","满足","幸福","惊喜","感动","温馨","欲望","渴望","占有","依赖","期待","慵懒","倾诉","失落","矛盾","释然","警惕","共鸣","嫉妒","疏离","包容","温馨","感动","幸福","疲惫"];
+
 export function searchBlackDiamonds(sqlite: SQLiteAdapter, keyword: string, limit = 10): BlackDiamondEntry[] {
+  // P4: Fast path - exact emotion_tag match (uses idx_black_diamond_emotion index)
+  const tagMatch = KNOWN_EMOTION_TAGS.find(t => keyword.includes(t));
+  if (tagMatch) {
+    const rows = sqlite.queryAll(
+      `SELECT * FROM black_diamond WHERE emotion_tag = ? ORDER BY created_at DESC LIMIT ?`,
+      [tagMatch, limit],
+    );
+    if (rows.length > 0) return rows.map(rowToBlackDiamond);
+  }
+
+  // Fallback: LIKE scan (existing behavior)
   const rows = sqlite.queryAll(
     `SELECT * FROM black_diamond WHERE summary LIKE ? OR emotion_tag LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT ?`,
     [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, limit],

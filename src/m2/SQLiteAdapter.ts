@@ -29,6 +29,7 @@ import {
   recallBoost,
   reinforcementBoost,
 } from './math.js';
+import type { RetrievalWeights } from './math.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -77,6 +78,27 @@ export class SQLiteAdapter {
   private readonly _FLUSH_BATCH = 5;  // 每5次写入落盘一次
   private readonly _FLUSH_INTERVAL = 2000; // 最长2秒落盘一次
 
+  /** P5: 热点查询缓存（2秒 TTL） */
+  private _queryCache = new Map<string, { result: any; expiresAt: number }>();
+  private readonly _CACHE_TTL_MS = 2000;
+
+  private _cacheGet<T>(key: string): T | null {
+    const entry = this._queryCache.get(key);
+    if (entry && entry.expiresAt > Date.now()) return entry.result as T;
+    this._queryCache.delete(key);
+    return null;
+  }
+
+  private _cacheSet(key: string, result: any, ttlMs: number = this._CACHE_TTL_MS): void {
+    this._queryCache.set(key, { result, expiresAt: Date.now() + ttlMs });
+    if (this._queryCache.size > 50) {
+      const now = Date.now();
+      for (const [k, v] of this._queryCache) {
+        if (v.expiresAt <= now) this._queryCache.delete(k);
+      }
+    }
+  }
+
   constructor(dbPath?: string) {
     this.dbPath = dbPath ?? DEFAULT_DB_PATH;
   }
@@ -100,6 +122,9 @@ export class SQLiteAdapter {
 
     // 迁移：为已有数据库追加 vad_spectrum 列（SQLite 不支持 IF NOT EXISTS）
     try { this.db.run("ALTER TABLE memories ADD COLUMN vad_spectrum TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN primary_emotion TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN secondary_emotions TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN promoted_to_diamond INTEGER DEFAULT 0"); } catch { /* 列已存在 */ }
 
     // 迁移：知识库分类字段（铁律 — 无分类不检索）
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification TEXT"); } catch { /* 列已存在 */ }
@@ -142,7 +167,8 @@ export class SQLiteAdapter {
        reinforcement_accumulator, effective_strength, strength_updated_at,
        is_landmark, landmarked_at, narrative_tag, sensory_anchor,
        scar_type, scar_healed,
-       vad_spectrum)
+       vad_spectrum,
+       primary_emotion, secondary_emotions)
       VALUES (?, ?, ?, ?,
               ?, ?,
               ?, ?, ?,
@@ -150,7 +176,8 @@ export class SQLiteAdapter {
               ?, ?, ?,
               ?, ?, ?, ?,
               ?, ?,
-              ?)`,
+              ?,
+              ?, ?)`,
       [
         record.id, record.seq_pos, record.created_at, pJson,
         record.calcium_score, record.calcium_level,
@@ -161,6 +188,8 @@ export class SQLiteAdapter {
         record.narrative_tag ?? null, record.sensory_anchor ?? null,
         record.scar?.type ?? null, record.scar?.healed ? 1 : record.scar ? 0 : null,
         record.vad_spectrum ? JSON.stringify(record.vad_spectrum) : null,
+        record.primary_emotion ?? null,
+        record.secondary_emotions ? JSON.stringify(record.secondary_emotions) : null,
       ],
     );
 
@@ -298,62 +327,119 @@ export class SQLiteAdapter {
    */
   findByEmotionalSimilarity(query: RetrievalQuery): ScoredMemory[] {
     this.ensureReady();
-    const all = this.execSql(
-      `SELECT * FROM memories ORDER BY seq_pos DESC LIMIT 200`,
-    );
-    const records = this.rowsToRecords(all);
+    // P5: Hot cache — same query within 2s returns cached result
+    const cacheKey = 'ems_' + query.similarity_mode + '_' + query.limit + '_' + (query.locus_path || '') + '_' + (query.entities?.slice().sort().join(',') || '') + '_' + JSON.stringify(query.current_perception);
+    const cached = this._cacheGet<ScoredMemory[]>(cacheKey);
+    if (cached) return cached;
+
+    const startTime = performance.now();
     const weights = allocateRetrievalWeights(
       query.entities?.length ?? 0,
       query.current_perception.arousal,
       query.similarity_mode,
     );
 
-    const scored: ScoredMemory[] = [];
-    for (const record of records) {
-      // 衰减门控
-      if (record.effective_strength < 0.05) continue;
+    // P6: Tier 1 — landmark fast path (is_landmark = 1, typically < 10 records)
+    const landmarkRows = this.execSql(
+      `SELECT * FROM memories WHERE is_landmark = 1 ORDER BY calcium_score DESC LIMIT 20`,
+    );
+    let landmarkRecords = this.rowsToRecords(landmarkRows)
+      .filter(r => r.effective_strength >= 0.05);
 
-      const emotional = emotionalSimilarity(
-        query.current_perception,
-        record.perception,
-        query.similarity_mode,
+    const allScored: ScoredMemory[] = [];
+    const landmarkIds = new Set<string>();
+
+    // Score landmarks
+    for (const record of landmarkRecords) {
+      landmarkIds.add(record.id);
+      const score = this._scoreMemory(record, query, weights);
+      if (score) allScored.push(score);
+    }
+
+    // If not enough results from landmarks, do Tier 2: recent memory scan
+    if (allScored.length < query.limit) {
+      const all = this.execSql(
+        `SELECT * FROM memories ORDER BY seq_pos DESC LIMIT 200`,
       );
+      const records = this.rowsToRecords(all)
+        .filter(r => r.effective_strength >= 0.05 && !landmarkIds.has(r.id));
 
-      const topic = query.locus_path
-        ? (record.locus_path.startsWith(query.locus_path) ? 1.0 : 0.0)
-        : 0;
-
-      let entityOverlap = 0;
-      if (query.entities && query.entities.length > 0) {
-        const recordNames = new Set(record.entity_genes.map(g => g.name));
-        const matched = query.entities.filter(e => recordNames.has(e)).length;
-        const union = new Set([...query.entities, ...recordNames]).size;
-        entityOverlap = union > 0 ? matched / union : 0;
-      }
-
-      const calcium = record.calcium_score;
-
-      const str = record.effective_strength ?? 0.5;
-      const composite = isNaN(str) ? 0.5 : str * (
-        weights.emotional * emotional +
-        weights.topic * topic +
-        weights.entity * entityOverlap +
-        weights.calcium * calcium
-      );
-
-      // Guard against NaN from any missing fields
-      const safeComposite = isNaN(composite) ? 0 : Math.max(0, Math.min(1, composite));
-
-      if (safeComposite > 0.05) {
-        scored.push({
-          record,
-          scores: { emotional, topic, entity: entityOverlap, calcium },
-          composite: safeComposite,
-        });
+      for (const record of records) {
+        const score = this._scoreMemory(record, query, weights);
+        if (score) allScored.push(score);
       }
     }
 
-    return scored.sort((a, b) => b.composite - a.composite).slice(0, query.limit);
+    const result = allScored
+      .sort((a, b) => b.composite - a.composite)
+      .slice(0, query.limit);
+
+    // P7: Query observability
+    const elapsed = performance.now() - startTime;
+    if (elapsed > 100) {
+      console.warn(`[SQLite] SLOW QUERY [findByEmotionalSimilarity]: ${elapsed.toFixed(0)}ms`);
+    }
+
+    this._cacheSet(cacheKey, result);
+    return result;
+  }
+
+  /** P6: Score a single memory record against the query */
+  private _scoreMemory(record: EmotionalMemoryRecord, query: RetrievalQuery, weights: RetrievalWeights): ScoredMemory | null {
+    const emotional = emotionalSimilarity(
+      query.current_perception,
+      record.perception,
+      query.similarity_mode,
+    );
+
+    const topic = query.locus_path
+      ? (record.locus_path.startsWith(query.locus_path) ? 1.0 : 0.0)
+      : 0;
+
+    let entityOverlap = 0;
+    if (query.entities && query.entities.length > 0) {
+      const recordNames = new Set(record.entity_genes.map(g => g.name));
+      const matched = query.entities.filter(e => recordNames.has(e)).length;
+      const union = new Set([...query.entities, ...recordNames]).size;
+      entityOverlap = union > 0 ? matched / union : 0;
+    }
+
+    const calcium = record.calcium_score;
+
+    // P9: VAD bonus — if record has VAD spectrum, add small boost for matching valence/arousal
+    let vadBonus = 0;
+    if (record.vad_spectrum) {
+      try {
+        const vs = typeof record.vad_spectrum === 'string' ? JSON.parse(record.vad_spectrum) : record.vad_spectrum;
+        if (vs.overall) {
+          const vValence = vs.overall.valence ?? 0.5;
+          const vArousal = vs.overall.arousal ?? 0.5;
+          const pValence = (query.current_perception.pleasure + 1) / 2; // normalize -1..1 to 0..1
+          const pArousal = query.current_perception.arousal;
+          const vadSim = 1 - (Math.abs(vValence - pValence) + Math.abs(vArousal - pArousal)) / 2;
+          vadBonus = vadSim * 0.1;
+        }
+      } catch { /* VAD parse failure is non-fatal */ }
+    }
+
+    const str = record.effective_strength ?? 0.5;
+    const composite = isNaN(str) ? 0.5 : str * (
+      weights.emotional * emotional +
+      weights.topic * topic +
+      weights.entity * entityOverlap +
+      weights.calcium * calcium
+    ) + vadBonus;
+
+    const safeComposite = isNaN(composite) ? 0 : Math.max(0, Math.min(1, composite));
+
+    if (safeComposite > 0.05) {
+      return {
+        record,
+        scores: { emotional, topic, entity: entityOverlap, calcium },
+        composite: safeComposite,
+      };
+    }
+    return null;
   }
 
   // ─── 记忆动力学更新 ───
@@ -570,16 +656,16 @@ export class SQLiteAdapter {
     this.save();
   }
 
-  /** 查询 SQL 并返回行数组（每行为 Record<string, any>） */
-  queryAll(sql: string, params?: any[]): Record<string, any>[] {
+  /** P8: 类型安全查询 — 默认返回 Record<string, unknown>，可显式泛型约束 */
+  queryAll<T = Record<string, unknown>>(sql: string, params?: any[]): T[] {
     this.ensureReady();
     const result = this.execSql(sql, params);
     if (result.length === 0) return [];
     const { columns, values } = result[0];
     return values.map((row: any[]) => {
-      const obj: Record<string, any> = {};
+      const obj: Record<string, unknown> = {};
       columns.forEach((col: string, idx: number) => { obj[col] = row[idx]; });
-      return obj;
+      return obj as T;
     });
   }
 
@@ -790,6 +876,9 @@ export class SQLiteAdapter {
         healed_at: null,
       } : undefined,
       vad_spectrum: obj.vad_spectrum ? JSON.parse(obj.vad_spectrum) : null,
+      primary_emotion: obj.primary_emotion ?? undefined,
+      secondary_emotions: obj.secondary_emotions ? JSON.parse(obj.secondary_emotions) : undefined,
+      promoted_to_diamond: obj.promoted_to_diamond === 1 || obj.promoted_to_diamond === true,
     };
   }
 

@@ -291,7 +291,7 @@ export function storeRelations(sqlite: any, relations: DetectedRelationship[], s
       const bRows = sqlite.queryAll(`SELECT id FROM entities WHERE name = ? AND type = ?`, [rel.personName, 'person']);
       if (aRows.length > 0 && bRows.length > 0) {
         sqlite.writeRaw(
-          `INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at`,
           aRows[0].id, bRows[0].id, rel.relation, 0.8, now
         );
       }

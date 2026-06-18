@@ -393,7 +393,7 @@ export class MaintenanceService {
         const personRows = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
         if (meRows.length > 0 && personRows.length > 0) {
           sqlite.writeRaw(
-            'INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at',
             meRows[0].id, personRows[0].id, '认识的人', 0.3, now
           );
         }

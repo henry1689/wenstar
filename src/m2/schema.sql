@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS memories (
 
     -- 记忆动力学
     recall_count INTEGER DEFAULT 0,
+    promoted_to_diamond INTEGER DEFAULT 0,
     last_recalled_at TEXT,
     reinforcement_accumulator REAL DEFAULT 0.0,
     effective_strength REAL DEFAULT 1.0,
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS memories (
     narrative_tag TEXT,
     sensory_anchor TEXT,
     scar_type TEXT,
-    scar_healed INTEGER
+    scar_healed INTEGER,
+    primary_emotion TEXT,
+    secondary_emotions TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_calcium ON memories(calcium_score DESC);
@@ -44,6 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(effective_strength 
 CREATE INDEX IF NOT EXISTS idx_memories_locus ON memories(locus_path);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memories_landmarks ON memories(is_landmark) WHERE is_landmark = 1;
+CREATE INDEX IF NOT EXISTS idx_memories_emotion ON memories(primary_emotion);
 
 -- 实体表
 CREATE TABLE IF NOT EXISTS entities (

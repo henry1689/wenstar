@@ -443,7 +443,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const seqPos = ctx.storage.reserveNextSeq();
 
-    ctx.workingMemory.push(dna, p, seqPos);
+    ctx.workingMemory.push(dna, p, seqPos, decision.primary_emotion, decision.secondary_emotions);
 
     ctx.consolidationQueue.recordActivity();
 
@@ -1515,7 +1515,7 @@ let finalKnowledgeText = knowledgeBaseText;
             const newMe = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', ['我', 'self']);
             const newPerson = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
             if (newMe.length > 0 && newPerson.length > 0) {
-              sqlite.writeRaw('INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?)',
+              sqlite.writeRaw('INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at',
                 newMe[0].id, newPerson[0].id, '认识的人', 0.3, new Date().toISOString());
             }
             // 写入 knowledge_base

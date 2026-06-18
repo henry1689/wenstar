@@ -27,6 +27,9 @@ interface WorkingEntry {
   /** 是否有值得保留的实体 */
   hasMeaningfulEntity: boolean;
   createdAt: number;
+  /** P2: M3 情绪标签 */
+  primaryEmotion?: string;
+  secondaryEmotions?: string[];
 }
 
 export class WorkingMemory {
@@ -90,7 +93,7 @@ export class WorkingMemory {
    * 推入一条新记录
    * @param seqPos 由 FusionStorageAdapter.reserveNextSeq() 预分配的位置
    */
-  push(dna: DNA, perception: Perception24D, seqPos: number): void {
+  push(dna: DNA, perception: Perception24D, seqPos: number, primaryEmotion?: string, secondaryEmotions?: string[]): void {
     // 使用 M3 钙质公式（与决策路由同源，避免两套标准打架）
     const calcium = PerceptionAnalyzer.recalculateCalcium(perception);
     const meaningful = dna.entity_genes.some(g =>
@@ -144,7 +147,7 @@ export class WorkingMemory {
   private async writeEntry(entry: WorkingEntry): Promise<WriteResult> {
     // 在 DNA 中设入预分配的 seq_pos，FusionStorageAdapter.write() 会读取它
     entry.dna.seq_pos = entry.seqPos;
-    return this.storage.write(entry.dna, entry.perception);
+    return this.storage.write(entry.dna, entry.perception, entry.primaryEmotion, entry.secondaryEmotions);
   }
 
   /** 获取缓冲状态 */

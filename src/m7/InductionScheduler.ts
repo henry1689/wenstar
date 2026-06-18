@@ -278,12 +278,11 @@ export class InductionScheduler {
         const strength = Math.min(1, data.count / 10 + avgCalcium);
         try {
           sqlite.writeRaw(
-            `INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at)
-             VALUES (
+            `INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (
                (SELECT id FROM entities WHERE name=? LIMIT 1),
                (SELECT id FROM entities WHERE name=? LIMIT 1),
                ?, ?, ?
-             )`,
+             ) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at`,
             entityA, entityB, relation, strength, now,
           );
           written++;
