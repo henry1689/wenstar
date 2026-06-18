@@ -437,6 +437,32 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const dna = ctx.encoder.encodeSingle(message);
 
+    // P3: LLM 辅助实体提取（识别类工具，非创造类）
+    try {
+      const { extractEntitiesLLM } = await import('../m1/LLMEntityExtractor.js');
+      const llmGenerate = async (prompt: string) => {
+        const result = await (ctx.llmProvider).generate({
+          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 300 } } as any,
+          cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0, sexual_attraction: 0, sensory_craving: 0, energy_merge: 0, ecstasy: 0, safety: 0.5 }, raw_input: prompt, calcium: 0 } } as any,
+          userMessage: prompt,
+        });
+        return result.text;
+      };
+      const llmEntities = await extractEntitiesLLM(message, llmGenerate);
+      if (llmEntities.length > 0) {
+        const existingNames = new Set(dna.entity_genes.map(e => e.name));
+        for (const le of llmEntities) {
+          if (!existingNames.has(le.name)) {
+            existingNames.add(le.name);
+            dna.entity_genes.push({ name: le.name, type: le.type, allele: le.name, phenotype: 'neutral', knowledge_type: 'private' } as any);
+          }
+        }
+        console.log('[LLMEntity] 补充 ' + llmEntities.length + ' 个: ' + llmEntities.map(e => e.name).join(','));
+      }
+    } catch (err) {
+      console.warn('[LLMEntity] 失败(静默降级):', (err as Error).message);
+    }
+
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
 
     const p = decision.enhanced.perception;

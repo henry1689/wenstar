@@ -141,6 +141,7 @@ class ChineseSegmenter {
 // 情感极性词表（从 emotion_lexicon.json 统一加载）
 // ──────────────────────────────────────────────
 import { loadSet, loadEntityRules } from './LexiconLoader.js';
+import { extractEntitiesLLM } from './LLMEntityExtractor.js';
 
 /**
  * 情感极性词表，用于 phenotype 标注
@@ -329,5 +330,37 @@ export class L3EntityAnnotator {
     }));
 
     return { entity_genes: entityGenes };
+  }
+
+  /**
+   * P3: LLM 辅助增强实体提取（识别类工具，非创造类）
+   */
+  async annotateWithLLM(
+    text: string,
+    context: string,
+    selfModel: SelfModelV1,
+    llmGenerate?: (prompt: string) => Promise<string>
+  ): Promise<L3AnnotationResult> {
+    const result = this.annotate(text, context, selfModel);
+    if (llmGenerate) {
+      const { extractEntitiesLLM } = await import("./LLMEntityExtractor.js");
+      const llmEntities = await extractEntitiesLLM(text, llmGenerate);
+      if (llmEntities.length > 0) {
+        const existingNames = new Set(result.entity_genes.map(e => e.name));
+        for (const le of llmEntities) {
+          if (!existingNames.has(le.name)) {
+            existingNames.add(le.name);
+            result.entity_genes.push({
+              name: le.name,
+              type: le.type,
+              allele: le.name,
+              phenotype: this.determinePhenotype(le.name, le.type, text, selfModel),
+              knowledge_type: this.determineKnowledgeType(le.type, le.name),
+            });
+          }
+        }
+      }
+    }
+    return result;
   }
 }
