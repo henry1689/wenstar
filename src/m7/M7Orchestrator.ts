@@ -11,19 +11,30 @@ import type { M6Orchestrator } from '../m6/M6Orchestrator.js';
 import type { FamilyGraph } from '../m4/FamilyGraph.js';
 import type { TopicTracker } from '../app/knowledge/TopicTracker.js';
 import type { M8Engine } from '../m8/M8Engine.js';
-import type { M6Orchestrator } from '../m6/M6Orchestrator.js';
 
 /**
  * M7 空闲批处理定时器
- *（修复: 通过编排器代理方法访问 queue，不再直接访问内部引擎）
+ * - 每 60s 处理梦境队列（如果有待处理梦）
+ * - 每 5 分钟独立运行 4 维梦境分析（队列为空时也执行）
  */
 export function startM7Interval(m7: M7Orchestrator, intervalMs: number = 60000): NodeJS.Timeout {
+  let dreamAnalysisTimer = Date.now();
+  const DREAM_ANALYSIS_INTERVAL = 5 * 60 * 1000; // 1分钟（调试期间）
+
   return setInterval(async () => {
     try {
+      // 1. 处理梦境队列
       if (m7.shouldProcessQueue()) {
         const result = await m7.processIdle();
         console.log(`[M7] 梦境批处理: ${result.internalized} 条`);
         m7.cleanResolvedQueue();
+      }
+
+      // 2. 独立运行四维梦境分析（不受队列状态影响）
+      const now = Date.now();
+      if (now - dreamAnalysisTimer >= DREAM_ANALYSIS_INTERVAL) {
+        dreamAnalysisTimer = now;
+        await m7.processDreamAnalysis();
       }
     } catch (err) {
       console.error('[M7] 批处理失败:', err);
@@ -74,12 +85,21 @@ export class M7Orchestrator {
     const results = await this.internalizer.internalizeBatch();
     this.internalizer.discardStale();
     const advice = this.tracker.generateAdvice();
-    // 四维梦境分析（串行，独立容错）
+    await this.runDreamModules();
+    return { internalized: results.length, advice };
+  }
+
+  /** 独立运行四维梦境分析（从定时器调用，不受队列状态影响） */
+  async processDreamAnalysis(): Promise<void> {
+    await this.runDreamModules();
+  }
+
+  /** 四维梦境分析（串行，独立容错） */
+  private async runDreamModules(): Promise<void> {
     await this.summarizeHighEmotionMemory().catch(e => console.warn('[Dream] 情感雷达失败:', e));
     await this.linkHotTopics().catch(e => console.warn('[Dream] 话题关联失败:', e));
     await this.extractUserPrefAndOptimizeSelf().catch(e => console.warn('[Dream] 自我进化失败:', e));
     await this.digImportantPersonEvent().catch(e => console.warn('[Dream] 人物复盘失败:', e));
-    return { internalized: results.length, advice };
   }
 
   // ─── 代理方法（收敛对外部引擎的直接访问） ───
@@ -99,21 +119,36 @@ export class M7Orchestrator {
   // 梦境深化四模块（新增，空闲时执行）
   // ═══════════════════════════════════════════════════════════════
 
+  private _dreamModule1Done = false;
+  private _dreamModule3Done = false;
+  private _dreamModule4Done = false;
+
   /** Module 1: 高情绪事件归纳 + 共情自动提升 */
   private async summarizeHighEmotionMemory(): Promise<void> {
+    if (this._dreamModule1Done) return;
+    this._dreamModule1Done = true;
     const storage = this._storageRef;
     if (!storage) return;
     try {
       const sqlite = typeof storage.getSQLite === 'function' ? storage.getSQLite() : null;
       if (!sqlite) return;
+
+      // 去重：当天已有梦境数据则跳过
+      const today = new Date().toISOString().substring(0, 10);
+      const existing = sqlite.queryAll(
+        'SELECT id FROM black_diamond WHERE tags LIKE ? AND created_at LIKE ?',
+        '%dream_high_emotion%', today + '%'
+      );
+      if (existing && existing.length > 0) return;
+
       const all = sqlite.queryAll('SELECT id, raw_input, calcium_level, calcium_score, perception_json FROM memories ORDER BY created_at DESC LIMIT 200');
       if (!all || all.length === 0) return;
 
-      // 筛选高情绪记忆（钙质≥0.6）
-      const highEmo = all.filter((r: any) => (r.calcium_score || 0) >= 0.6);
+      // 筛选高情绪记忆（钙质≥0.4）
+      const highEmo = all.filter((r: any) => (r.calcium_score || 0) >= 0.4);
       if (highEmo.length === 0) return;
 
-      // 按情绪类型分组（从perception_json读取pleasure）
+      // 按情绪类型分组
       const groups: Record<string, { count: number; samples: string[] }> = {};
       for (const mem of highEmo) {
         const perc = mem.perception_json ? JSON.parse(mem.perception_json) : {};
@@ -130,7 +165,7 @@ export class M7Orchestrator {
         const summary = '【梦境】高情绪_' + emotion + ': ' + data.count + '次 · ' + data.samples.join(' | ');
         sqlite.writeRaw(
           'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, tags, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          'dream_he_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2,6),
+          'dream_he_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
           summary, emotion, 'dream_high_emotion', 2,
           JSON.stringify(['dream_high_emotion', emotion, '梦境自动沉淀']),
           '梦境情感雷达于 ' + now, now, now
@@ -191,6 +226,8 @@ export class M7Orchestrator {
 
   /** Module 3: 用户偏好提取 + 自我模型优化 */
   private async extractUserPrefAndOptimizeSelf(): Promise<void> {
+    if (this._dreamModule3Done) return;
+    this._dreamModule3Done = true;
     const storage = this._storageRef;
     const m6 = this.m6;
     if (!storage || !m6) return;
@@ -252,6 +289,8 @@ export class M7Orchestrator {
 
   /** Module 4: 重要人物/事件复盘摘要 */
   private async digImportantPersonEvent(): Promise<void> {
+    if (this._dreamModule4Done) return;
+    this._dreamModule4Done = true;
     const fg = this.familyGraph;
     const kb = this.knowledgeBase;
     const storage = this._storageRef;

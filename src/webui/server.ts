@@ -911,6 +911,24 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 手动触发梦境分析 ──
+    if (req.method === 'POST' && url.pathname === '/api/dream/analyze') {
+      try {
+        if (m7 && typeof m7.processDreamAnalysis === 'function') {
+          await m7.processDreamAnalysis();
+          res.writeHead(200);
+          res.end(JSON.stringify({ status: 'ok', message: '梦境分析完成' }));
+        } else {
+          res.writeHead(200);
+          res.end(JSON.stringify({ status: 'skip', message: 'M7未就绪' }));
+        }
+      } catch (err: any) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
 // ── 全模块数据 M5-M8 ──
     if (req.method === 'GET' && url.pathname === '/api/modules') {
       // M6: 自我模型（使用编排器代理方法，替代直接访问 manager）
