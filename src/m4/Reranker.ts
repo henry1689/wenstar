@@ -91,6 +91,11 @@ export function rerank(
       bonus -= 0.05 * contrastHits;
     }
 
+    // 5. 场景贴合度：记忆的 calcium_level 高说明同样情感强烈，加分
+    if (item.record.calcium_level >= 2) {
+      bonus += 0.10;
+    }
+
     // 应用加分
     item.composite = Math.min(1, Math.max(0, item.composite + bonus));
   }

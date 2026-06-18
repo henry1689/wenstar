@@ -26,4 +26,10 @@ export interface M4Context {
     calcium_level: number;
     dominant_action: string;
   };
+  /** P2: 检索质量报告 */
+  retrieval_quality?: {
+    total_candidates: number;
+    avg_match_score: number;
+    strategies_used: string[];
+  };
 }

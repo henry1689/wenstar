@@ -72,7 +72,7 @@ export class M4Orchestrator {
       memorySummary.timeline = [...emotionalEntries, ...memorySummary.timeline];
     }
 
-    // 6. 输出 M4Context
+    // 6. 输出 M4Context（含检索质量）
     return {
       decision,
       memory_summary: memorySummary,
@@ -84,6 +84,13 @@ export class M4Orchestrator {
         has_family_context: familySummary.members.length > 0,
         calcium_level: decision.enhanced.calcium_level,
         dominant_action: decision.actions[0] ?? 'memorize',
+      },
+      retrieval_quality: {
+        total_candidates: memories.length,
+        avg_match_score: memories.length > 0
+          ? Math.round(memories.reduce((s: number, m: DNA) => Math.max(s, m.calcium_score ?? 0), 0) / memories.length * 100) / 100
+          : 0,
+        strategies_used: strategyUsed,
       },
     };
   }

@@ -5,6 +5,10 @@ import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import type { DNA } from '../m1/types/dna.js';
 import type { Perception24D } from '../m3/types/perception.js';
 import type { MemorySummary } from './types/index.js';
+import { LocalCache } from '../app/tools/LocalCache.js';
+
+// 关键词检索缓存：相同关键词 30 秒内复用结果
+const keywordCache = new LocalCache<string, DNA[]>({ ttlMs: 30_000, namespace: 'm4_keyword' });
 
 export class MemoryRetriever {
   private storage: FusionStorageAdapter;
@@ -56,7 +60,12 @@ export class MemoryRetriever {
 
     if (keywords.size > 0) {
       try {
-        // 检索最近 200 条记录（与 3001 MAX_SAVED_TURNS 对齐，覆盖完整对话上下文）
+        // P3: 关键词缓存 30 秒
+        const cacheKey = [...keywords].sort().join("::");
+        const _cached = await keywordCache.get(cacheKey);
+        if (_cached) { byKeyword.push(..._cached); }
+        else {
+        （与 3001 MAX_SAVED_TURNS 对齐，覆盖完整对话上下文）
         // findBySeqPosRange 默认 DESC 排序，ascending 参数不被 QueryOptions 支持
         const recent = await this.storage.findBySeqPosRange(0, 999_999_999, { limit: 200 });
         const seen = new Set<string>();
@@ -77,13 +86,14 @@ export class MemoryRetriever {
 
     // ─── 3. 情感相似度检索（跨场景同情绪记忆串联） ───
     //
-    // 当当前输入包含情感类实体（难过/开心/焦虑等），
-    // 且提供了 24D 感知数据时，通过情感向量相似度检索相关历史记忆。
-    // 这实现了"不同话题但相同情绪"的跨场景记忆关联。
-    const hasEmotion = entities.some(e => e.type === 'emotion');
-    const perception = options?.perception;
+    // 触发条件放宽：有 emotion 实体 或 钙质≥1 且有感知数据 都触发
+    // 改前：仅 entities.some(e => e.type === 'emotion')
+    // 改后：只要情感强度足够就检索，不依赖 M1 实体提取的准确率
+    const hasEmotionType = entities.some(e => e.type === 'emotion');
+    const hasMeaningfulEntity = entities.some(e => e.name.length > 0 && e.type !== 'self');
+    const shouldEmotionSearch = perception !== undefined && (hasEmotionType || hasMeaningfulEntity);
     const byEmotion: DNA[] = [];
-    if (hasEmotion && perception) {
+    if (shouldEmotionSearch && perception) {
       try {
         // 使用情感向量相似度检索（按 valence/arousal 等 24 维坐标匹配）
         const scored = this.storage.findByEmotionalSimilarity({
