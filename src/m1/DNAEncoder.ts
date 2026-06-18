@@ -11,6 +11,10 @@ import type {
   DNA,
   TaxonomyTree,
   SelfModelV1,
+  L0RouteResult,
+  L1SequenceResult,
+  L2ContentResult,
+  L3AnnotationResult,
 } from './types/dna.js';
 
 /** 流式输入的单个片段 */
@@ -52,6 +56,8 @@ export class DNAEncoder {
 
   /** 当前语义单位的缓冲 */
   private buffer: BufferEntry[] = [];
+  /** M1 运行时统计 */
+  private stats = { encodeCount: 0, failCount: 0, stageFailures: { l0: 0, l1: 0, l2: 0, l3: 0 } };
 
   constructor(selfModel: SelfModelV1) {
     this.selfModel = selfModel;
@@ -156,6 +162,13 @@ export class DNAEncoder {
    * 适用于调用方已经做好语义切割的场景。
    */
   encodeSingle(utterance: string, context?: string[]): DNA {
+    this.stats.encodeCount++;
+    // P1: 输入守卫 — 空/非字符串输入返回空DNA，不崩溃
+    if (!utterance || typeof utterance !== 'string' || utterance.trim().length === 0) {
+      this.stats.failCount++;
+      console.warn('[M1] 空输入编码, 返回空DNA');
+      return this._makeEmptyDNA();
+    }
     const contextStr = (context ?? []).join(' ');
     return this._encodeCombined(utterance, contextStr);
   }
@@ -180,6 +193,34 @@ export class DNAEncoder {
   /**
    * 获取当前缓冲区中的话语数（仅用于测试/调试）
    */
+  /** 获取编码运行时统计 */
+  getStats(): { encodeCount: number; failCount: number; failRate: number; stageFailures: Record<string, number> } {
+    return { ...this.stats, failRate: this.stats.encodeCount > 0 ? Math.round(this.stats.failCount / this.stats.encodeCount * 100) / 100 : 0 };
+  }
+
+  /** 生成空 DNA（输入守卫兜底） */
+  private _makeEmptyDNA(): DNA {
+    const l1Result = this.sequencer.next();
+    return {
+      locus_path: 'user.misc.default',
+      taxonomy_version: '1.0',
+      branch_id: l1Result.branch_id,
+      seq_pos: l1Result.seq_pos,
+      leaf_zone: 'language_semantic_zone',
+      ref: 'tmp_empty',
+      entity_genes: [],
+      raw_input: '',
+      created_at: new Date().toISOString(),
+      scene_tags: [],
+      warnings: ['empty_input'],
+    };
+  }
+
+  /** 慢编码告警 */
+  private _warnSlow(stage: string, ms: number): void {
+    if (ms > 50) console.warn('[M1] SLOW [' + stage + ']: ' + ms.toFixed(0) + 'ms');
+  }
+
   getBufferSize(): number {
     return this.buffer.length;
   }
@@ -239,30 +280,69 @@ export class DNAEncoder {
    * 核心编码流水线：L0 → L1 → L2 → L3
    */
   private _encodeCombined(utterance: string, context: string): DNA {
-    // ── L0: 基因组锚点 ──
-    // Ref: ARCH.md §3.1 L0
-    const taxonomy = this.taxonomy ?? loadTaxonomy();
-    const l0Result = routeL0(utterance, taxonomy);
+    const warnings: string[] = [];
+    const timings: Record<string, number> = {};
+
+    // ── L0: 基因组锚点 (with stage-level isolation) ──
+    let l0Result: L0RouteResult;
+    const t0 = performance.now();
+    try {
+      const taxonomy = this.taxonomy ?? loadTaxonomy();
+      l0Result = routeL0(utterance, taxonomy);
+    } catch (err) {
+      console.warn('[M1] L0 失败:', (err as Error).message);
+      this.stats.stageFailures.l0++;
+      this.stats.failCount++;
+      return this._makeEmptyDNA();
+    }
+    timings.l0 = performance.now() - t0;
+    this._warnSlow('L0', timings.l0);
 
     // ── L1: 分支路由码 ──
-    // Ref: ARCH.md §3.1 L1
-    const l1Result = this.sequencer.next();
+    let l1Result: L1SequenceResult;
+    const t1 = performance.now();
+    try {
+      l1Result = this.sequencer.next();
+    } catch (err) {
+      console.warn('[M1] L1 失败:', (err as Error).message);
+      this.stats.stageFailures.l1++;
+      this.stats.failCount++;
+      warnings.push('L1_failed');
+      l1Result = { branch_id: 'evt_fallback_' + Date.now().toString(36), seq_pos: 0 };
+    }
+    timings.l1 = performance.now() - t1;
+    this._warnSlow('L1', timings.l1);
 
     // ── L2: 叶节点指针 ──
-    // Ref: ARCH.md §3.1 L2
-    const l2Result = this.extractor.extract(l0Result.locus_path, utterance);
+    let l2Result: L2ContentResult;
+    const t2 = performance.now();
+    try {
+      l2Result = this.extractor.extract(l0Result!.locus_path, utterance);
+    } catch (err) {
+      console.warn('[M1] L2 失败:', (err as Error).message);
+      this.stats.stageFailures.l2++;
+      warnings.push('L2_failed');
+      l2Result = { leaf_zone: 'language_semantic_zone', ref: 'tmp_fallback' };
+    }
+    timings.l2 = performance.now() - t2;
+    this._warnSlow('L2', timings.l2);
 
     // ── L3: 实体基因槽 ──
-    // Ref: ARCH.md §3.1 L3
-    // 实体提取在合并后的完整文本上进行，确保上下文不丢失
-    const l3Result = this.annotator.annotate(
-      utterance,
-      context,
-      this.selfModel
-    );
+    let l3Result: L3AnnotationResult;
+    const t3 = performance.now();
+    try {
+      l3Result = this.annotator.annotate(utterance, context, this.selfModel);
+    } catch (err) {
+      console.warn('[M1] L3 失败:', (err as Error).message);
+      this.stats.stageFailures.l3++;
+      warnings.push('L3_failed');
+      l3Result = { entity_genes: [] };
+    }
+    timings.l3 = performance.now() - t3;
+    this._warnSlow('L3', timings.l3);
 
     // ── 从 L0 结果 + L3 基因派生语义标签 ──
-    const sceneTags = this.deriveSceneTags(l0Result.locus_path, l3Result.entity_genes);
+    const sceneTags = this.deriveSceneTags(l0Result!.locus_path, l3Result!.entity_genes);
 
     // ── 组装 DNA ──
     const dna: DNA = {
@@ -276,7 +356,8 @@ export class DNAEncoder {
       raw_input: utterance,
       created_at: new Date().toISOString(),
       scene_tags: sceneTags,
-      ambiguity_score: l0Result.ambiguity_score,
+      ambiguity_score: l0Result!.ambiguity_score,
+      warnings: warnings.length > 0 ? warnings : undefined,
     };
 
     return dna;

@@ -65,6 +65,9 @@ export interface DNA {
    * 下游可用此值决定是否进入 AQC 模糊校验。
    */
   ambiguity_score?: number;
+
+  /** M1 Phase1: 编码阶段告警/降级记录（如 ['L1_failed', 'L3_failed']） */
+  warnings?: string[];
 }
 
 /**

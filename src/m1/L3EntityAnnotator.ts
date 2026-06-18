@@ -31,114 +31,70 @@ interface NormalizedEntityRule {
   patterns: string[];
 }
 
-const ENTITY_EXTRACTION_RULES: NormalizedEntityRule[] = [
-  // ── Self ──
+/**
+ * 兜底实体规则（JSON 文件不可用时使用）
+ */
+const FALLBACK_ENTITY_RULES: NormalizedEntityRule[] = [
   { name: '我', type: 'self', patterns: ['我'] },
-
-  // ── Person — 亲属关系 ──
   { name: '妈妈', type: 'person', patterns: ['妈妈'] },
   { name: '爸爸', type: 'person', patterns: ['爸爸'] },
-  { name: '母亲', type: 'person', patterns: ['母亲'] },
-  { name: '父亲', type: 'person', patterns: ['父亲'] },
-  { name: '爷爷', type: 'person', patterns: ['爷爷'] },
-  { name: '奶奶', type: 'person', patterns: ['奶奶'] },
-  { name: '外公', type: 'person', patterns: ['外公'] },
-  { name: '外婆', type: 'person', patterns: ['外婆'] },
-  { name: '哥哥', type: 'person', patterns: ['哥哥'] },
-  { name: '弟弟', type: 'person', patterns: ['弟弟'] },
-  { name: '姐姐', type: 'person', patterns: ['姐姐'] },
-  { name: '妹妹', type: 'person', patterns: ['妹妹'] },
-  { name: '老公', type: 'person', patterns: ['老公'] },
-  { name: '老婆', type: 'person', patterns: ['老婆'] },
-  { name: '男朋友', type: 'person', patterns: ['男朋友'] },
-  { name: '女朋友', type: 'person', patterns: ['女朋友'] },
-  { name: '亲戚', type: 'person', patterns: ['亲戚'] },
-  { name: '姑姑', type: 'person', patterns: ['姑姑'] },
-  { name: '舅舅', type: 'person', patterns: ['舅舅'] },
-  { name: '阿姨', type: 'person', patterns: ['阿姨'] },
-  { name: '叔叔', type: 'person', patterns: ['叔叔'] },
-  { name: '朋友', type: 'person', patterns: ['朋友', '好友'] },
-  { name: '同事', type: 'person', patterns: ['同事'] },
-  { name: '同学', type: 'person', patterns: ['同学'] },
-  { name: '室友', type: 'person', patterns: ['室友'] },
-  { name: '老板', type: 'person', patterns: ['老板', '上司', '领导'] },
-
-  // ── Emotion ──
   { name: '开心', type: 'emotion', patterns: ['开心'] },
-  { name: '快乐', type: 'emotion', patterns: ['快乐'] },
-  { name: '幸福', type: 'emotion', patterns: ['幸福'] },
-  { name: '感动', type: 'emotion', patterns: ['感动'] },
-  { name: '兴奋', type: 'emotion', patterns: ['兴奋'] },
-  { name: '满足', type: 'emotion', patterns: ['满足'] },
   { name: '难过', type: 'emotion', patterns: ['难过'] },
-  { name: '伤心', type: 'emotion', patterns: ['伤心'] },
-  { name: '痛苦', type: 'emotion', patterns: ['痛苦'] },
-  { name: '焦虑', type: 'emotion', patterns: ['焦虑'] },
-  { name: '抑郁', type: 'emotion', patterns: ['抑郁'] },
-  { name: '孤独', type: 'emotion', patterns: ['孤独'] },
-  { name: '失落', type: 'emotion', patterns: ['失落'] },
-  { name: '崩溃', type: 'emotion', patterns: ['崩溃'] },
-  { name: '愤怒', type: 'emotion', patterns: ['愤怒', '生气'] },
-  { name: '烦躁', type: 'emotion', patterns: ['烦躁'] },
-  { name: '害怕', type: 'emotion', patterns: ['害怕'] },
-  { name: '紧张', type: 'emotion', patterns: ['紧张'] },
-  { name: '喜欢', type: 'emotion', patterns: ['喜欢'] },
-
-  // ── Event ──
-  { name: '结婚', type: 'event', patterns: ['结婚'] },
   { name: '工作', type: 'event', patterns: ['工作', '上班'] },
-  { name: '考试', type: 'event', patterns: ['考试', '面试'] },
-  { name: '搬家', type: 'event', patterns: ['搬家'] },
-  { name: '旅行', type: 'event', patterns: ['旅行', '旅游'] },
-  { name: '聚会', type: 'event', patterns: ['聚会'] },
-  { name: '吵架', type: 'event', patterns: ['吵架', '争吵'] },
-  { name: '分手', type: 'event', patterns: ['分手'] },
-  { name: '约会', type: 'event', patterns: ['约会'] },
-  { name: '加班', type: 'event', patterns: ['加班'] },
-
-  // ── Place ──
   { name: '公司', type: 'place', patterns: ['公司', '办公室'] },
-  { name: "北京", type: "place", patterns: ["北京"] },
-  { name: "上海", type: "place", patterns: ["上海"] },
-  { name: "深圳", type: "place", patterns: ["深圳"] },
-
-  // ── Object ──
-  { name: '礼物', type: 'object', patterns: ['礼物'] },
-  { name: '宠物', type: 'object', patterns: ['猫', '狗', '宠物'] },
-  { name: '压力', type: 'event', patterns: ['压力', '压力大'] },
-  { name: '失眠', type: 'event', patterns: ['失眠', '睡不好', '睡不着'] },
-  { name: '跑步', type: 'event', patterns: ['跑步', '晨跑', '夜跑'] },
-  { name: '散步', type: 'event', patterns: ['散步', '遛弯', '走走'] },
-  { name: '咖啡', type: 'object', patterns: ['咖啡', '喝咖啡'] },
-
-  // ── 情绪/状态型 event ──
-  { name: '累', type: 'emotion', patterns: ['好累', '太累了', '累坏了'] },
-
-  // ── Hobby / Creativity ──
-  { name: '画画', type: 'object', patterns: ['画画', '画国画', '画山水', '画人物', '绘画', '作画'] },
-  { name: '国画', type: 'object', patterns: ['国画', '水墨画', '工笔', '写意'] },
-  { name: '摄影', type: 'object', patterns: ['摄影', '拍照', '相机'] },
-  { name: '音乐', type: 'object', patterns: ['音乐', '弹琴', '吉他', '钢琴', '唱歌'] },
-  { name: '运动', type: 'object', patterns: ['运动', '跑步', '健身', '游泳', '打球', '篮球', '足球'] },
-  { name: '游戏', type: 'object', patterns: ['游戏', '打游戏', '玩'] },
-  { name: '烹饪', type: 'object', patterns: ['烹饪', '做饭', '做菜', '厨艺', '烘焙'] },
+  { name: '北京', type: 'place', patterns: ['北京'] },
+  { name: '上海', type: 'place', patterns: ['上海'] },
 ];
+
+/** P2: 从 JSON 加载实体规则（有缓存），失败时兜底 */
+let _loadedL3Rules: NormalizedEntityRule[] | null = null;
+function getEntityRules(): NormalizedEntityRule[] {
+  if (_loadedL3Rules) return _loadedL3Rules;
+  try {
+    const jsonRules = loadEntityRules();
+    if (jsonRules && jsonRules.length > 0) {
+      _loadedL3Rules = jsonRules.map((r: any) => ({ name: r.name, type: r.type as EntityType, patterns: r.patterns }));
+      return _loadedL3Rules;
+    }
+  } catch { /* 静默降级 */ }
+  console.warn('[L3] entity_rules.json 加载失败，使用内存兜底规则');
+  _loadedL3Rules = FALLBACK_ENTITY_RULES;
+  return _loadedL3Rules;
+}
 
 // 已删除的单字规则（因 FMM 匹配后仍会产生单字误报）：
 // - '家'(place) — 国家/大家/专家 误报
 // - '花'(object) — 花园/花生/花费 误报
 // - '书'(object) — 书店/书法/秘书 误报
 
+// ── P2: 中国人名检测（复用 RelationshipExtractor.ts 的姓氏+停用词模式） ──
+
+const PERSON_SURNAMES = new Set('赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公');
+
+const NON_NAME_SUFFIX = new Set(['室','服','变','便','天','心','子','学','院','里','种','员','篇','摘','那','衣','呢','块','段','片','次','些','点','面','头','边','者','性','化','机','器','型','号','该','候','度','似','遇','职','责','储','述']);
+
+const COMMON_WORDS_PERSON = new Set(['应该','时候','强度','索引','关联','相遇','相似','职责','全长','公了','公桌','和种','史摘','和事','那那','白衬','鲁呢','段美','衣块','单员','公司','明天','谢谢','还是','或者','所以','因为','不过','而且','但是','如果','虽然','然后','家里']);
+
+const GRAMMAR_WORDS_PERSON = new Set('是说和的了在也都就来还要会能不很太把被让给对用从向跟与有没做走来看听等呢吗啊吧着过到比');
+
+function isPersonName(token: string): boolean {
+  if (token.length < 2 || token.length > 3) return false;
+  if (token === '有人' || token === '某人' || token === '大家') return false;
+  if ((token[0] === '阿' || token[0] === '老' || token[0] === '小') && /[一-龥]/.test(token[1]) && !NON_NAME_SUFFIX.has(token[1])) return true;
+  if (!PERSON_SURNAMES.has(token[0])) return false;
+  // 2字：检查常见非人名词 + 后缀过滤
+  if (token.length === 2) {
+    if (COMMON_WORDS_PERSON.has(token)) return false;
+    if (NON_NAME_SUFFIX.has(token[1])) return false;
+  }
+  // 3字：检查前两字是否为常见词（如"家里吃"→前两字"家里"在常见词表）
+  if (token.length === 3 && COMMON_WORDS_PERSON.has(token.substring(0, 2))) return false;
+  return true;
+}
+
 // ──────────────────────────────────────────────
 // 中文正向最大匹配分词器
 // ──────────────────────────────────────────────
-
-/**
- * 正向最大匹配 (FMM) 中文分词器
- *
- * 词典基于 ENTITY_EXTRACTION_RULES 的 pattern 自动构建。
- * 以最长匹配优先原则确保复合词被整体识别。
- */
 class ChineseSegmenter {
   private dict: string[] = [];
   private maxLen = 0;
@@ -184,7 +140,7 @@ class ChineseSegmenter {
 // ──────────────────────────────────────────────
 // 情感极性词表（从 emotion_lexicon.json 统一加载）
 // ──────────────────────────────────────────────
-import { loadSet } from './LexiconLoader.js';
+import { loadSet, loadEntityRules } from './LexiconLoader.js';
 
 /**
  * 情感极性词表，用于 phenotype 标注
@@ -260,7 +216,12 @@ class TokenBasedEntityExtractor {
  * Ref: 架构决策备忘录 v1.1 — 禁止LLM介入
  */
 export class L3EntityAnnotator {
-  private extractor = new TokenBasedEntityExtractor(ENTITY_EXTRACTION_RULES);
+  private extractor: TokenBasedEntityExtractor;
+
+  constructor() {
+    // P2: 从 JSON 加载实体规则（外部化配置），新增实体只需编辑 entity_rules.json
+    this.extractor = new TokenBasedEntityExtractor(getEntityRules());
+  }
 
   /**
    * 判断实体的 phenotype（对自我模型的影响方向）
@@ -338,7 +299,25 @@ export class L3EntityAnnotator {
     context: string,
     selfModel: SelfModelV1
   ): L3AnnotationResult {
+    if (!text) return { entity_genes: [] };
     const entities = this.extractor.extract(text);
+    // P2: 人名二次检测 — 对未匹配的2-3字token做姓氏检测
+    const existingNames = new Set(entities.map(e => e.name));
+    for (let i = 0; i < text.length; i++) {
+      for (let len = 2; len <= 3 && i + len <= text.length; len++) {
+        const rawToken = text.substring(i, i + len);
+        let cleaned = rawToken;
+        while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
+          cleaned = cleaned.substring(0, cleaned.length - 1);
+        }
+        // 3字人名如前两字已匹配则跳过（避免"熊勇请"→"熊勇"已匹配时重复）
+        if (cleaned.length === 3 && existingNames.has(cleaned.substring(0, 2))) continue;
+        if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
+          existingNames.add(cleaned);
+          entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
+        }
+      }
+    }
     const fullContext = `${text} ${context}`;
 
     const entityGenes: EntityGene[] = entities.map((entity) => ({

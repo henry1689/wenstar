@@ -62,6 +62,10 @@ export class L2ContentExtractor {
    * @returns L2内容提取结果
    */
   extract(locusPath: string, rawInput: string, entityTypes?: string[]): L2ContentResult {
+    // P1: 输入守卫
+    if (!rawInput) {
+      return { leaf_zone: 'language_semantic_zone', ref: 'tmp_empty' };
+    }
     this.refCounter++;
     const leafZone = this.mapZone(locusPath, entityTypes, rawInput);
 

@@ -21,6 +21,7 @@ const LEXICON_DIR = join(PROJECT_ROOT, 'data', 'lexicons');
 /** 缓存 */
 const cache = new Map<string, any>();
 let l0RulesCache: any = null;
+let entityRulesCache: any = null;
 
 /**
  * 加载 JSON 词表文件，返回 Set<string>
@@ -78,6 +79,28 @@ export function loadEmotionLexicon(): Record<string, Set<string>> {
 
   cache.set(key, lex);
   return lex;
+}
+
+/**
+ * P2: 加载 L3 实体提取规则（从 entity_rules.json）
+ */
+export function loadEntityRules(): Array<{ name: string; type: string; patterns: string[] }> {
+  if (entityRulesCache !== null) return entityRulesCache;
+  try {
+    const path = join(LEXICON_DIR, 'entity_rules.json');
+    if (!existsSync(path)) {
+      console.warn('[LexiconLoader] entity_rules.json not found, using fallback.');
+      entityRulesCache = [];
+      return entityRulesCache;
+    }
+    const data = JSON.parse(readFileSync(path, 'utf-8'));
+    entityRulesCache = data.rules ?? [];
+    return entityRulesCache;
+  } catch (err) {
+    console.warn(`[LexiconLoader] Failed to load entity_rules.json: ${err}`);
+    entityRulesCache = [];
+    return entityRulesCache;
+  }
 }
 
 /**
