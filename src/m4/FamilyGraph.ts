@@ -29,6 +29,40 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'data', 'knowledge', 'family_graph.db');
 
+/**
+ * P1: 人物画像 — 从"名字"到"完整的人"
+ * 存储在 node.properties JSON 中，每次对话逐步丰富。
+ */
+interface PersonProfile {
+  // 基础
+  name: string;
+  relation_to_user: string;
+  /** 首次提及日期 */
+  first_mentioned?: string;
+  /** 最近提及日期 */
+  last_mentioned: string;
+  /** 累计提及次数 */
+  mention_count: number;
+  /** 提取到的特征词：开朗/幽默/热心 等 */
+  traits?: string[];
+  /** 职业 */
+  occupation?: string;
+  /** 兴趣爱好 */
+  interests?: string[];
+  /** 自由文本描述 */
+  description?: string;
+  /** 重要事件时间线 */
+  timeline?: Array<{
+    date: string;
+    summary: string;
+    emotion?: string;
+  }>;
+  /** 玉瑶已问过的问题（去重用） */
+  asked_questions?: string[];
+  /** 画像完整度（0-1，自动计算） */
+  completeness?: number;
+}
+
 // ─── 亲属称谓 → 关系映射（自动推断核心词表）───
 // Ref: M4-design-v1.md §3.5
 const KINSHIP_MAP: Record<string, string> = {
@@ -99,6 +133,9 @@ export class FamilyGraph implements FamilyGraphInterface {
   private db: any | null = null;
   private dbPath: string;
   private userNodeId: string | null = null;
+  /** P4: 批量落盘 — 减少IO */
+  private _dirty = false;
+  private _saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(dbPath?: string) {
     this.dbPath = dbPath ?? DEFAULT_DB_PATH;
@@ -148,7 +185,7 @@ export class FamilyGraph implements FamilyGraphInterface {
     this.run('CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)');
     this.run('CREATE INDEX IF NOT EXISTS idx_edges_relation ON edges(relation)');
 
-    this.save();
+    this.markDirty();
   }
 
   async addNode(node: GraphNode): Promise<void> {
@@ -164,7 +201,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         new Date().toISOString(),
       ]
     );
-    this.save();
+    this.markDirty();
   }
 
   async addEdge(edge: GraphEdge): Promise<void> {
@@ -180,7 +217,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         new Date().toISOString(),
       ]
     );
-    this.save();
+    this.markDirty();
   }
 
   async findRelated(entityName: string, relation?: string): Promise<GraphQueryResult[]> {
@@ -329,6 +366,8 @@ export class FamilyGraph implements FamilyGraphInterface {
           });
           nodesCreated++;
           details.push(`创建节点: ${person.name} (${kinshipWord})`);
+          // P1: 自动创建人物画像
+          await this.updatePersonProfile(person.name, { relation_to_user: this.describeRelation(relation) } as any);
         } else {
           personId = existing[0].id;
         }
@@ -441,7 +480,7 @@ export class FamilyGraph implements FamilyGraphInterface {
       });
     }
 
-    this.save();
+    this.markDirty();
   }
 
   async addFamilyMember(name: string, relation: string, aliases?: string[]): Promise<void> {
@@ -521,6 +560,8 @@ export class FamilyGraph implements FamilyGraphInterface {
       await this.addNode({ id: personId, type: 'person', name: personName });
       nodesCreated++;
       details.push(`创建社交节点: ${personName}`);
+      // P1: 自动创建人物画像
+      await this.updatePersonProfile(personName, {} as any);
     } else {
       personId = existing[0].id;
     }
@@ -647,7 +688,7 @@ export class FamilyGraph implements FamilyGraphInterface {
     const merged = { ...existingProps, ...props };
     this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
-    this.save();
+    this.markDirty();
   }
 
   async getSocialSummary(): Promise<{ connections: Array<{ name: string; relation_to_user: string; note?: string }> }> {
@@ -761,11 +802,105 @@ export class FamilyGraph implements FamilyGraphInterface {
     return results;
   }
 
-  private save(): void {
-    if (!this.db) return;
-    const data = this.db.export();
-    const buffer = Buffer.from(data);
-    writeFileSync(this.dbPath, buffer);
+  /** P4: 标记脏数据，2秒聚合落盘 */
+  private markDirty(): void {
+    this._dirty = true;
+    if (!this._saveTimer) {
+      this._saveTimer = setTimeout(() => this.flush(), 2000);
+    }
+  }
+
+  /** P4: 强制立即落盘 */
+  private flush(): void {
+    if (!this._dirty || !this.db) return;
+    try {
+      const data = this.db.export();
+      const buffer = Buffer.from(data);
+      writeFileSync(this.dbPath, buffer);
+      this._dirty = false;
+    } catch (err) {
+      console.error('[FamilyGraph] 落盘失败:', err);
+    }
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+    }
+  }
+
+  /** P4: 显式触发落盘（关闭前调用） */
+  async flushAll(): Promise<void> {
+    this.flush();
+  }
+
+  // ── P1: 人物画像 ──
+
+  /**
+   * 获取人物画像
+   */
+  getPersonProfile(personName: string): PersonProfile | null {
+    const nodes = this.query('SELECT id, properties, aliases FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (nodes.length === 0) return null;
+    const node = nodes[0];
+    const props: Partial<PersonProfile> = node.properties ? JSON.parse(node.properties) : {};
+    return {
+      name: personName,
+      relation_to_user: '',
+      last_mentioned: '',
+      mention_count: 0,
+      ...props,
+    } as PersonProfile;
+  }
+
+  /**
+   * 更新或创建人物画像
+   */
+  async updatePersonProfile(personName: string, updates: Partial<PersonProfile>): Promise<void> {
+    const nodes = this.query('SELECT id, properties, aliases FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (nodes.length === 0) return;
+
+    const existing: Partial<PersonProfile> = nodes[0].properties ? JSON.parse(nodes[0].properties) : {};
+    const merged: PersonProfile = {
+      name: personName,
+      relation_to_user: existing.relation_to_user || '',
+      last_mentioned: new Date().toISOString(),
+      mention_count: (existing.mention_count || 0) + 1,
+      ...existing,
+      ...updates,
+    };
+    merged.mention_count = (existing.mention_count || 0) + 1;
+    merged.completeness = this.calcProfileCompleteness(merged);
+    this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
+    this.flush(); // 画像更新频率低但关键，立即落盘
+  }
+
+  /**
+   * 计算画像完整度 (0-1)
+   * 权重：relation=30%, traits=20%, occupation=15%, interests=10%, timeline=15%, description=10%
+   */
+  calcProfileCompleteness(profile: PersonProfile): number {
+    let score = 0;
+    if (profile.relation_to_user && profile.relation_to_user !== '认识的人') score += 0.3;
+    else if (profile.relation_to_user) score += 0.15;
+    if (profile.traits && profile.traits.length > 0) score += 0.2;
+    if (profile.occupation) score += 0.15;
+    if (profile.interests && profile.interests.length > 0) score += 0.1;
+    if (profile.timeline && profile.timeline.length > 0) score += 0.15;
+    if (profile.description) score += 0.1;
+    return Math.round(Math.min(1, score) * 100) / 100;
+  }
+
+  /**
+   * 获取人物画像摘要（用于对话注入）
+   */
+  getPersonSummary(personName: string): string | null {
+    const profile = this.getPersonProfile(personName);
+    if (!profile) return null;
+    const parts: string[] = [personName];
+    if (profile.relation_to_user) parts.push(profile.relation_to_user);
+    if (profile.occupation) parts.push('做' + profile.occupation);
+    if (profile.traits && profile.traits.length > 0) parts.push('性格' + profile.traits.join('/'));
+    return parts.join('，');
   }
 
   private rowToNode(row: any): GraphNode {

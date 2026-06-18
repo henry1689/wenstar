@@ -801,6 +801,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 人物画像 ──
+    if (req.method === 'GET' && url.pathname.startsWith('/api/family/') && url.pathname.length > '/api/family/'.length) {
+      const personName = decodeURIComponent(url.pathname.substring('/api/family/'.length));
+      const profile = familyGraph.getPersonProfile(personName);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(profile || { error: 'not found' }));
+      return;
+    }
+
     // ── 家族图谱 ──
     if (req.method === 'GET' && url.pathname === '/api/family') {
       const summary = await familyGraph.getFamilySummary().catch(() => ({ members: [], locations: [] }));

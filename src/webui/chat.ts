@@ -463,6 +463,82 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       console.warn('[LLMEntity] 失败(静默降级):', (err as Error).message);
     }
 
+    // P3: 答案提取 — 用户回答了玉瑶之前的问题，提取信息更新画像
+    try {
+      let personGenes = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我');
+      // 如果当前消息没有显式人名但用了"他/她/这人"，从历史找最近被问的人
+      if (personGenes.length === 0 && (/^他|^她|^那|^这/.test(message) || message.length < 15) && ctx.m4) {
+        const graph = ctx.m4.getFamilyGraph();
+        if (graph) {
+          for (let i = ctx.conversationHistory.length - 1; i >= 0 && i > ctx.conversationHistory.length - 6; i--) {
+            const turn = ctx.conversationHistory[i];
+            if (turn.role === 'assistant' && turn.content) {
+              // 用姓氏匹配找回复中提到的人名
+              const SURNAMES_CHAR = '赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公';
+              const nameRegex = new RegExp('([' + SURNAMES_CHAR + '][一-龥]{1,2}|阿[一-龥]|小[一-龥])', 'g');
+              const allMatches = turn.content.match(nameRegex);
+              if (allMatches) {
+                for (const name of allMatches) {
+                  const profile = graph.getPersonProfile(name);
+                  if (profile) {
+                    personGenes.push({ name, type: 'person' } as any);
+                    break;
+                  }
+                }
+                if (personGenes.length > 0) break;
+              }
+            }
+          }
+        }
+      }
+      if (personGenes.length > 0 && ctx.m4) {
+        const graph = ctx.m4.getFamilyGraph();
+        if (graph) {
+          // 关系关键词提取
+          const relMap: Record<string, string> = { '同事':'同事','同学':'同学','朋友':'朋友','室友':'室友','老板':'老板','上司':'上司','领导':'领导','客户':'客户','合伙人':'合伙人','邻居':'邻居','老师':'老师','医生':'医生','顾问':'顾问','下属':'下属' };
+          // 职业关键词提取
+          const occHints = [/做(\S+)的/, /在(\S+)上班/, /在(\S+)工作/, /开(\S+)店/, /干(\S+)的/, /(\S+)工程师/, /(\S+)老师/, /(\S+)医生/];
+          // 特征关键词
+          const traitMap: Record<string, string[]> = { '开朗':['开朗','爱笑','大方'],'幽默':['幽默','搞笑','逗'],'热心':['热心','帮忙','帮了'],'温柔':['温柔','体贴','细心'],'能干':['能干','厉害','强'],'靠谱':['靠谱','可靠','放心'],'有趣':['有趣','好玩','有意思'],'老实':['老实','本分','踏实'] };
+
+          for (const p of personGenes) {
+            const profile = graph.getPersonProfile(p.name);
+            if (!profile) continue;
+
+            const updates: Record<string, any> = {};
+
+            // 提取关系
+            for (const [rel, val] of Object.entries(relMap)) {
+              if (message.includes(rel)) { updates.relation_to_user = val; break; }
+            }
+
+            // 提取职业
+            for (const re of occHints) {
+              const m = message.match(re);
+              if (m && m[1]) { updates.occupation = m[1]; break; }
+            }
+
+            // 提取特征
+            const foundTraits: string[] = [];
+            for (const [trait, keywords] of Object.entries(traitMap)) {
+              if (keywords.some(kw => message.includes(kw))) foundTraits.push(trait);
+            }
+            if (foundTraits.length > 0) {
+              const existing = profile.traits || [];
+              updates.traits = [...new Set([...existing, ...foundTraits])];
+            }
+
+            if (Object.keys(updates).length > 0) {
+              graph.updatePersonProfile(p.name, updates as any);
+              console.log('[Profile] 更新画像:', p.name, Object.keys(updates).join(','));
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ProfileExtract] 答案提取失败:', (err as Error).message);
+    }
+
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
 
     const p = decision.enhanced.perception;
@@ -1562,6 +1638,77 @@ let finalKnowledgeText = knowledgeBaseText;
         }
       }
     } catch (err) { console.warn('[GlobalScan] 全文扫描兜底失败:', err); }
+
+    // ── P2: 玉瑶不经意提问 — 补齐人物画像（不查户口，自然聊天）
+    // 每次只问一个人、只问一条信息、不超过70%完整度就不问
+    try {
+      // 从 M1 实体中找人物
+      const personEntities = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name !== '有人' && g.name !== '某人' && g.name !== '大家');
+      if (personEntities.length > 0 && ctx.m4) {
+        const graph = ctx.m4.getFamilyGraph();
+        if (graph) {
+          // 找完整度最低的人物提问
+          let targetPerson = '';
+          let lowestCompleteness = 1;
+          for (const p of personEntities) {
+            const profile = graph.getPersonProfile(p.name);
+            if (profile) {
+              if (profile.completeness !== undefined && profile.completeness < lowestCompleteness) {
+                lowestCompleteness = profile.completeness;
+                targetPerson = p.name;
+              }
+            } else {
+              // 没有画像 → 说明从未被记录过
+              if (lowestCompleteness > 0) {
+                lowestCompleteness = 0;
+                targetPerson = p.name;
+              }
+            }
+          }
+
+          // 只在完整度 < 0.7 时提问
+          if (targetPerson && lowestCompleteness < 0.7) {
+            const profile = graph.getPersonProfile(targetPerson);
+            const asked = profile?.asked_questions || [];
+
+            // 检查今天是否问过此人
+            const today = new Date().toISOString().substring(0, 10);
+            const askedToday = asked.some((q: string) => q.startsWith(today));
+            // 检查回复末尾是否已有反问
+            const alreadyHasQuestion = reply.includes('？') && reply.length > (reply.lastIndexOf('？') + 2 > reply.length * 0.7 ? 0 : 999);
+
+            if (!askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
+              // 选择问题（4级递进）
+              let question = '';
+              if (lowestCompleteness < 0.2) {
+                // 第一级：什么都不懂
+                question = targetPerson + '？这个名字我第一次听你说，你们是怎么认识的呀？';
+              } else if (lowestCompleteness < 0.4) {
+                // 第二级：知道关系但不知背景
+                question = '你好像经常提起' + targetPerson + '，你们认识很久了吗？';
+              } else if (lowestCompleteness < 0.6) {
+                // 第三级：知道基础但不知细节
+                question = targetPerson + '平时是做什么工作的呀？感觉你们挺聊得来的。';
+              } else {
+                // 第四级：大部分知道但缺故事
+                question = '你和' + targetPerson + '之间有没有什么特别有意思的故事？';
+              }
+              // 用内心独白方式追加，使提问不显得突兀
+              reply += '\n\n（想起你刚刚提到' + targetPerson + '，顺口问一句）' + question;
+
+              // 记录已问过
+              if (profile) {
+                graph.updatePersonProfile(targetPerson, {
+                  asked_questions: [...asked, today + ':level_' + Math.floor(lowestCompleteness * 10)],
+                } as any);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ProfileAsk] 不经意提问失败:', (err as Error).message);
+    }
 
     // ── 用户反馈检测（Module 3: 梦境自我进化的输入信号） ──
     // 检测用户对玉瑶回复的反馈信号，纯关键词，无 LLM
