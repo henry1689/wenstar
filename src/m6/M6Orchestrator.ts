@@ -72,7 +72,7 @@ export class M6Orchestrator {
     decisions.push(this.evolver.proposeEvolution(mappedDim, signal.direction, signal.delta));
 
     // 第2步：偏好管理（使用原始实体名，"开心"作为偏好才有意义）
-    this.prefs.recordMention(signal.dimension, signal.e1_pleasure);
+    this.prefs.recordMention(signal.dimension, signal.e1_pleasure, signal.triggerEvent);
 
     // 第3步：叙事层（重大事件）
     if (signal.calcium >= 2) {

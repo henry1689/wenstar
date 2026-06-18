@@ -1178,6 +1178,24 @@ let finalKnowledgeText = knowledgeBaseText;
           finalKnowledgeText = familyConstraint + '\n\n' + finalKnowledgeText;
         }
 
+        // ① M6 人格特质注入 — 让玉瑶的说话风格随人格演化而变
+        try {
+          if (ctx.m6) {
+            const traits = ctx.m6.getTraits();
+            if (traits) {
+              const traitDesc: string[] = [];
+              if (traits.agreeableness > 0.7) traitDesc.push('你性格温柔体贴');
+              else if (traits.agreeableness > 0.5) traitDesc.push('你性格随和');
+              if (traits.extraversion > 0.6) traitDesc.push('比较活泼热情');
+              else if (traits.extraversion < 0.4) traitDesc.push('比较安静内敛');
+              if (traits.neuroticism > 0.6) traitDesc.push('情绪敏感');
+              if (traitDesc.length > 0) {
+                finalKnowledgeText = '【性格】' + traitDesc.join('，') + '\n（按照当前性格说话，不要违背' + (traitDesc.length > 1 ? '这些' : '这个') + '特点）\n\n' + finalKnowledgeText;
+              }
+            }
+          }
+        } catch (err) { console.warn('[M6Trait] 注入失败:', err); }
+
         try {
 
         reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message);

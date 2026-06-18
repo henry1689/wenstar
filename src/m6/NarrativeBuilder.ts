@@ -12,7 +12,7 @@ export class NarrativeBuilder {
 
   /** 添加重大事件叙事层 — 用 triggerEvent（对话原文）作为叙事文本 */
   addLayer(text: string, triggerEvent: string, calcium: number): void {
-    if (calcium < 2) return; // 钙质不足不视为重大事件
+    if (calcium < 1) return; // 钙质≥1即视为有意义事件，记录到叙事层
     this.manager.addNarrativeLayer({
       text, trigger_event: triggerEvent, calcium_at_event: calcium,
       created_at: new Date().toISOString(),
