@@ -488,6 +488,19 @@ export class FamilyGraph implements FamilyGraphInterface {
     let nodesCreated = 0;
     let edgesCreated = 0;
 
+    // 🔴 非人名过滤：2字名第二字不是姓氏的拒绝入库（"应该""时候""强度"等）
+    const SURNAMES = new Set('赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公');
+    const COMMON_WORDS = new Set(['应该','时候','强度','索引','关联','相遇','相似','职责','储所','全长','公了','公桌','和种','史摘','和事','那那','白衬','鲁呢','段美','衣块','单员','明天','谢你','谢了','包子','公司']);
+    if (personName.length === 2) {
+      if (COMMON_WORDS.has(personName)) {
+        details.push(`过滤非人名: ${personName}`);
+        return { nodes_created: 0, edges_created: 0, details };
+      }
+    }
+    if (personName === '有人' || personName === '某人' || personName === '大家') {
+      return { nodes_created: 0, edges_created: 0, details };
+    }
+
     // 查找或创建"我"节点
     const userNodes = this.query('SELECT id FROM nodes WHERE name = ?', ['我']);
     let userId: string;
@@ -510,6 +523,19 @@ export class FamilyGraph implements FamilyGraphInterface {
       details.push(`创建社交节点: ${personName}`);
     } else {
       personId = existing[0].id;
+    }
+
+    // 🔴 家族边拦截：如果此人已有家族关系边，跳过社交边（防止"老公"同时有 spouse_of 和 acquaintance_of）
+    if (relationType === 'acquaintance_of') {
+      const familyRelTypes = new Set(['mother_of','father_of','spouse_of','sibling_of','child_of','grandfather_of','grandmother_of','parent_of','grandchild_of']);
+      const hasFamily = this.query(
+        'SELECT id FROM edges WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)',
+        [userId, personId, personId, userId]
+      ).some((e: any) => familyRelTypes.has(e.relation));
+      if (hasFamily) {
+        details.push(`跳过社交边（已有家族关系）: ${personName}`);
+        return { nodes_created: 0, edges_created: 0, details };
+      }
     }
 
     // 检查是否已有此边（防止重复）
@@ -613,9 +639,19 @@ export class FamilyGraph implements FamilyGraphInterface {
    * 获取社交关系摘要（与 getFamilySummary 互补，只返回非家庭关系）
    * 同一人若同时有家族边和社交边，在两个摘要中都会出现。
    */
-  async getSocialSummary(): Promise<{ connections: Array<{ name: string; relation_to_user: string }> }> {
-    const connections: Array<{ name: string; relation_to_user: string }> = [];
-    // 实时查询"我"节点，不依赖缓存的 userNodeId（重启后可能为 null）
+  /** 更新人物节点的备注信息（从知识库合并时调用） */
+  async updateNodeProperties(personName: string, props: Record<string, any>): Promise<void> {
+    const nodes = this.query('SELECT id, properties FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (nodes.length === 0) return;
+    const existingProps = JSON.parse(nodes[0].properties ?? '{}');
+    const merged = { ...existingProps, ...props };
+    this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
+    this.save();
+  }
+
+  async getSocialSummary(): Promise<{ connections: Array<{ name: string; relation_to_user: string; note?: string }> }> {
+    const connections: Array<{ name: string; relation_to_user: string; note?: string }> = [];
     const meNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', ['我', 'person']);
     if (meNodes.length === 0) return { connections };
     const meId = meNodes[0].id;
@@ -631,11 +667,13 @@ export class FamilyGraph implements FamilyGraphInterface {
         );
         for (const edge of edges) {
           if (socialTypes.has(edge.relation)) {
+            const props = node.properties ? JSON.parse(node.properties) : {};
             connections.push({
               name: node.name,
               relation_to_user: this.describeSocialRelation(edge.relation),
+              note: props.备注 || props.context || undefined,
             });
-            break; // 一个人只出现一次
+            break;
           }
         }
       }
