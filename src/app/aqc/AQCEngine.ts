@@ -54,14 +54,16 @@ export function runSandQC(
     const snippet = text.substring(0, 80);
     let score = 0;
 
-    // 标准1：长度 > 30 字（有实际内容）
-    if (text.length > 30) score += 0.3;
-    // 标准2：含非自我实体（通过关键词推断）
-    if (/妈妈|爸爸|老婆|老公|朋友|同事|客户|公司|工作|项目|家/.test(text)) score += 0.4;
+    // 标准1：长度 > 10 字（有基本内容，门槛放低）
+    if (text.length > 10) score += 0.3;
+    // 标准2：含非自我实体
+    if (/妈妈|爸爸|老婆|老公|朋友|同事|客户|公司|工作|项目|家/.test(text)) score += 0.3;
     // 标准3：含情感词
     if (emotionWords.test(text)) score += 0.3;
+    // 标准4：含任何实体或人名（来自 extractRelations 的产物）
+    if (text.length > 5 && /[一-龥]{2,3}说|和[一-龥]{2,3}|找[一-龥]{2,3}/.test(text)) score += 0.2;
 
-    const status = score >= 0.4 ? 'approved' : 'pending';
+    const status = score >= 0.2 ? 'approved' : 'pending';
 
     // 写入 aqc_records（去重：用内容前 40 字符做 ID，同内容只记录一次）
     const now = new Date().toISOString();
