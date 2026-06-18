@@ -12,6 +12,7 @@
  */
 import type { ConversationTurn } from '../../m5/types/index.js';
 import type { SQLiteAdapter } from '../../m2/SQLiteAdapter.js';
+import { promoteToBlackDiamond } from '../vault/VaultManager.js';
 
 // ═══════════════════════════════════════════════════════════════
 // SandQC — 砂金质检员
@@ -131,7 +132,7 @@ export function runGoldQC(sqlite: SQLiteAdapter, limit = 50): GoldQCResult {
       if (landmark === 1) score += 0.3;
       if (strength > 0.5) score += 0.2;
 
-      const status = score >= 0.4 ? 'approved' : 'rejected';
+      const status = score >= 0.15 ? 'approved' : 'rejected';
       const snippet = (row.raw_input || '').substring(0, 80);
 
       const id = `aqc_gold_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
@@ -144,8 +145,13 @@ export function runGoldQC(sqlite: SQLiteAdapter, limit = 50): GoldQCResult {
         );
       } catch { /* 跳过 */ }
 
-      if (status === 'approved') approved++;
-      else rejected++;
+      if (status === 'approved') {
+        approved++;
+        try {
+          
+          const r = promoteToBlackDiamond(sqlite, row.id); if (r) console.log("[GoldQC] 提升到黑钻:", row.id);
+        } catch { /* 提升失败不影响质检 */ }
+      } else rejected++;
     }
   } catch (err) {
     console.warn('[GoldQC] 扫描失败:', err);

@@ -126,11 +126,10 @@ export class WorkingMemory {
   private static readonly FORCE_GRADUATE_CYCLE = 6;     // 安全阀：强制处理阈值
 
   /** 判断条目是否应毕业（共享方法，供 consolidate 和 getStatus 使用） */
+  /** 统一毕业条件：条件A(钙质≥1+实体) 或 条件B(cycle≥6安全阀) */
   private shouldGraduate(entry: WorkingEntry): boolean {
-    return entry.calciumLevel >= 2 ||
-      (entry.calciumLevel === 1 && entry.hasMeaningfulEntity) ||
-      (entry.calciumLevel === 1 && entry.cycleCount >= WorkingMemory.GRADUATE_CYCLE_MAX) ||
-      (entry.cycleCount >= WorkingMemory.FORCE_GRADUATE_CYCLE && entry.calciumLevel >= 1 && entry.hasMeaningfulEntity);
+    return (entry.calciumLevel >= 1 && entry.hasMeaningfulEntity) ||
+      entry.cycleCount >= WorkingMemory.FORCE_GRADUATE_CYCLE;
   }
 
   /** 判断条目是否应丢弃 */
