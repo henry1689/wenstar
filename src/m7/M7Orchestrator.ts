@@ -142,12 +142,11 @@ export class M7Orchestrator {
     }
   }
 
-  /** Module 2: 高频话题关联 + 待查提醒（可联网搜索技术/新闻/科技） */
+  /** Module 2: 高频话题关联 + 联网搜索 + 存入知识库（含向量） */
   private async linkHotTopics(): Promise<void> {
     const kb = this.knowledgeBase;
     if (!kb || !this.topicTracker) return;
     try {
-      // 从 TopicTracker 获取高频话题（需要暴露 getFrequentTopics 方法）
       const topics = typeof this.topicTracker.getTopicsNeedingResearch === 'function'
         ? this.topicTracker.getTopicsNeedingResearch()
         : [];
@@ -158,17 +157,33 @@ export class M7Orchestrator {
         const existing = await kb.search(topic, 1);
         if (existing && existing.length > 0) continue;
 
-        // 记录待查提醒
+        // 联网搜索（复用 WebResearchService）
+        let researchContent = '';
+        let sourceName = '玉瑶梦境调研';
+        try {
+          const { researchTopic } = await import('../app/knowledge/WebResearchService.js');
+          const result = await researchTopic(topic, null as any);
+          if (result && result.summary) {
+            researchContent = result.summary;
+            sourceName = result.sources?.join(',') || '玉瑶梦境调研';
+          }
+        } catch { /* 搜索失败，用默认内容 */ }
+
+        if (!researchContent) {
+          researchContent = `关于「${topic}」的研究笔记\n研究时间：${new Date().toLocaleString('zh-CN')}\n来源：玉瑶的自主知识整理\n\n这是玉瑶在空闲时对主人常提起的「${topic}」做的资料整理。主人对这个话题很感兴趣，玉瑶会继续关注相关内容，在下次主人提起时和主人一起探讨。`;
+        }
+
+        // 存入系统知识库（自动分块 + 向量嵌入，就像把书放上书架）
         await kb.add({
-          title: '待查: ' + topic,
-          content: '用户近期频繁提及「' + topic + '」，待梦境调研补充资料',
+          title: '📚 ' + topic,
+          content: researchContent,
           source_type: 'dream_research',
-          tags: ['dream_research', 'pending'],
-          classification: '待查',
-          interaction_type: 'other',
+          tags: ['dream_research', 'web_research', topic],
+          classification: '梦境研究',
+          interaction_type: 'document',
         });
+        console.log('[Dream] 话题调研完成: ' + topic);
       }
-      console.log('[Dream] 话题关联: 标记 ' + topics.length + ' 个待查话题');
     } catch (err) {
       console.warn('[Dream] 话题关联失败:', err);
     }

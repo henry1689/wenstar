@@ -76,9 +76,14 @@ export async function researchTopic(
       source = '玉瑶的自主整理';
     }
 
-    // 3. 保存研究结果（仅输出日志，不写入知识库）
-    // 知识库只用于文件/资料，研究笔记由自己管理
+    // 3. 返回研究结果（由调用方决定是否存入知识库）
     console.log(`[Research] ✅ 完成研究 "${keyword}"`);
+    return {
+      keyword,
+      summary,
+      sources: [source],
+      entryId: `research_${Date.now().toString(36)}`,
+    };
   } catch (err: any) {
     console.warn(`[Research] 研究失败: "${keyword}"`, err.message);
     return null;
