@@ -47,7 +47,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(effective_strength 
 CREATE INDEX IF NOT EXISTS idx_memories_locus ON memories(locus_path);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memories_landmarks ON memories(is_landmark) WHERE is_landmark = 1;
-CREATE INDEX IF NOT EXISTS idx_memories_emotion ON memories(primary_emotion);
 
 -- 实体表
 CREATE TABLE IF NOT EXISTS entities (

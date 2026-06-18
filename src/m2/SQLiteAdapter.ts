@@ -126,6 +126,9 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE memories ADD COLUMN secondary_emotions TEXT"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE memories ADD COLUMN promoted_to_diamond INTEGER DEFAULT 0"); } catch { /* 列已存在 */ }
 
+    // 索引迁移：emotion 列可能在新库中已在 DDL 中创建，旧库需通过迁移创建
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_emotion ON memories(primary_emotion)"); } catch { /* 列不存在或索引已存在 */ }
+
     // 迁移：知识库分类字段（铁律 — 无分类不检索）
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification TEXT"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification_pending INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
