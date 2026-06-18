@@ -41,6 +41,7 @@ export class M8FusionAdapter implements M8Engine {
 
     const bestMatch = results[0];
     if (bestMatch && bestMatch.composite > 0.3) {
+      // 强化已有地标
       this.storage.promoteToLandmark(
         bestMatch.record.id,
         params.narrative_tag,
@@ -51,6 +52,24 @@ export class M8FusionAdapter implements M8Engine {
         result: { success: true, entry_id: bestMatch.record.id },
         ritual_phrase: ritual,
       };
+    }
+
+    // 无相似地标但有高情感强度 → 新建年轮条目
+    if (params.perception) {
+      const intensity = Math.abs(params.perception.pleasure) * 0.5 + params.perception.arousal * 0.3 + params.perception.intimacy * 0.2;
+      if (intensity > 0.4) {
+        // 找一条最近的记忆晋升为地标（让高情感事件有锚点）
+        const sqlite = this.storage.getSQLite();
+        const recent = sqlite.findBySeqPosRange(0, 999_999_999, 10);
+        if (recent.length > 0) {
+          this.storage.promoteToLandmark(
+            recent[0].id,
+            params.narrative_tag || 'auto_anchored',
+            params.sensory_anchor || `情感锚点: ${new Date().toISOString().substring(0, 10)}`,
+          );
+          return { result: { success: true, entry_id: recent[0].id }, ritual_phrase: '嗯，这个感觉我记住了。' };
+        }
+      }
     }
 
     return { result: { success: false, entry_id: '', error: 'No matching memory to promote' } };
@@ -161,7 +180,7 @@ export class M8FusionAdapter implements M8Engine {
   async readById(entryId: string): Promise<YearRingEntry | null> {
     const sqlite = this.storage.getSQLite();
     const record = sqlite.findById(entryId);
-    if (!record || !record.is_landmark) return null;
+    if (!record) return null;
 
     return {
       id: record.id,

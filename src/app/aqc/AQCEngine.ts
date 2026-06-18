@@ -63,15 +63,16 @@ export function runSandQC(
 
     const status = score >= 0.4 ? 'approved' : 'pending';
 
-    // 写入 aqc_records（去重：同一条对话不重复记录）
+    // 写入 aqc_records（去重：用内容前 40 字符做 ID，同内容只记录一次）
     const now = new Date().toISOString();
-    const id = `aqc_sand_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    const contentKey = snippet.replace(/[^一-龥a-zA-Z0-9]/g, '').substring(0, 40);
+    const id = `aqc_sand_${contentKey}_${now.substring(0, 10)}`;
 
     try {
       sqlite.writeRaw(
         `INSERT OR IGNORE INTO aqc_records (id, source_type, source_id, content_snippet, calcium_level, entity_count, score, status, created_at, evaluated_at)
          VALUES (?, 'sand', ?, ?, 0, 0, ?, ?, ?, ?)`,
-        id, id, snippet, score, status, now, now,
+        id, contentKey, snippet, score, status, now, now,
       );
     } catch { /* 重复跳过 */ }
 

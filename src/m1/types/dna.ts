@@ -50,6 +50,21 @@ export interface DNA {
   calcium_score?: number;
   /** M3 钙化等级 0~3 */
   calcium_level?: number;
+
+  /**
+   * 场景语义标签（由 DNAEncoder 在编码时派生）。
+   * 纯规则产生，从 locus_path + entity_genes 推导，
+   * 不涉及 LLM 或外部查询。
+   * 下游无需二次解析即可获知"这段在说什么"。
+   */
+  scene_tags?: string[];
+
+  /**
+   * L0 路由模糊度（0=明确，越接近1越模糊）。
+   * 当多条关键词规则匹配且优先级接近时设为此值。
+   * 下游可用此值决定是否进入 AQC 模糊校验。
+   */
+  ambiguity_score?: number;
 }
 
 /**
@@ -143,6 +158,8 @@ export interface L0RouteResult {
   rule_id: string;
   /** 是否命中兜底分类 */
   is_fallback: boolean;
+  /** 路由模糊度（0=明确，越接近1越模糊，仅在多条规则冲突时 > 0） */
+  ambiguity_score?: number;
 }
 
 /**

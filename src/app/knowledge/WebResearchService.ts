@@ -76,35 +76,9 @@ export async function researchTopic(
       source = '玉瑶的自主整理';
     }
 
-    // 3. 存入知识库
-    const now = new Date().toISOString();
-    const id = `research_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
-    const title = `研究: ${keyword}`;
-    const content = `【玉瑶的研究笔记】
-话题：${keyword}
-研究时间：${now}
-来源：${source}
-
-${summary.trim()}
-
-💡 提示：可通过设置 RESEARCH_API_URL 环境变量配置搜索引擎接口，
-格式：https://your-search-api.com/search?q=%s`;
-
-    sqlite.writeRaw(
-      `INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      id, title, content, 'research',
-      JSON.stringify(['研究笔记', `topic:${keyword}`, '自动研究']),
-      now, now,
-    );
-
-    console.log(`[Research] ✅ 完成研究 "${keyword}": ${id}`);
-    return {
-      keyword,
-      summary: summary.substring(0, 200),
-      sources: [source],
-      entryId: id,
-    };
+    // 3. 保存研究结果（仅输出日志，不写入知识库）
+    // 知识库只用于文件/资料，研究笔记由自己管理
+    console.log(`[Research] ✅ 完成研究 "${keyword}"`);
   } catch (err: any) {
     console.warn(`[Research] 研究失败: "${keyword}"`, err.message);
     return null;

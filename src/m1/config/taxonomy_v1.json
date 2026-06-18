@@ -1,12 +1,13 @@
 {
-  "version": "1.0",
-  "description": "认知分类树 v1 - 初始2层深度，支持渐进式生长",
+  "version": "1.1",
+  "description": "认知分类树 v1.1 — 细分情感/工作/健康三个域",
   "tree": {
     "user": {
       "family": ["general", "conflict", "care"],
-      "emotion": ["positive", "negative", "neutral"],
-      "work": ["general", "stress", "achievement"],
-      "daily": ["general", "creation", "entertainment", "health"],
+      "emotion": ["positive", "negative", "neutral", "suppressed", "romantic", "miss_family"],
+      "work": ["general", "stress", "achievement", "project", "meeting", "burnout"],
+      "daily": ["general", "creation", "entertainment"],
+      "health": ["fitness", "sickness", "sleep"],
       "misc": ["default"]
     }
   }

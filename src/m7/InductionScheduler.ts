@@ -240,17 +240,21 @@ export class InductionScheduler {
   }
 
   /**
-   * 结构归纳：分析记忆中的实体共现关系，构建 entity_relations 图。
-   * 如果"加班"和"累"总是同时出现，就在两者之间建立关联。
+   * 结构归纳：增量更新实体共现关系。
+   * 只处理上次运行后新增的记忆，避免每小时全量 O(n²)。
    */
+  private lastEntityPos = 0;
   private buildEntityRelations(): void {
     try {
       const sqlite = this.storage.getSQLite();
-      const allMemories = sqlite.findBySeqPosRange(0, 999_999_999, 200);
+      const allMemories = sqlite.findBySeqPosRange(this.lastEntityPos, 999_999_999, 200);
+      if (allMemories.length === 0) return;
 
       const cooccurrence = new Map<string, { count: number; totalCalcium: number }>();
 
       for (const mem of allMemories) {
+        // 更新追踪位置
+        if (mem.seq_pos > this.lastEntityPos) this.lastEntityPos = mem.seq_pos;
         const names = mem.entity_genes.map(g => g.name).filter(Boolean);
         if (names.length < 2) continue;
         for (let i = 0; i < names.length; i++) {

@@ -18,10 +18,14 @@
  *   await bionic.search('你好', null, 'user_123');
  */
 import type { Perception24D } from '../m3/types/perception.js';
+import { LocalCache } from '../app/tools/LocalCache.js';
 
 // ── 配置 ──
 const BIONIC_API = process.env.BIONIC_API_URL || 'http://localhost:7200/api/v1';
 const EMOTION_API = process.env.EMOTION_API_URL || 'http://localhost:8100/api/v1/emotion';
+
+// 外部查询缓存：按 query+userId 缓存 30 秒（短期防重复，不阻塞新鲜结果）
+const bionicSearchCache = new LocalCache<string, any[]>({ ttlMs: 30_000, namespace: 'bionic_search' });
 
 // ── 类型定义 ──
 
@@ -101,12 +105,21 @@ class BionicAdapter {
     return r?.status === 'ok';
   }
 
-  /** 检索相关记忆（同步，对话回复前调用） */
+  /** 检索相关记忆（同步，对话回复前调用，带 30 秒缓存） */
   async search(query: string, userId = 'default_user'): Promise<BionicSearchResult[]> {
+    const cacheKey = `${userId}:${query.slice(0, 100)}`;
+    const cached = await bionicSearchCache.get(cacheKey);
+    if (cached) return cached as BionicSearchResult[];
+
     const r = await bionicFetch<any>(
       `/search?q=${encodeURIComponent(query.slice(0, 200))}&user_id=${encodeURIComponent(userId)}&limit=5`
     );
-    return r?.results ?? [];
+    const results = r?.results ?? [];
+    // 有结果才缓存（空结果不缓存，下次继续尝试）
+    if (results.length > 0) {
+      bionicSearchCache.set(cacheKey, results).catch(() => {});
+    }
+    return results;
   }
 
   /** 存入歌单（异步，对话结束后调用） */

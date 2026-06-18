@@ -145,6 +145,9 @@ export interface EnhancedDNA {
 
   /** 预计算的强度等级 */
   calcium_level: CalciumLevel;
+
+  /** P1: 钙质计算配置（场景/个性化偏移，由 analyze() 填充） */
+  calcium_config?: { thresholdOffset?: number; scoreBonus?: number };
 }
 
 // ────────────────────────────────────────────────────────
@@ -202,4 +205,11 @@ export interface M3Decision {
   reason: string;
   /** 当前时间上下文 */
   timestamp: string;
+
+  /** P2: 主情绪标签（由 PerceptionAnalyzer 从24D向量推导） */
+  primary_emotion?: string;
+  /** P2: 次要情绪标签（复合情绪） */
+  secondary_emotions?: string[];
+  /** P2: 情绪识别置信度 (0-1) */
+  confidence?: number;
 }

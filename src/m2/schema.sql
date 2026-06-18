@@ -100,7 +100,11 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     locked INTEGER DEFAULT 0,
     -- 知识分类（铁律：无分类不检索）
     classification TEXT,
-    classification_pending INTEGER DEFAULT 1
+    classification_pending INTEGER DEFAULT 1,
+    dna_id TEXT,
+    scene_tags TEXT,
+    interaction_type TEXT DEFAULT 'other',
+    emotion_vector TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_created ON knowledge_base(created_at DESC);

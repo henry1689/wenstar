@@ -93,6 +93,8 @@ const SAFETY_WORDS = loadSet('emotion_lexicon.json', 'safety');
 
 const INSECURITY_WORDS = loadSet('emotion_lexicon.json', 'insecurity');
 
+const SUPPRESSED_WORDS = loadSet('emotion_lexicon.json', 'suppressed_words');
+
 // ════════════════════════════════════════════════════════
 // 第二层：辅助函数
 // ════════════════════════════════════════════════════════
@@ -361,7 +363,15 @@ class IntimacyScorer {
 // 第四层：钙质强度计算
 // ════════════════════════════════════════════════════════
 
-function calculateCalcium(p: Perception24D): CalciumResult {
+/** 钙质计算可配置参数 — 支持阈值偏移和分数加成 */
+export interface CalciumConfig {
+  /** 等级阈值偏移（各等级阈值加此值，负值=更敏感） */
+  thresholdOffset?: number;
+  /** 直接钙质分数加成（场景/个性化修正，不改变维度计算） */
+  scoreBonus?: number;
+}
+
+function calculateCalcium(p: Perception24D, config?: CalciumConfig): CalciumResult {
   // M3 自有的钙化公式（含威胁检测）
   // 与 M5 calcLevel（话术等级）解耦：M3 需要威胁检测来路由决策
   // 但输出等级与 M5 语义映射保持一致
@@ -384,12 +394,22 @@ function calculateCalcium(p: Perception24D): CalciumResult {
     (p.aggression > 0.7 || p.safety < 0.2 || p.sexual_attraction > 0.8)
       ? 0.3 : 0.0;
 
-  const score = clamp(baseCore + emotionalBoost + threatBonus, 0, 1);
+  let score = clamp(baseCore + emotionalBoost + threatBonus, 0, 1);
+
+  // P1: 可配置的分数加成（场景/个性化修正）
+  if (config?.scoreBonus) {
+    score = clamp(score + config.scoreBonus, 0, 1);
+  }
+
+  // P1: 可配置的阈值偏移（负值=更敏感）
+  const t0 = 0.3 + (config?.thresholdOffset ?? 0);
+  const t1 = 0.6 + (config?.thresholdOffset ?? 0);
+  const t2 = 0.8 + (config?.thresholdOffset ?? 0);
 
   let level: CalciumLevel;
-  if (score < 0.3) level = 0;       // 粉末
-  else if (score < 0.6) level = 1;  // 液体
-  else if (score < 0.8) level = 2;  // 固体
+  if (score < t0) level = 0;       // 粉末
+  else if (score < t1) level = 1;  // 液体
+  else if (score < t2) level = 2;  // 固体
   else level = 3;                    // 晶体
 
   return {
@@ -421,19 +441,44 @@ function calculateCalcium(p: Perception24D): CalciumResult {
  * 2. 情感着色 (Emotional Coloring): 结合语气词和实体基因
  * 3. 潜意识扫描 (Subconscious Scanning): 代词和隐喻扫描
  *
- * Ref: 24维语义感知与钙质强度定义规范 §第三部分
+ * v1.1 新增: 场景感知调整 — analyze() 从 dna 读取 locus_path 和 scene_tags，
+ * 在 24D 基线值上按场景微调（不改变核心关键词匹配算法）。
+ * P3 新增: 隐性情绪检测 — 当显性正负情感词少但隐忍词命中时，调整感知基线。
+ * Ref: M1 场景标签扩展 P0, M2 情感曲谱改善 P3
  */
 export class PerceptionAnalyzer {
   /**
    * 分析一条 DNA，产出增强型 DNA
+   * 支持传入可选 sceneTags 覆盖 dna.scene_tags（供调试用）
    */
-  analyze(dna: DNA): EnhancedDNA {
+  analyze(dna: DNA, sceneTags?: string[]): EnhancedDNA {
     const text = dna.raw_input;
     const emotion = EmotionScorer.all(text);
     const cognition = CognitionScorer.all(text);
     const social = SocialScorer.all(text);
     const intimacy = IntimacyScorer.all(text);
     const perception: Perception24D = { ...emotion, ...cognition, ...social, ...intimacy };
+
+    // ── 场景感知基线调整（不改变核心算法，仅在基线层修正） ──
+    const tags = sceneTags ?? dna.scene_tags;
+    let calciumConfig: CalciumConfig | undefined;
+    if (tags && tags.length > 0) {
+      calciumConfig = this.applySceneAdjustments(perception, dna.locus_path, tags);
+    }
+
+    // ── P3: 隐性情绪检测 — 显性情感词少但隐忍词命中时，调整基线 ──
+    const suppressedHits = countHits(text, SUPPRESSED_WORDS);
+    if (suppressedHits > 0) {
+      const posHits = countHits(text, POSITIVE_WORDS);
+      const negHits = countHits(text, NEGATIVE_WORDS);
+      // 显性情感词≤2且隐忍词≥1 → 有隐性情绪
+      if (posHits + negHits <= 2) {
+        perception.pleasure = Math.min(perception.pleasure - 0.2, 0);
+        perception.sincerity = Math.min(perception.sincerity + 0.1, 1.0);
+        perception.safety = Math.max(perception.safety - 0.1, 0);
+        console.log(`[隐性情绪] 检测到${suppressedHits}个隐忍词, pleasure下调至${perception.pleasure.toFixed(2)}`);
+      }
+    }
 
     return {
       branch_id: dna.branch_id,
@@ -443,6 +488,7 @@ export class PerceptionAnalyzer {
       perception,
       calcium_score: 0, // 占位 — decide() 中 context 注入后统一计算
       calcium_level: 0,
+      calcium_config: calciumConfig,
     };
   }
 
@@ -452,7 +498,7 @@ export class PerceptionAnalyzer {
   }
 
   /** 直接分析原始文本（快捷方式，仅用于测试/调试） */
-  analyzeText(text: string): EnhancedDNA {
+  analyzeText(text: string, sceneTags?: string[]): EnhancedDNA {
     const mockDNA: DNA = {
       locus_path: 'user.misc.default',
       taxonomy_version: '1.0',
@@ -463,12 +509,76 @@ export class PerceptionAnalyzer {
       entity_genes: [],
       raw_input: text,
       created_at: new Date().toISOString(),
+      scene_tags: sceneTags,
     };
     const enhanced = this.analyze(mockDNA);
     const calcium = calculateCalcium(enhanced.perception);
     enhanced.calcium_score = calcium.score;
     enhanced.calcium_level = calcium.level;
     return enhanced;
+  }
+
+  /**
+   * 场景感知基线调整 — 从 dna.locus_path + scene_tags 微调 24D 基线 + 钙质偏移。
+   *
+   * 不改变核心关键词匹配算法，只在基线值上做场景修正。
+   * P0: 场景标签组合 → 特定维度基线偏移
+   * P1: 场景组合 → 钙质阈值偏移（使重要场景更敏感）
+   *
+   * @returns 钙质配置（阈值偏移 + 分数加成），用于后续钙质重算
+   */
+  private applySceneAdjustments(p: Perception24D, locusPath: string, tags: string[]): CalciumConfig {
+    const tagSet = new Set(tags);
+    let thresholdOffset = 0;
+    let scoreBonus = 0;
+
+    // ── 亲密/浪漫场景 → intimacy/ecstasy 基线上调 ──
+    if (tagSet.has('亲密') || tagSet.has('浪漫')) {
+      p.intimacy = Math.min(p.intimacy + 0.2, 1.0);
+      p.ecstasy = Math.min(p.ecstasy + 0.1, 1.0);
+      thresholdOffset += 0.05; // 稍微降低阈值，感性场景更容易被重视
+    }
+
+    // ── 思念场景 → temporal_focus 偏向过去，intimacy 上调 ──
+    if (tagSet.has('思念')) {
+      p.temporal_focus = Math.min(p.temporal_focus - 0.2, -0.1);
+      p.intimacy = Math.min(p.intimacy + 0.15, 1.0);
+      scoreBonus += 0.05; // 思念类情绪稍微提升权重
+    }
+
+    // ── 健身/运动场景 → arousal 上调 ──
+    if (tagSet.has('健身') || tagSet.has('运动')) {
+      p.arousal = Math.min(p.arousal + 0.1, 1.0);
+    }
+
+    // ── 倦怠/疲惫场景 → dominance/sincerity 下调 ──
+    if (tagSet.has('倦怠') || tagSet.has('疲惫')) {
+      p.dominance = Math.max(p.dominance - 0.15, -0.5);
+      p.arousal = Math.max(p.arousal - 0.1, 0);
+      scoreBonus += 0.05; // 疲惫场景值得更多关注
+    }
+
+    // ── 压抑/倾诉场景 → pleasure 下调，sincerity 上调 ──
+    if (tagSet.has('压抑') || tagSet.has('倾诉')) {
+      p.pleasure = Math.min(p.pleasure - 0.15, 0);
+      p.sincerity = Math.min(p.sincerity + 0.15, 1.0);
+      thresholdOffset += 0.1; // 压抑情绪很容易被低估，大幅降低阈值
+    }
+
+    // ── 工作/开发场景 → factual/certainty 上调 ──
+    if (tagSet.has('开发') || tagSet.has('工作')) {
+      p.factual = Math.min(p.factual + 0.1, 1.0);
+      p.certainty = Math.min(p.certainty + 0.1, 1.0);
+    }
+
+    // ── 家庭矛盾场景 → dominance 下调，negative 加重 ──
+    if (locusPath === 'user.family.conflict') {
+      p.dominance = Math.max(p.dominance - 0.1, -0.5);
+      p.aggression = Math.min(p.aggression + 0.1, 1.0);
+      scoreBonus += 0.1;
+    }
+
+    return { thresholdOffset, scoreBonus };
   }
 
   /**
@@ -529,8 +639,50 @@ export class PerceptionAnalyzer {
     }
   }
 
+  /**
+   * P2: 从 24D 感知向量推导主情绪和次要情绪标签。
+   * 纯规则，基于各维度阈值组合判定。
+   */
+  static deriveEmotionLabels(perception: Perception24D): { primary: string | undefined; secondary: string[] } {
+    const p = perception;
+    const emotions: string[] = [];
+
+    // 检查主要情绪
+    if (p.pleasure < -0.5 && p.arousal < 0.4 && p.intimacy > 0.4) emotions.push('委屈');
+    if (p.pleasure < -0.3 && (p as any).temporal_focus < -0.2 && p.intimacy > 0.3) emotions.push('思念');
+    if (p.pleasure > 0.5 && p.arousal > 0.4) emotions.push('快乐');
+    if (p.pleasure < -0.4 && p.aggression > 0.3) emotions.push('愤怒');
+    if (p.pleasure < -0.3 && p.arousal > 0.5 && p.safety < 0.4) emotions.push('焦虑');
+    if (p.pleasure > 0.3 && p.intimacy > 0.5) emotions.push('爱意');
+    if (p.pleasure < -0.2 && p.arousal < 0.3 && (p as any).energy_merge > 0.3) emotions.push('失落');
+    if (p.pleasure < -0.3 && p.sincerity > 0.5) emotions.push('倾诉');
+    if ((p as any).sexual_attraction > 0.5 && (p as any).ecstasy > 0.3) emotions.push('欲望');
+    if (p.pleasure < -0.2 && p.safety < 0.3) emotions.push('不安');
+    if (p.pleasure > 0.3 && (p as any).ecstasy > 0.3) emotions.push('满足');
+
+    // 去重，只保留最多 3 个
+    const unique = [...new Set(emotions)];
+    return {
+      primary: unique.length > 0 ? unique[0] : undefined,
+      secondary: unique.slice(1),
+    };
+  }
+
+  /**
+   * P2: 估算情绪识别置信度。
+   * 基于文本中匹配的情感词密度。
+   */
+  static estimateConfidence(emotions: string[], textLength: number, rawHits: number): number {
+    if (!textLength) return 0.3; // 无文本兜底
+
+    const hasEmotion = emotions.length > 0 ? 1 : 0;
+    const density = Math.min(rawHits / Math.max(textLength, 1) * 10, 1); // 每10字符命中1词=满信心
+    const base = hasEmotion * 0.4 + density * 0.4 + 0.2; // 0.2 基线
+    return Math.round(Math.min(base, 1) * 100) / 100;
+  }
+
   /** 根据感知向量重新计算钙质强度（在 injectContext 后调用） */
-  static recalculateCalcium(perception: Perception24D): CalciumResult {
-    return calculateCalcium(perception);
+  static recalculateCalcium(perception: Perception24D, config?: CalciumConfig): CalciumResult {
+    return calculateCalcium(perception, config);
   }
 }

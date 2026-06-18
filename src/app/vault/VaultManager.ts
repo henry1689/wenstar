@@ -204,6 +204,16 @@ export function getAlluvialSummary(
  * 钙质≥2 + (recall≥3 或 钙质==3 或 landmark) → 提炼
  */
 export function promoteToBlackDiamond(sqlite: SQLiteAdapter, memoryId: string): BlackDiamondEntry | null {
+  // 去重：检查是否已存在
+  const existing = sqlite.queryAll(
+    `SELECT id FROM black_diamond WHERE source_id = ? LIMIT 1`,
+    [memoryId],
+  );
+  if (existing.length > 0) {
+    console.log(`[Vault] 跳过重复提炼: ${memoryId}`);
+    return null;
+  }
+
   const rows = sqlite.queryAll(
     `SELECT id, raw_input, calcium_level, recall_count, is_landmark, scar_type, narrative_tag
      FROM memories WHERE id = ? LIMIT 1`,

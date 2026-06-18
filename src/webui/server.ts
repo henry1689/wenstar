@@ -462,6 +462,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 全系统拓扑监控台 ──
+    if (req.method === 'GET' && (url.pathname === '/dashboard' || url.pathname === '/dashboard.html')) {
+      const dashPath = path.join(PROJECT_ROOT, 'bionic-cognitive-engine', 'dashboard.html');
+      if (existsSync(dashPath)) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(fs.readFileSync(dashPath, 'utf-8'));
+      } else {
+        res.writeHead(404); res.end('Dashboard not found');
+      }
+      return;
+    }
+
     // ── 聊天 ──
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const body = JSON.parse(await readBody(req));
@@ -615,6 +627,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (req.method === 'GET' && url.pathname === '/api/conversation') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ turns: conversationHistory.slice(-100) }));
+      return;
+    }
+
+    // ── 清除聊天记录（轻量版，仅清对话不关服务） ──
+    if (req.method === 'POST' && url.pathname === '/api/chat/clear') {
+      conversationHistory = [];
+      try { if (existsSync(CONV_LOG_PATH)) fs.writeFileSync(CONV_LOG_PATH, '[]', 'utf-8'); } catch (err) { console.error('[Conv] 清除失败:', err); }
+      flushConversationHistory();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'ok' }));
       return;
     }
 
@@ -1098,7 +1120,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (req.method === 'GET') {
         const limit = parseInt(url.searchParams.get('limit') || '50');
         const keyword = url.searchParams.get('search') || '';
-        const list = keyword ? await knowledgeBase.search(keyword, limit) : knowledgeBase.list(limit);
+        const interactionType = url.searchParams.get("interaction_type") || ""; let list; if (interactionType) { list = knowledgeBase.searchByInteraction(interactionType, limit); } else if (keyword) { list = await knowledgeBase.search(keyword, limit); } else { list = knowledgeBase.list(limit); }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ total: list.length, items: list }));
         return;
@@ -1109,7 +1131,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         const entry = await knowledgeBase.add({
           title: body.title, content: body.content,
           source_type: body.source_type ?? 'text', source_name: body.source_name ?? null,
-          file_size: body.file_size ?? 0, tags: body.tags ?? [],
+          file_size: body.file_size ?? 0, tags: body.tags ?? [], interaction_type: body.interaction_type, scene_tags: body.scene_tags, classification: body.classification, interaction_type: body.interaction_type, scene_tags: body.scene_tags, classification: body.classification,
+	          interaction_type: body.interaction_type,
+	          scene_tags: body.scene_tags,
+	          classification: body.classification,
         });
         res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(entry));

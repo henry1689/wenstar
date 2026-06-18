@@ -116,6 +116,12 @@ ${buildLevelInstruction(level)}
   // 灵肉伴侣五重铁律 — 底层执行规则，全程启用
   prompt += FIVE_PROTOCOLS;
 
+  // ② 段落配比指令：当知识包含 【情绪承接】【核心解答】标记时，按配比生成
+  // 情绪承接内容应占回复的 30% 以上，核心解答占 70% 以下
+  if (knowledge && !knowledge.startsWith('【角色扮演】') && knowledge.includes('【核心解答】')) {
+    prompt += `\n\n📐 内容配比规则：回复中情绪承接（安抚/共情/承接情绪）内容不低于30%，核心知识解答不超过70%。先承接情绪，再解答问题。不要列出"情绪承接"和"核心解答"这些词，自然地融合进回复中。`;
+  }
+
   // 知识库/角色扮演（放在协议之后，让校准指令在最后生效）
   if (knowledge) {
     if (knowledge.startsWith('【角色扮演】')) {

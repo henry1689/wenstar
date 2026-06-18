@@ -22,11 +22,22 @@ export class KnowledgeBase {
     title: string; content: string; source_type?: string;
     source_name?: string; file_size?: number; tags?: string[];
     emotionalContext?: { pleasure: number; arousal: number; intimacy: number };
+    dna_id?: string; scene_tags?: string | string[];
+    interaction_type?: string; emotion_vector?: string;
+    classification?: string;
   }): Promise<KnowledgeItem> { return this.engine.add(params); }
 
   list(limit = 50): KnowledgeItem[] { return this.engine.list(limit); }
 
   getById(id: string): KnowledgeItem | null { return this.engine.getById(id); }
+
+  searchByScene(sceneTags: string[], limit = 5, emotionType?: string): KnowledgeItem[] {
+    return this.engine.searchByScene(sceneTags, limit, emotionType);
+  }
+
+  searchByInteraction(interactionType: string, limit = 10): KnowledgeItem[] {
+    return this.engine.searchByInteraction(interactionType, limit);
+  }
 
   async update(id: string, params: {
     title?: string; content?: string; tags?: string[]; locked?: boolean;
@@ -36,6 +47,15 @@ export class KnowledgeBase {
 
   async search(keyword: string, limit = 10, emotionalContext?: { pleasure: number; arousal: number; intimacy: number }): Promise<KnowledgeItem[]> {
     return this.engine.search(keyword, limit, emotionalContext);
+  }
+
+  async weightedSearch(
+    keyword: string,
+    sceneTags: string[],
+    perception?: { pleasure: number; arousal: number; intimacy: number },
+    limit = 5,
+  ): Promise<Array<KnowledgeItem & { matchScore: number; breakdown: { scene: number; emotion: number; text: number } }>> {
+    return this.engine.weightedSearch(keyword, sceneTags, perception, limit);
   }
 
   count(): number { return this.engine.count(); }

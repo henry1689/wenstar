@@ -65,7 +65,7 @@ const SOCIAL_REVERSE: Record<string, string> = {
   partner_of: 'partner_of', neighbor_of: 'neighbor_of',
   teacher_of: 'student_of', student_of: 'teacher_of',
   doctor_of: 'patient_of', consultant_of: 'client_of',
-  server_of: 'client_of',
+  server_of: 'client_of', acquaintance_of: 'acquaintance_of',
 };
 
 const REVERSE_RELATION: Record<string, string> = {
@@ -543,19 +543,91 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   /**
+   * 🔄 社交→家族升级：当一个人已存在于社交图谱（acquaintance_of 等社交边），
+   * 但当前对话检测到家庭关系（如"熊勇是我表弟"→ 表弟=兄弟）时，
+   * 添加家族边而不删除社交边（同一人可兼具双重身份——既是同事又是亲戚）。
+   *
+   * @param personName 人名
+   * @param familyRelation 家族关系值（如 '兄弟', '配偶', '子女'）
+   * @param context 上下文备注
+   */
+  async promoteSocialToFamily(personName: string, familyRelation: string, context?: string): Promise<void> {
+    const KINSHIP_MAP_INTERNAL: Record<string, string> = {
+      '配偶': 'spouse_of', '恋人': 'spouse_of',
+      '父亲': 'father_of', '母亲': 'mother_of', '儿子': 'child_of', '女儿': 'child_of', '子女': 'child_of',
+      '兄弟': 'sibling_of', '姐妹': 'sibling_of',
+      '祖父': 'grandfather_of', '祖母': 'grandmother_of',
+      '公婆': 'parent_of', '岳父母': 'parent_of',
+    };
+    const relation = KINSHIP_MAP_INTERNAL[familyRelation];
+    if (!relation) return; // 不认识的关系类型，跳过
+
+    // 获取"我"节点
+    const meNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', ['我', 'person']);
+    if (meNodes.length === 0) return;
+    const meId = meNodes[0].id;
+
+    // 查找此人节点
+    const personNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (personNodes.length === 0) {
+      // 人不存在于图谱中 — 创建节点和家族边
+      const pid = uid();
+      await this.addNode({ id: pid, type: 'person', name: personName });
+      await this.addEdge({ id: uid(), source_id: meId, target_id: pid, relation });
+      const reverseRel = REVERSE_RELATION[relation];
+      if (reverseRel && reverseRel !== relation) {
+        await this.addEdge({ id: uid(), source_id: pid, target_id: meId, relation: reverseRel });
+      }
+      console.log(`[FamilyPromote] 新建家族节点: ${personName} (${relation})`);
+      return;
+    }
+
+    const personId = personNodes[0].id;
+
+    // 检查是否已有此家族边
+    const existingFamilyEdge = this.query(
+      'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+      [meId, personId, relation]
+    );
+    if (existingFamilyEdge.length > 0) return; // 已有，无需升级
+
+    // 检查是否已有类似的家族边（任意家族关系类型）
+    const familyRelTypes = new Set(['mother_of', 'father_of', 'spouse_of', 'sibling_of', 'child_of', 'grandfather_of', 'grandmother_of', 'parent_of', 'grandchild_of']);
+    const anyFamily = this.query(
+      'SELECT id, relation FROM edges WHERE source_id = ? AND target_id = ?',
+      [meId, personId]
+    );
+    const hasFamily = anyFamily.some((e: any) => familyRelTypes.has(e.relation));
+    if (hasFamily) return; // 已有家族关系，无需重复
+
+    // 添加家族边（保留社交边）
+    await this.addEdge({ id: uid(), source_id: meId, target_id: personId, relation });
+    const reverseRel = REVERSE_RELATION[relation];
+    if (reverseRel && reverseRel !== relation) {
+      await this.addEdge({ id: uid(), source_id: personId, target_id: meId, relation: reverseRel });
+    }
+    console.log(`[FamilyPromote] 升级: ${personName} 社交→家族 (${relation})`);
+  }
+
+  /**
    * 获取社交关系摘要（与 getFamilySummary 互补，只返回非家庭关系）
    * 同一人若同时有家族边和社交边，在两个摘要中都会出现。
    */
   async getSocialSummary(): Promise<{ connections: Array<{ name: string; relation_to_user: string }> }> {
     const connections: Array<{ name: string; relation_to_user: string }> = [];
+    // 实时查询"我"节点，不依赖缓存的 userNodeId（重启后可能为 null）
+    const meNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', ['我', 'person']);
+    if (meNodes.length === 0) return { connections };
+    const meId = meNodes[0].id;
+
     const nodes = this.query('SELECT * FROM nodes');
-    const socialTypes = new Set(Object.values(SOCIAL_MAP));
+    const socialTypes = new Set([...Object.values(SOCIAL_MAP), 'acquaintance_of']);
 
     for (const node of nodes) {
       if (node.type === 'person' && node.name !== '我') {
         const edges = this.query(
           `SELECT e.relation FROM edges e WHERE (e.source_id = ? AND e.target_id = ?) OR (e.source_id = ? AND e.target_id = ?)`,
-          [node.id, this.userNodeId ?? '', this.userNodeId ?? '', node.id]
+          [node.id, meId, meId, node.id]
         );
         for (const edge of edges) {
           if (socialTypes.has(edge.relation)) {
@@ -575,18 +647,28 @@ export class FamilyGraph implements FamilyGraphInterface {
     const members: FamilySummary['members'] = [];
     const locations = new Set<string>();
 
+    // 实时查询"我"节点，不依赖缓存的 userNodeId
+    const meNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', ['我', 'person']);
+    if (meNodes.length === 0) return { members: [], locations: [] };
+    const meId = meNodes[0].id;
+
+    // 家族关系类型（不包括 acquaintance_of 等社交关系）
+    const familyRels = new Set(['mother_of','father_of','spouse_of','sibling_of','grandfather_of','grandmother_of','child_of','grandchild_of','parent_of']);
+
     const nodes = this.query('SELECT * FROM nodes');
     for (const node of nodes) {
       if (node.type === 'person' && node.name !== '我') {
         // 查找该人与"我"的关系
         const edges = this.query(
           `SELECT e.relation FROM edges e WHERE (e.source_id = ? AND e.target_id = ?) OR (e.source_id = ? AND e.target_id = ?)`,
-          [node.id, this.userNodeId ?? '', this.userNodeId ?? '', node.id]
+          [node.id, meId, meId, node.id]
         );
-        const relationToUser = edges.length > 0 ? edges[0].relation : 'unknown';
+        // 只保留有家族关系边的人（排除纯社交联系人）
+        const familyEdge = edges.find(e => familyRels.has(e.relation));
+        if (!familyEdge) continue;
         members.push({
           name: node.name,
-          relation_to_user: this.describeRelation(relationToUser),
+          relation_to_user: this.describeRelation(familyEdge.relation),
           aliases: JSON.parse(node.aliases ?? '[]'),
         });
       }
@@ -608,7 +690,7 @@ export class FamilyGraph implements FamilyGraphInterface {
       client_of: '客户', friend_of: '朋友', partner_of: '合伙人',
       neighbor_of: '邻居', teacher_of: '老师', student_of: '学生',
       doctor_of: '医生', consultant_of: '顾问',
-      server_of: '服务方',
+      server_of: '服务方', acquaintance_of: '认识的人',
     };
     return map[rel] ?? rel;
   }

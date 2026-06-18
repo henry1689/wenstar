@@ -195,11 +195,17 @@ export class WorkingMemory {
     };
   }
 
-  /** 强制写入所有剩余记录（服务器关闭前调用） */
+  /** 强制写入所有剩余记录（服务器关闭前调用）— 保留毕业逻辑，噪声不写入 */
   async flushAll(): Promise<WriteResult[]> {
     const results: WriteResult[] = [];
+    const dropped: number[] = [];
     for (const entry of this.buffer) {
       try {
+        // 保留毕业逻辑：钙质 0 且无实体 → 噪声，跳过
+        if (!this.shouldGraduate(entry)) {
+          dropped.push(entry.seqPos);
+          continue;
+        }
         entry.dna.seq_pos = entry.seqPos;
         results.push(await this.storage.write(entry.dna, entry.perception));
       } catch (err) {
@@ -209,7 +215,7 @@ export class WorkingMemory {
     }
     this.buffer = [];
     if (results.length > 0) {
-      console.log(`[WM] 强制刷出: ${results.length} 条`);
+      console.log(`[WM] 强制刷出: ${results.length} 条 (丢弃 ${dropped.length} 条噪声)`);
     }
     return results;
   }

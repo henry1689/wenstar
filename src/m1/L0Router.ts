@@ -107,12 +107,18 @@ function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
 }
 
+interface BestMatchResult {
+  rule: KeywordRule;
+  matchedKeywords: string[];
+}
+
 /**
  * 统计匹配的规则，按优先级排序返回最佳匹配
+ * 返回前两名用于 ambiguity 计算
  */
-function findBestMatchingRule(text: string): { rule: KeywordRule; matchedKeywords: string[] } | null {
+function findBestMatchingRule(text: string): { best: BestMatchResult | null; secondBest: BestMatchResult | null } {
   const lowerText = text.toLowerCase();
-  const matched: Array<{ rule: KeywordRule; matchedKeywords: string[] }> = [];
+  const matched: BestMatchResult[] = [];
 
   for (const rule of KEYWORD_RULES) {
     const matchedKws = rule.keywords.filter((kw) => lowerText.includes(kw.toLowerCase()));
@@ -121,7 +127,7 @@ function findBestMatchingRule(text: string): { rule: KeywordRule; matchedKeyword
     }
   }
 
-  if (matched.length === 0) return null;
+  if (matched.length === 0) return { best: null, secondBest: null };
 
   // 按优先级排序（数字越小优先级越高）
   // 相同优先级下，匹配关键词数量越多越优先
@@ -131,7 +137,10 @@ function findBestMatchingRule(text: string): { rule: KeywordRule; matchedKeyword
     return b.matchedKeywords.length - a.matchedKeywords.length;
   });
 
-  return matched[0];
+  return {
+    best: matched[0],
+    secondBest: matched.length > 1 ? matched[1] : null,
+  };
 }
 
 /**
@@ -181,18 +190,35 @@ export function routeL0(
     };
   }
 
-  // 第一阶段：尝试关键词规则匹配
-  const bestMatch = findBestMatchingRule(text);
+  // 第一阶段：尝试关键词规则匹配（含 ambiguity 计算）
+  const { best: bestMatch, secondBest: secondMatch } = findBestMatchingRule(text);
 
   if (bestMatch) {
     const { rule } = bestMatch;
     const locus_path = validatePath(tree, rule.domain, rule.subcategory);
+
+    // 计算 ambiguity_score：仅有多条匹配时才需要计算
+    let ambiguity_score = 0;
+    if (secondMatch) {
+      const priorityGap = secondMatch.rule.priority - rule.priority;
+      if (priorityGap <= 0) {
+        // 同一优先级 → 高模糊
+        ambiguity_score = 0.7 + Math.min(0.3, (1 - secondMatch.matchedKeywords.length / Math.max(1, bestMatch.matchedKeywords.length)) * 0.3);
+      } else if (priorityGap === 1) {
+        // 差1级 → 中模糊
+        ambiguity_score = 0.4;
+      } else {
+        // 差≥2级 → 低模糊
+        ambiguity_score = 0.1;
+      }
+    }
 
     return {
       locus_path,
       taxonomy_version: tree.version,
       rule_id: rule.id,
       is_fallback: locus_path === 'user.misc.default',
+      ambiguity_score,
     };
   }
 

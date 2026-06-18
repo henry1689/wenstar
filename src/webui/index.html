@@ -169,6 +169,10 @@ body{
 }
 #chat::-webkit-scrollbar{width:2px}
 #chat::-webkit-scrollbar-thumb{background:rgba(200,190,210,0.25);border-radius:2px}
+.rh{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(232,160,180,0.04);border-bottom:1px solid var(--bd);flex-shrink:0;font-size:10px;color:var(--ts)}
+.rh span{font-weight:500;letter-spacing:.3px}
+.rh button{background:none;border:none;color:var(--tm);cursor:pointer;padding:2px 5px;border-radius:4px;font-size:11px;transition:all .15s}
+.rh button:hover{background:rgba(232,160,180,0.12);color:var(--rd)}
 .msg{display:flex;margin-bottom:8px;animation:mi .2s ease-out}
 @keyframes mi{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 .msg.u{justify-content:flex-end}
@@ -360,6 +364,7 @@ body{
 
 <!-- ═══ RIGHT: 聊天区 ═══ -->
 <div id="right">
+  <div class="rh"><span>💬 玉瑶</span><button id="ccb" onclick="clearChat()" title="清除聊天记录">🗑️</button></div>
   <div id="chat">
     <div class="wc">
       <div class="ic">🌙</div><h2>文曲星 · 玉 瑶</h2>
@@ -404,6 +409,7 @@ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDef
 snd.addEventListener('click',send);
 refreshTimer=setInterval(loadM68,20000);
 loadM68();
+loadConversation(); // 加载上次的聊天记录
 
 // ── Send ──
 async function send(){
@@ -417,6 +423,10 @@ async function send(){
     if(!r.ok)throw new Error('HTTP '+r.status);
     const d=await r.json();
     addMsg('a',d.reply);tc.textContent=d.turn_count+' 轮';
+	    // 融合度评分展示
+	    var _es=d.emotionMatchScore||d.sceneFitScore?'情'+d.emotionMatchScore+'场'+d.sceneFitScore:'';
+	    var _rf=d.riskFlag?'⚠️'+d.riskFlag:'';
+	    if(_es||_rf){st.textContent=(_es+_rf).substring(0,22);setTimeout(function(){st.textContent='在线'},3000);}
     if(d.audio_url){const ap=new Audio(d.audio_url);ap.volume=0.8;ap.play().catch(e=>console.warn('[Audio] 播放失败:',e));}
     last=d;
     renderM1(d.m1);renderM3(d.m3);renderM4(d.m4);renderM5(d.m5);
@@ -427,7 +437,38 @@ async function send(){
   }finally{busy=false;snd.disabled=false;st.textContent='在线'}
 }
 
-// ── Load M6 M7 M8 ──
+// ── 加载上次聊天记录 ──
+async function loadConversation(){
+  try{
+    const r=await fetch('/api/conversation');
+    if(!r.ok)return;
+    const d=await r.json();
+    const turns=d.turns||[];
+    if(turns.length===0)return;
+    // 欢迎语还在时，移除它
+    const wc=chat.querySelector('.wc');if(wc)wc.remove();
+    for(const t of turns){
+      if(t.role!=='user'&&t.role!=='assistant')continue;
+      addMsg(t.role,t.content||'');
+    }
+    tc.textContent=Math.floor(turns.length/2)+' 轮';
+    // 滚动到底部
+    requestAnimationFrame(()=>chat.scrollTo({top:chat.scrollHeight,behavior:'auto'}));
+  }catch(e){console.warn('[Conv] 加载历史失败:',e)}
+}
+
+// ── 清除聊天记录 ──
+async function clearChat(){
+  if(!confirm('确定清除所有聊天记录？对话记忆仍保存在金库中，但本地聊天历史会清空。'))return;
+  try{
+    const r=await fetch('/api/chat/clear',{method:'POST'});
+    if(!r.ok)throw Error('HTTP '+r.status);
+    chat.innerHTML='<div class="wc"><div class="ic">🌙</div><h2>文曲星 · 玉 瑶</h2><p>聊天记录已清除</p><div style="font-size:8px;color:var(--ts);margin-top:4px">─── ✦ 重新开始吧 ✦ ───</div></div>';
+    tc.textContent='0 轮';
+    toast('✅ 聊天记录已清除');
+  }catch(e){console.error(e);toast('❌ 清除失败');}
+}
+
 async function loadM68(){
   try{
     const r=await fetch('/api/status');

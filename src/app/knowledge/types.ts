@@ -1,3 +1,21 @@
+/** 交互型知识分类 — 按知识的使用场景而非文件类型划分 */
+export const INTERACTION_TYPES = {
+  /** 对话关联：从聊天中提取的个人信息、习惯、偏好 */
+  CONVERSATION: 'conversation',
+  /** 方案沉淀：项目规则、架构决策、技术方案 */
+  SOLUTION: 'solution',
+  /** 个人偏好：爱好、喜好、生活细节 */
+  PREFERENCE: 'preference',
+  /** 用户资料：身份、年龄、家庭关系等基础信息 */
+  PROFILE: 'profile',
+  /** 系统文档：上传的文件、技术文档 */
+  DOCUMENT: 'document',
+  /** 其他 / 未分类 */
+  OTHER: 'other',
+} as const;
+
+export type InteractionType = typeof INTERACTION_TYPES[keyof typeof INTERACTION_TYPES];
+
 /** 知识条目 — 应用层类型定义 */
 export interface KnowledgeItem {
   id: string;
@@ -14,4 +32,13 @@ export interface KnowledgeItem {
   classification?: string;
   /** 是否待分类（标记为true时，玉瑶需要主动询问用途后再激活检索） */
   classification_pending?: boolean;
+
+  /** P0: 关联的 M1 DNA ID（branch_id），绑定触发该知识的对话场景 */
+  dna_id?: string;
+  /** P0: 关联的场景标签（来自 M1 scene_tags），多个逗号分隔 */
+  scene_tags?: string;
+  /** P0: 交互型分类（conversation/solution/preference/profile/document/other） */
+  interaction_type?: InteractionType | string;
+  /** P0: 关联的情感曲谱（24D 感知向量的 JSON 数组，存储关键维度） */
+  emotion_vector?: string;
 }

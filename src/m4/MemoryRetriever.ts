@@ -3,6 +3,7 @@
 
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import type { DNA } from '../m1/types/dna.js';
+import type { Perception24D } from '../m3/types/perception.js';
 import type { MemorySummary } from './types/index.js';
 
 export class MemoryRetriever {
@@ -18,11 +19,12 @@ export class MemoryRetriever {
    * 检索策略（按优先级）：
    * 1. 按 locus_path 话题前缀检索 — 分类树路由匹配
    * 2. 按实体名称 + 原始输入关键词全文搜索 — 真正的内容匹配
+   * 3. 按情感相似度检索（当 entities 包含 emotion 类型时）— 跨场景同情绪记忆串联
    */
   async retrieveMemories(
     locusPath: string,
     entities: Array<{ name: string; type: string }>,
-    options?: { limit?: number }
+    options?: { limit?: number; perception?: Perception24D }
   ): Promise<DNA[]> {
     const limit = options?.limit ?? 5;
 
@@ -73,10 +75,50 @@ export class MemoryRetriever {
       }
     }
 
-    // 3. 合并去重（byKeyword 优先于 byLocus，因为全文匹配更精准）
+    // ─── 3. 情感相似度检索（跨场景同情绪记忆串联） ───
+    //
+    // 当当前输入包含情感类实体（难过/开心/焦虑等），
+    // 且提供了 24D 感知数据时，通过情感向量相似度检索相关历史记忆。
+    // 这实现了"不同话题但相同情绪"的跨场景记忆关联。
+    const hasEmotion = entities.some(e => e.type === 'emotion');
+    const perception = options?.perception;
+    const byEmotion: DNA[] = [];
+    if (hasEmotion && perception) {
+      try {
+        // 使用情感向量相似度检索（按 valence/arousal 等 24 维坐标匹配）
+        const scored = this.storage.findByEmotionalSimilarity({
+          current_perception: perception,
+          entities: entities.filter(e => e.type === 'emotion').map(e => e.name),
+          similarity_mode: 'mood_congruent',
+          limit: 10,
+        });
+        // 转换 ScoredMemory[] → DNA[]
+        for (const sm of scored) {
+          if (sm?.record) {
+            byEmotion.push({
+              branch_id: sm.record.id,
+              locus_path: sm.record.locus_path ?? '',
+              taxonomy_version: '1.0',
+              seq_pos: sm.record.seq_pos ?? 0,
+              leaf_zone: (sm.record as any).leaf_zone ?? 'language_semantic_zone',
+              ref: '',
+              entity_genes: (sm.record as any).entity_genes ?? [],
+              raw_input: sm.record.raw_input ?? '',
+              created_at: sm.record.created_at ?? '',
+              calcium_score: sm.record.calcium_score,
+              calcium_level: sm.record.calcium_level,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[M4] 情感检索失败:', err);
+      }
+    }
+
+    // 4. 合并去重（byEmotion 优先，因为跨场景关联最为相关）
     const seen = new Set<string>();
     const merged: DNA[] = [];
-    for (const dna of [...byKeyword, ...byLocus]) {
+    for (const dna of [...byEmotion, ...byKeyword, ...byLocus]) {
       if (!seen.has(dna.branch_id) && merged.length < limit) {
         seen.add(dna.branch_id);
         merged.push(dna);

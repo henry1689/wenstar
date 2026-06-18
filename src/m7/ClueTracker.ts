@@ -51,7 +51,7 @@ export class ClueTracker {
     for (const log of this.logs) {
       const existing = typeMap.get(log.clue_type) ?? { total: 0, success: 0 };
       existing.total++;
-      if (log.composite_score >= 0.3) existing.success++;
+      if (log.success) existing.success++;
       typeMap.set(log.clue_type, existing);
     }
 

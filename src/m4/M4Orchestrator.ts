@@ -32,8 +32,10 @@ export class M4Orchestrator {
     }));
     const locusPath = decision.enhanced.locus_path;
 
-    // 1. 记忆检索 + 上下文压缩
-    const memories = await this.memoryRetriever.retrieveMemories(locusPath, entities);
+    // 1. 记忆检索 + 上下文压缩（含情感相似度跨场景关联）
+    const memories = await this.memoryRetriever.retrieveMemories(locusPath, entities, {
+      perception: decision.enhanced.perception,
+    });
     const memorySummary = this.memoryRetriever.compressMemories(memories);
 
     // 2. 家族知识图谱自动推断（有副作用：写入 SQLite 边）

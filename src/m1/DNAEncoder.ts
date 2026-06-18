@@ -185,6 +185,57 @@ export class DNAEncoder {
   }
 
   /**
+   * 由 locus_path + entity_genes 派生场景语义标签。
+   * 纯规则，无 LLM。与 taxonomy 版本耦合。
+   */
+  private deriveSceneTags(locusPath: string, entityGenes: Array<{ type: string; name: string }>): string[] {
+    const tags: string[] = [];
+
+    // ── 从 locus_path 推导大类标签 ──
+    const locusMap: Record<string, string[]> = {
+      'user.family.conflict': ['家庭矛盾'],
+      'user.family.care': ['家庭', '关心'],
+      'user.family.general': ['家庭'],
+      'user.emotion.negative': ['负面情绪'],
+      'user.emotion.positive': ['正面情绪'],
+      'user.emotion.neutral': ['情绪'],
+      'user.emotion.suppressed': ['压抑', '倾诉'],
+      'user.emotion.romantic': ['亲密', '浪漫'],
+      'user.emotion.miss_family': ['思念'],
+      'user.work.stress': ['工作', '压力'],
+      'user.work.achievement': ['工作', '成就'],
+      'user.work.project': ['工作', '开发'],
+      'user.work.meeting': ['会议'],
+      'user.work.burnout': ['倦怠', '疲惫'],
+      'user.work.general': ['工作'],
+      'user.daily.creation': ['创作', '艺术'],
+      'user.daily.entertainment': ['娱乐'],
+      'user.daily.general': ['日常'],
+      'user.health.fitness': ['健身', '运动'],
+      'user.health.sickness': ['生病', '健康'],
+      'user.health.sleep': ['睡眠'],
+    };
+
+    const matched = locusMap[locusPath];
+    if (matched) tags.push(...matched);
+
+    // ── 从 entity_genes 补充标签 ──
+    const emotionTagMap: Record<string, string> = {
+      '开心': '快乐', '难过': '悲伤', '生气': '愤怒', '害怕': '恐惧',
+      '焦虑': '焦虑', '累': '疲惫', '爱': '爱意',
+    };
+    for (const g of entityGenes) {
+      if (g.type === 'emotion' && emotionTagMap[g.name]) {
+        if (!tags.includes(emotionTagMap[g.name])) tags.push(emotionTagMap[g.name]);
+      }
+      if (g.type === 'person' && !tags.includes('人际')) tags.push('人际');
+      if (g.type === 'event' && !tags.includes('事件')) tags.push('事件');
+    }
+
+    return tags;
+  }
+
+  /**
    * 核心编码流水线：L0 → L1 → L2 → L3
    */
   private _encodeCombined(utterance: string, context: string): DNA {
@@ -210,6 +261,9 @@ export class DNAEncoder {
       this.selfModel
     );
 
+    // ── 从 L0 结果 + L3 基因派生语义标签 ──
+    const sceneTags = this.deriveSceneTags(l0Result.locus_path, l3Result.entity_genes);
+
     // ── 组装 DNA ──
     const dna: DNA = {
       locus_path: l0Result.locus_path,
@@ -221,6 +275,8 @@ export class DNAEncoder {
       entity_genes: l3Result.entity_genes,
       raw_input: utterance,
       created_at: new Date().toISOString(),
+      scene_tags: sceneTags,
+      ambiguity_score: l0Result.ambiguity_score,
     };
 
     return dna;

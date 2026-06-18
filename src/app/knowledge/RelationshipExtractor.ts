@@ -36,28 +36,32 @@ const SURNAMES = new Set(
   '赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公'
 );
 
-/** 老/小 + 姓 也是常见称呼 */
+/** 判断是否为可识别的人名 */
 function isName(text: string): boolean {
   if (text.length < 2 || text.length > 3) return false;
-  // "老李""小王""张中山"
-  if (text.length === 2 && (text[0] === '老' || text[0] === '小') && SURNAMES.has(text[1])) return true;
+  // "阿X" — 口语称呼（阿珍、阿强、阿花），不要求"阿"在姓氏表中
+  if (text.length === 2 && text[0] === '阿' && /[一-龥]/.test(text[1]) && !TRAILING_STOP.has(text[1])) return true;
+  // "老X" / "小X" — 口语称呼，放宽小X不要求后缀为姓（老李、小王、小芳、小美）
+  if (text.length === 2 && (text[0] === '老' || text[0] === '小') && /[一-龥]/.test(text[1]) && !TRAILING_STOP.has(text[1])) return true;
+  // 姓氏+名（张中山、熊梓铭）— 首字为300常见姓氏
   return SURNAMES.has(text[0]);
 }
 
-/** 检查提取的"名字"是否长词的一部分（防止"车载"误判为姓"车"）*/
+/** 检查提取的"名字"是否长词的一部分（防止"车载"误判为姓"车"）
+ *  🔴 仅检查后字：前字检查导致"另外徐诗雨"的"外"误拦截。
+ *    常见语法词（是/说/和/的等）可跟在人名后，不视为复合词。
+ *    如"熊勇是我的"→"是"跟在人名后→不拦截 ✓
+ *    "车载空气净化器"→"气"跟在"车载空"后→拦截 ✓
+ */
 function isCompoundWordPart(name: string, fullText: string): boolean {
+  const GRAMMAR_WORDS = new Set('是说和的了在也都就来还要会能不很太把被让给对用从向跟与有没做走来看听等呢吗啊吧着过到比');
   const idx = fullText.indexOf(name);
   if (idx < 0) return false;
   const afterIdx = idx + name.length;
-  // 如果名字后面紧跟着汉字，说明是长词的一部分
+  // 只检查后字：如果是中文且不是常见语法词 → 可能是复合词，拦截
   if (afterIdx < fullText.length) {
     const nextChar = fullText[afterIdx];
-    if (/[一-鿿]/.test(nextChar)) return true;
-  }
-  // 如果名字前面有汉字，说明是长词的一部分（排除空格和标点间隔）
-  if (idx > 0) {
-    const prevChar = fullText[idx - 1];
-    if (/[一-鿿]/.test(prevChar)) return true;
+    if (/[一-龥]/.test(nextChar) && !GRAMMAR_WORDS.has(nextChar)) return true;
   }
   return false;
 }

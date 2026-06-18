@@ -63,6 +63,11 @@ import { generateCandidates, type CandidateSet } from '../m5/CandidateSelector.j
 import { bionic } from '../adapter/bionic-adapter.js';
 
 import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.js';
+import { AsyncTaskQueue } from '../app/tools/AsyncTaskQueue.js';
+import { ingestFromConversation } from '../app/ingestion/ConversationIngestionService.js';
+
+// 全局异步任务队列（VAD 谱曲等不阻塞主回复的后台任务）
+const chatTaskQueue = new AsyncTaskQueue({ concurrency: 1, retryCount: 1, autoRemoveCompleted: true });
 
 export interface ChatContext {
 
@@ -102,6 +107,73 @@ export interface ChatContext {
 
   getSelfModel: () => SelfModelV1;
 
+}
+
+/** 仿生智脑降级检索（抽离为独立函数，仅在话题切换时调用）
+ *  ① 外部结果自动绑定当前 scene_tags + 情感标签
+ *  ② 按情绪匹配度过滤（愉悦度冲突时丢弃）
+ *  ③ 记录本地优先日志
+ */
+async function fetchBionicMemories(
+  message: string,
+  isTopicShift: boolean,
+  hasContinuationMarkers: boolean,
+  memoryFragments: string[],
+  enrichedHistory: ConversationTurn[],
+  perception?: { pleasure: number; arousal: number; intimacy: number },
+  sceneTags?: string[],
+): Promise<BionicSearchResult[]> {
+  if (!isTopicShift || hasContinuationMarkers) return [];
+  try {
+    // ③ 本地优先日志
+    const localMatchCount = memoryFragments.length;
+    console.log(`[External] 触发外部检索: 本地匹配数=${localMatchCount}, 原因=场景"${(sceneTags || []).join(',')}"需要补充`);
+
+    const bionicMemories = await bionic.search(message);
+    if (bionicMemories.length === 0) return [];
+
+    // ② 按情绪匹配度过滤：pleasure 冲突时丢弃
+    let filteredMemories = bionicMemories;
+    if (perception && perception.pleasure < -0.3) {
+      // 负面情绪时，只保留情感倾向不明显或匹配的外部知识
+      filteredMemories = bionicMemories.filter(m => {
+        const text = (m.core_facts || m.topic || '').toLowerCase();
+        const harshIndicators = ['数据', '统计', '研究显示', '调查', '报告', '标准', '正常范围'];
+        const hasHarsh = harshIndicators.some(w => text.includes(w));
+        return !hasHarsh; // 负面情绪时过滤掉冰冷数据型内容
+      });
+    }
+
+    // ① 结果打标签（跟随当前上下文）
+    const taggedResults = filteredMemories.map(m => ({
+      ...m,
+      _scene_tags: sceneTags || [],
+      _emotion: perception ? { pleasure: perception.pleasure, arousal: perception.arousal } : null,
+    }));
+
+    if (taggedResults.length > 0 && !memoryFragments.some(f => f.includes(taggedResults[0].core_facts?.substring(0, 40) || ''))) {
+      const text = taggedResults[0].core_facts || taggedResults[0].topic || '';
+
+      // ④ 情感化改写：根据当前情绪给外部知识加适配前缀
+      let externalPrefix = '【外部参考】';
+      if (perception) {
+        if (perception.pleasure < -0.3) {
+          externalPrefix = '【外部参考】这里有一些相关信息，你随便看看就好';
+        } else if (perception.pleasure > 0.3) {
+          externalPrefix = '【外部参考】我还找到一些有意思的资料';
+        } else {
+          externalPrefix = '【外部参考】补充一些相关信息';
+        }
+      }
+      memoryFragments.push(externalPrefix + text.substring(0, 100));
+      enrichedHistory.unshift({ role: 'assistant', content: '📕 【记忆】' + text.substring(0, 100) });
+      console.log(`[External] 已注入外部记忆: ${text.substring(0, 40)}`);
+    }
+    return taggedResults;
+  } catch (err) {
+    console.warn('[BionicSearch] 检索失败:', err);
+    return [];
+  }
 }
 
 export const FALLBACK_REPLIES = [
@@ -159,7 +231,7 @@ export interface ChatResponse {
 
   reply: string; turn_count: number;
 
-  m1: { branch_id: string; locus_path: string; seq_pos: number; leaf_zone: string; ref: string; entities: Array<{ name: string; type: string }>; raw_input: string; entity_genes: any[] };
+  m1: { branch_id: string; locus_path: string; seq_pos: number; leaf_zone: string; ref: string; entities: Array<{ name: string; type: string }>; raw_input: string; entity_genes: any[]; scene_tags?: string[]; ambiguity_score?: number };
 
   m3: { quadrant1: any[]; quadrant2: any[]; quadrant3: any[]; quadrant4: any[]; calcium: { score: number; level: number; label: string; breakdown: any }; actions: string[]; reason: string };
 
@@ -176,6 +248,12 @@ export interface ChatResponse {
   /** 候选回复（用户可选择偏好风格） */
 
   candidates?: any | null;
+
+  /** 回复质量评分 — 轻量自检，不精确但给 M7/前端参考 */
+  emotionMatchScore?: number;
+  sceneFitScore?: number;
+  /** 融合度风险标记：低于阈值时标记问题类型 */
+  riskFlag?: string;
 
 }
 
@@ -574,31 +652,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     } catch (err) { console.warn('[BlackDiamond] 检索失败:', err); }
 
 
-    // ═══════════════════════════════════════════════════════════════
-
-    // 仿生智脑检索（仅话题切换时调用，且不覆盖当前上下文）
-
-    // ═══════════════════════════════════════════════════════════════
-
-    let bionicMemories: BionicSearchResult[] = [];
-
-    try {
-
-      if (isTopicShift && !hasContinuationMarkers) {
-
-        bionicMemories = await bionic.search(message);
-
-        if (bionicMemories.length > 0 && !memoryFragments.some(f => f.includes(bionicMemories[0].core_facts?.substring(0, 40) || ''))) {
-          const text = bionicMemories[0].core_facts || bionicMemories[0].topic || '';
-          memoryFragments.push('【用户曾提到】' + text.substring(0, 100));
-
-          enrichedHistory.unshift({ role: 'assistant', content: inject });
-
-        }
-
-      }
-
-    } catch (err) { console.warn('[BionicSearch] 仿生智脑检索失败:', err); }
+    // 仿生智脑降级检索（话题切换时调用，带缓存+情感过滤+日志）
+    const bionicMemories = await fetchBionicMemories(message, isTopicShift, hasContinuationMarkers, memoryFragments, enrichedHistory, { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, dna.scene_tags);
 
     // 躯体上下文注入（SomaticMemory → LLM 上下文 — 五重铁律协议③）
 
@@ -631,25 +686,54 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         : message;
 
-      const knResults = await ctx.knowledgeBase.search(searchMsg || message, 3, { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy });
+      // P2: 加权检索 — 场景 40% + 情感 30% + 文本 30%
+      // 当场景匹配不足时自动降级为"情感相似场景知识迁移"
+      const sceneTags = dna.scene_tags || [];
+      let knResults = await ctx.knowledgeBase.weightedSearch(
+        searchMsg || message,
+        sceneTags,
+        { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy },
+        5,
+      );
 
       if (knResults.length > 0) {
 
-        // 用户问知识库 → 内容注入 knowledgeBaseText，lover-persona.ts 会检测"我看过"并增强指令
+        // ① 写入 emotion_vector：把当前 24D perception 存到知识的 emotion_vector 字段
+        // 下次 weightedSearch 就能按情感相似度排序了
+        const sqlite = ctx.storage.getSQLite();
+        const perceptionVec = JSON.stringify([p.pleasure, p.arousal, p.dominance, p.aggression, p.sincerity, p.humor, p.factual, p.logical, p.certainty, p.abstract, p.temporal_focus, p.self_ref, p.intimacy, p.power_diff, p.dependency, p.moral_judgment, p.etiquette, p.belonging, p.sexual_attraction, p.sensory_craving, p.energy_merge, p.possessiveness, p.ecstasy, p.safety]);
+        for (const k of knResults) {
+          try {
+            sqlite.writeRaw(`UPDATE knowledge_base SET emotion_vector = ? WHERE id = ?`, perceptionVec, k.id);
+          } catch {}
+          try { sqlite.writeRaw(`INSERT OR IGNORE INTO knowledge_memories (knowledge_id, memory_id, relevance) VALUES (?, ?, ?)`, k.id, dna.branch_id, 0.8); } catch {}
+        }
+
+        // 用户问知识库 → 内容注入 knowledgeBaseText
+
+        // ③ 情绪适配前缀：根据当前情绪给知识加前置修饰
+        let kbPrefix = '';
+        if (p.pleasure < -0.3) {
+          kbPrefix = '【情绪承接】安抚一下他的情绪，再说事\n\n';
+        } else if (p.pleasure > 0.3) {
+          kbPrefix = '';
+        }
+
+        // ② ② 复合情绪注入：让 LLM 知道用户当前的核心情绪和次要情绪
+        let emotionInfo = '';
+        if (decision.primary_emotion || decision.secondary_emotions?.length) {
+          emotionInfo = '【当前情绪】';
+          if (decision.primary_emotion) emotionInfo += `核心情绪: ${decision.primary_emotion}`;
+          if (decision.secondary_emotions?.length) emotionInfo += `，同时伴有: ${decision.secondary_emotions.join('、')}`;
+          emotionInfo += '\n（回复时先承接他的核心情绪，再兼顾附带情绪）\n\n';
+        }
+
+        // 段落标记：核心解答加上明确标签
+        const kbContent = knResults.map(k => `📄 ${k.title}\n${k.content.length > 5000 ? k.content.substring(0, 5000) + '\n…(剩余内容已截断，可在知识库查看完整版)' : k.content}`).join('\n\n');
 
         knowledgeBaseText = (/\b知识库\b|看过/.test(message))
-
-          ? `【知识库条目，我看过】\n` + knResults.map(k => `📄 ${k.title}\n${k.content.substring(0, 1500)}`).join('\n\n') + `\n\n（鸿艺问我有没有看过这些内容。我看过，应该告诉他我记得。）`
-
-          : knResults.map(k => `📄 ${k.title}\n${k.content.length > 5000 ? k.content.substring(0, 5000) + '\n…(剩余内容已截断，可在知识库查看完整版)' : k.content}`).join('\n\n');
-
-        const sqlite = ctx.storage.getSQLite();
-
-        for (const k of knResults) {
-
-          try { sqlite.writeRaw(`INSERT OR IGNORE INTO knowledge_memories (knowledge_id, memory_id, relevance) VALUES (?, ?, ?)`, k.id, dna.branch_id, 0.8); } catch {}
-
-        }
+          ? `【知识库条目，我看过】\n` + kbContent + `\n\n（鸿艺问我有没有看过这些内容。我看过，应该告诉他我记得。）`
+          : emotionInfo + kbPrefix + '【核心解答】\n' + kbContent;
 
       }
 
@@ -1084,9 +1168,10 @@ let finalKnowledgeText = knowledgeBaseText;
 
         }
 
-        // 将记忆碎片合并到 finalKnowledgeText（干净注入，不污染对话历史）
+        // ① 历史场景衔接：将记忆碎片作为【历史关联】注入 finalKnowledgeText
         if (memoryText && !finalKnowledgeText.includes('【相关记忆】')) {
-          finalKnowledgeText = memoryText + (finalKnowledgeText ? '\n\n' + finalKnowledgeText : '');
+          const historyLink = '【历史关联】' + memoryText + '\n（用自然的方式在回复中提及这段过往，不要说"根据历史记录"）';
+          finalKnowledgeText = historyLink + (finalKnowledgeText ? '\n\n' + finalKnowledgeText : '');
         }
         // 家族/社交铁律注入（硬约束 — LLM 不得编造，以 FamilyGraph 记录为准）
         if (familyConstraint) {
@@ -1262,10 +1347,14 @@ let finalKnowledgeText = knowledgeBaseText;
         }
 
         // 同步社交关系到 FamilyGraph（非家庭关系→社交图谱边，与家族图谱互补）
+        // 🔴 之前的问题：filter 只允许 rawRelation 非空且匹配 socialTypeMap 的关系通过，
+        //    但 extractRelations 提取的大部分关系 rawRelation=''（如"和张中山开会"），
+        //    导致所有人都没进人际关系图谱，只进了 knowledge_base 的人物条目。
 
         try {
 
-          const familyWords = new Set(Object.keys(FAMILY_MAP));
+          const familyValues = new Set(['配偶','恋人','父亲','母亲','儿子','女儿','子女','兄弟','姐妹','祖父','祖母','公婆','岳父母']);
+          const familyKeys = new Set(Object.keys(FAMILY_MAP));
 
           const socialTypeMap: Record<string, string> = {
 
@@ -1285,11 +1374,25 @@ let finalKnowledgeText = knowledgeBaseText;
 
           for (const rel of relations) {
 
-            if (rel.rawRelation && !familyWords.has(rel.rawRelation) && socialTypeMap[rel.rawRelation]) {
+            // 跳过家庭关系（由 M4 integrateFromEntity 通过 DNA 实体处理）
+            if (familyValues.has(rel.relation) || familyKeys.has(rel.rawRelation)) {
 
-              await ctx.m4.getFamilyGraph().integrateSocialRelation(rel.personName, socialTypeMap[rel.rawRelation], message);
+              // ── 社交→家族升级：如果此人在 FamilyGraph 中已有社交边，添加家族边 ──
+              try {
+                const graph = ctx.m4.getFamilyGraph();
+                if (graph) {
+                  graph.promoteSocialToFamily(rel.personName, rel.relation, rel.context).catch(() => {});
+                }
+              } catch (e) { /* 升级失败不影响主线 */ }
 
+              continue;
             }
+
+            // 所有非家庭关系 → 进入人际关系图谱
+            // 有明确社交类型（同事/朋友/客户等）则精确映射，否则默认"认识的人"
+            const socialType = (rel.rawRelation && socialTypeMap[rel.rawRelation]) || 'acquaintance_of';
+
+            await ctx.m4.getFamilyGraph().integrateSocialRelation(rel.personName, socialType, message);
 
           }
 
@@ -1337,52 +1440,67 @@ let finalKnowledgeText = knowledgeBaseText;
 
       }
 
-      const proactivePatterns: Array<{ match: RegExp; prefix: string }> = [
+      // [停用] 自动提取聊天信息到知识库（知识库应只用于文件/资料）
+      // 原 proactivePatterns 5 个匹配模式已禁用
+      // 如需手动添加知识，请使用 📚 知识库按钮上传文件
+    } catch (err) { console.warn('[Relations] 关系归档失败:', err); }
 
-        { match: /(?:我最喜欢|我超爱|我特别[喜欢爱]).{4,}/, prefix: '用户偏好' },
-
-        { match: /(?:我讨厌|我不喜欢|我受不了|我恐[惧怕]).{4,}/, prefix: '用户厌恶' },
-
-        { match: /(?:我是[^，。]{2,30}?(?:的|人|工作者|师|生|员|者|狗|猫))/, prefix: '用户标签' },
-
-        { match: /(?:我的[^，。]{2,40}?(?:是|叫|为)).{2,}/, prefix: '用户信息' },
-
-        { match: /(?:我[在住]|我家|我家在|我老家).{4,}/, prefix: '用户地址' },
-
-      ];
-
-      for (const pattern of proactivePatterns) {
-
-        const match = message.match(pattern.match);
-
-        if (match) {
-
-          const content = match[0].trim();
-
-          if (content.length > 4 && content.length < 100) {
-
-            // 去重: 检查标题前缀是否已存在（修复: 之前每次匹配都新增导致"我工作在XX"存3次）
-
-            const existing = await ctx.knowledgeBase.search(content.substring(0, 20), 1);
-
-            if (existing.length === 0 || !existing.some((e: any) => e.title?.includes(pattern.prefix))) {
-
-              await ctx.knowledgeBase.add({ title: `${pattern.prefix}: ${content.substring(0, 20)}`, content, emotionalContext: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, classification: '用户资料' });
-
-              if (!FALLBACK_REPLIES.includes(reply)) reply += `\n\n💡 我已悄悄记住啦～`;
-
+    // ── 全局全文本姓名扫描兜底（捕获 extractRelations 9种句式漏掉的人名，如"熊勇说""跟徐诗雨""阿珍她"） ──
+    // 与上面的 extractRelations 互补：它匹配句式，这个扫全文
+    try {
+      const SURNAMES = new Set('赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公');
+      const nameRegex = /([赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公][一-龥]{1,2}|阿[一-龥]|小[一-龥])/g;
+      const nameMatches = message.match(nameRegex);
+      if (nameMatches) {
+        const sqlite = ctx.storage.getSQLite();
+        const grammarWords = new Set('是说和的了在也都就来还要会能不很太把被让给对用从向跟与有没做走来看听等呢吗啊吧着过到比');
+        // 裁剪末尾语法词： "熊勇是"→"熊勇"，再过滤无效项
+        const uniqueNames = [...new Set(nameMatches)].map(n => {
+          while (n.length > 2 && grammarWords.has(n[n.length - 1])) n = n.slice(0, -1);
+          return n;
+        }).filter(n => n.length >= 2 && n !== '有人' && n !== '某人' && n !== '大家');
+        for (const rawName of uniqueNames) {
+          try {
+            // 过滤长词误匹配（如"车载空气净化器"中的"车载空"）
+            // 规则：名字后跟中文且该字不是常见语法词(是说和的了在也都就还要会能不很太) → 可能是复合词，跳过
+            // "熊勇是我的"→ "是"是语法词→不跳过 ✓ | "车载空气净化器"→ "气"不是语法词→跳过 ✓
+            const idx = message.indexOf(rawName);
+            if (idx >= 0) {
+              const afterIdx = idx + rawName.length;
+              if (afterIdx < message.length) {
+                const nxt = message[afterIdx];
+                if (/[一-龥]/.test(nxt) && !grammarWords.has(nxt)) continue;
+              }
             }
-
-          }
-
-          break;
-
+            // 检查是否已在 entities
+            const existing = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
+            if (existing.length > 0) continue;
+            // 写入 entities + entity_relations
+            sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', rawName, 'person');
+            const newMe = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', ['我', 'self']);
+            const newPerson = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
+            if (newMe.length > 0 && newPerson.length > 0) {
+              sqlite.writeRaw('INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?)',
+                newMe[0].id, newPerson[0].id, '认识的人', 0.3, new Date().toISOString());
+            }
+            // 写入 knowledge_base
+            const kbRows = sqlite.queryAll('SELECT id FROM knowledge_base WHERE title = ?', ['人物: ' + rawName]);
+            if (kbRows.length === 0) {
+              const kid = 'person_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+              sqlite.writeRaw('INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                kid, '人物: ' + rawName, rawName + '：在对话中被提及', 'person',
+                JSON.stringify(['person:' + rawName, 'relation:认识的人']), new Date().toISOString(), new Date().toISOString());
+            }
+            // 同步到社交图谱
+            try {
+              const graph = ctx.m4.getFamilyGraph();
+              if (graph) graph.integrateSocialRelation(rawName, 'acquaintance_of', message).catch(() => {});
+            } catch (g) { /* 图谱同步失败不影响主线 */ }
+            console.log('[GlobalScan] 捕获人名:', rawName);
+          } catch (e) { /* 单条失败不影响后续 */ }
         }
-
       }
-
-    } catch (err) { console.warn('[KBChat] 建档失败:', err); }
-
+    } catch (err) { console.warn('[GlobalScan] 全文扫描兜底失败:', err); }
 
     // M6 自我模型演化
 
@@ -1420,57 +1538,88 @@ let finalKnowledgeText = knowledgeBaseText;
 
     // ═══════════════════════════════════════════════════════════════
 
-    // 异步存储歌单（歌词+曲谱）到仿生智脑
+    // 异步存储歌单（歌词+曲谱）到仿生智脑 — 通过 AsyncTaskQueue 调度
+    // 不阻塞主回复流程，即使用 TaskQueue 失败也不影响聊天
 
     // ═══════════════════════════════════════════════════════════════
 
+    // 预先声明 vadSpectrum（可能在队列完成前就是 null）
     let vadSpectrum: VadSpectrum | null = null;
 
-    (async () => {
-
-      try {
-
-        // 1. 情感谱曲（获取 VAD）
-
-        vadSpectrum = await bionic.composeEmotion(message);
-
-        // 2. 整合歌单 → 存入仿生智脑
-
-        await bionic.storeSongSheet({
-
-          topic: message.substring(0, 50),
-
-          turns: [
-
-            { role: 'user', content: message },
-
-            { role: 'assistant', content: reply },
-
-          ],
-
-          emotion24d: p,
-
-          vad: vadSpectrum,
-
-          userId: 'default_user',
-
-        });
-
-        if (vadSpectrum) console.log('[BionicStore] 歌单已存入（含VAD谱曲）');
-
-        else console.log('[BionicStore] 歌单已存入（纯歌词，待谱曲）');
-
-        // 3. 同步 VAD 谱曲到本地 M2 SQLite（歌单完整性）
-
+    // 用 AsyncTaskQueue 调度 VAD 谱曲 + 歌单存储（完全异步，不 await）
+    if (chatTaskQueue) {
+      chatTaskQueue.enqueue(async () => {
         try {
+          const vs = await bionic.composeEmotion(message);
+          if (!vs) return;
+          vadSpectrum = vs;
+          await bionic.storeSongSheet({
+            topic: message.substring(0, 50),
+            turns: [
+              { role: 'user', content: message },
+              { role: 'assistant', content: reply },
+            ],
+            emotion24d: p,
+            vad: vs,
+            userId: 'default_user',
+          });
+          if (vs) console.log('[BionicStore] 歌单已存入（含VAD谱曲）');
+          else console.log('[BionicStore] 歌单已存入（纯歌词，待谱曲）');
+          try { ctx.storage.updateVadSpectrum(dna.branch_id, vs); } catch (err) { console.warn('[BionicStore] 本地VAD同步失败:', err); }
+        } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
+      }).catch(() => {});
+    } else {
+      // 降级：无队列时的 IIFE（与原来一致）
+      (async () => {
+        try {
+          vadSpectrum = await bionic.composeEmotion(message);
+          await bionic.storeSongSheet({
+            topic: message.substring(0, 50),
+            turns: [
+              { role: 'user', content: message },
+              { role: 'assistant', content: reply },
+            ],
+            emotion24d: p,
+            vad: vadSpectrum,
+            userId: 'default_user',
+          });
+          if (vadSpectrum) console.log('[BionicStore] 歌单已存入（含VAD谱曲）');
+          else console.log('[BionicStore] 歌单已存入（纯歌词，待谱曲）');
+          try { ctx.storage.updateVadSpectrum(dna.branch_id, vadSpectrum); } catch (err) { console.warn('[BionicStore] 本地VAD同步失败:', err); }
+        } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
+      })();
+    }
 
-          ctx.storage.updateVadSpectrum(dna.branch_id, vadSpectrum);
+    // ── 轻量自检：估算回复质量分（不精确，仅供 M7/前端参考） ──
+    let emotionMatchScore = 50;
+    let sceneFitScore = 50;
+    try {
+      if (reply && reply.length > 5) {
+        const replyLower = reply.toLowerCase();
+        if (decision.primary_emotion) {
+          const emoKeywords = { '思念': ['想','念','回','见','梦'], '焦虑': ['担心','别急','没事','放心','慢慢'], '疲惫': ['累','休息','歇','放松','辛苦'], '委屈': ['委屈','难受','心疼','抱','懂'], '愤怒': ['气','消消气','别气','理解'], '快乐': ['开心','高兴','好','棒'], '爱意': ['爱','喜欢','想','宝贝','亲'] };
+          const kws = emoKeywords[decision.primary_emotion];
+          if (kws) { const hits = kws.filter(w => replyLower.includes(w)).length; emotionMatchScore = Math.min(50 + hits * 12, 100); }
+        }
+        if (reply.length > 30 && reply.length < 800) emotionMatchScore += 10;
+      }
+      const tags = dna.scene_tags || [];
+      if (tags.length > 0) {
+        const replyLower = (reply || '').toLowerCase();
+        const matchCount = tags.filter(t => replyLower.includes(t)).length;
+        sceneFitScore = Math.round(50 + (matchCount / tags.length) * 50);
+      }
+    } catch (e) { /* 评分失败不影响主线 */ }
 
-        } catch (err) { console.warn('[BionicStore] 本地VAD同步失败:', err); }
-
-      } catch (err) { console.warn('[BionicStore] 存储失败:', err); }
-
-    })();
+    // 融合度风险标记
+    let riskFlag: string | undefined;
+    if (emotionMatchScore < 40 && sceneFitScore < 40) {
+      riskFlag = 'low_fusion';
+    } else if (emotionMatchScore < 40) {
+      riskFlag = 'low_emotion_match';
+    } else if (sceneFitScore < 40) {
+      riskFlag = 'scene_mismatch';
+    }
 
     const candidates = (globalThis as any).__lastCandidates;
 
@@ -1484,6 +1633,23 @@ let finalKnowledgeText = knowledgeBaseText;
       else reply = '我叫玉瑶呀。';
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // 对话→知识自动沉淀（异步，不阻塞主回复）
+    // ═══════════════════════════════════════════════════════════════
+    // 扫描用户消息中的个人信息、习惯、偏好，自动写入 knowledge_base
+    if (!_isIntro && message.length > 4) {
+      chatTaskQueue.enqueue(async () => {
+        try {
+          await ingestFromConversation(
+            message,
+            ctx.knowledgeBase,
+            dna.scene_tags,
+            { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy },
+            dna.branch_id,
+          );
+        } catch (err) { console.warn('[Ingestion] 异步入库失败:', err); }
+      }).catch(() => {});
+    }
 
     return {
 
@@ -1491,9 +1657,9 @@ let finalKnowledgeText = knowledgeBaseText;
 
       vad_spectrum: vadSpectrum,
 
-      m1: { branch_id: dna.branch_id, locus_path: dna.locus_path, seq_pos: seqPos, leaf_zone: dna.leaf_zone, ref: `seq_${String(seqPos).padStart(6, '0')}`, entities: dna.entity_genes.map(e => ({ name: e.name, type: e.type })), raw_input: dna.raw_input, entity_genes: dna.entity_genes },
+      m1: { branch_id: dna.branch_id, locus_path: dna.locus_path, seq_pos: seqPos, leaf_zone: dna.leaf_zone, ref: `seq_${String(seqPos).padStart(6, '0')}`, entities: dna.entity_genes.map(e => ({ name: e.name, type: e.type })), raw_input: dna.raw_input, entity_genes: dna.entity_genes, scene_tags: dna.scene_tags, ambiguity_score: dna.ambiguity_score },
 
-      m3: { quadrant1: allDims.filter((d: any) => d.q === 1), quadrant2: allDims.filter((d: any) => d.q === 2), quadrant3: allDims.filter((d: any) => d.q === 3), quadrant4: allDims.filter((d: any) => d.q === 4), calcium: { score: Number(decision.enhanced.calcium_score.toFixed(3)), level: cl, label: LEVEL_NAMES[cl] ?? '?', breakdown: { base_core: 0, emotional_boost: 0, threat_bonus: 0 } }, actions: decision.actions, reason: decision.reason },
+      m3: { quadrant1: allDims.filter((d: any) => d.q === 1), quadrant2: allDims.filter((d: any) => d.q === 2), quadrant3: allDims.filter((d: any) => d.q === 3), quadrant4: allDims.filter((d: any) => d.q === 4), calcium: { score: Number(decision.enhanced.calcium_score.toFixed(3)), level: cl, label: LEVEL_NAMES[cl] ?? '?', breakdown: { base_core: 0, emotional_boost: 0, threat_bonus: 0 } }, actions: decision.actions, reason: decision.reason, primary_emotion: decision.primary_emotion, secondary_emotions: decision.secondary_emotions, confidence: decision.confidence },
 
       m4: { timeline: ctx_m4.memory_summary.timeline.map(t => ({ time: t.time, summary: t.summary, calcium_level: t.calcium_level })), total: ctx_m4.memory_summary.timeline.length, family: ctx_m4.family_context?.length ?? 0 },
 
@@ -1505,6 +1671,11 @@ let finalKnowledgeText = knowledgeBaseText;
 
       candidates: candidates || null,
 
+      emotionMatchScore,
+      sceneFitScore,
+
+      riskFlag,
+
     };
 
   } catch (err) {
@@ -1515,7 +1686,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
       reply: FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)], turn_count: Math.floor(ctx.conversationHistory.length / 2),
 
-      m1: { branch_id: '', locus_path: 'error', seq_pos: 0, leaf_zone: '', ref: '', entities: [], raw_input: message, entity_genes: [] },
+      m1: { branch_id: '', locus_path: 'error', seq_pos: 0, leaf_zone: '', ref: '', entities: [], raw_input: message, entity_genes: [], scene_tags: undefined, ambiguity_score: undefined },
 
       m3: { quadrant1: [], quadrant2: [], quadrant3: [], quadrant4: [], calcium: { score: 0, level: 0, label: '?', breakdown: {} }, actions: ['error'], reason: '' },
 

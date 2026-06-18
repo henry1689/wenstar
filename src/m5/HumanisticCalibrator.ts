@@ -33,6 +33,38 @@ function getUniqueFallback(action: M3Action): string {
 }
 
 export class HumanisticCalibrator {
+  /**
+   * 三维融合度检查：校验回复是否同时覆盖了情绪承接和核心解答
+   * @param reply 生成的回复文本
+   * @param knowledgeBase 输入的知识库文本（含【情绪承接】【核心解答】等标记）
+   * @returns { isPass: boolean; reason?: string }
+   */
+  static checkFusion(reply: string, knowledgeBase?: string): { isPass: boolean; reason?: string } {
+    if (!reply || reply.length < 10) return { isPass: false, reason: '回复过短' };
+    if (!knowledgeBase) return { isPass: true }; // 无知识库不校验
+
+    const hasEmotionTag = knowledgeBase.includes('【情绪承接】');
+    const hasAnswerTag = knowledgeBase.includes('【核心解答】');
+    if (!hasEmotionTag && !hasAnswerTag) return { isPass: true }; // 无段落标记不校验
+
+    // 检查回复中是否覆盖了两种内容
+    const replyLower = reply.toLowerCase();
+    const hasEmotion = hasEmotionTag
+      ? /累|辛苦|委屈|难受|心疼|别急|没事|放心|理解|抱|懂|陪|在/.test(replyLower)
+      : true;
+    const hasAnswer = hasAnswerTag
+      ? reply.length > 20 && /是|可以|应该|因为|所以|建议|要|会|能/.test(replyLower)
+      : true;
+
+    if (hasEmotionTag && !hasEmotion) {
+      return { isPass: false, reason: '知识库含情绪承接内容但回复中缺少情绪承接' };
+    }
+    if (hasAnswerTag && !hasAnswer) {
+      return { isPass: false, reason: '知识库含核心解答内容但回复中缺少解答' };
+    }
+    return { isPass: true };
+  }
+
   calibrate(draft: string, cognition: CognitionObject): string {
     // 校验1: 空校验
     if (!draft || draft.trim().length === 0) {

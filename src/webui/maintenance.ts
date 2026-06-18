@@ -277,9 +277,15 @@ export class MaintenanceService {
    * 智能压缩 — 关联 M2 金库检测。
    * 已存入 M2 的记忆标记为"(已存金库)"并保留摘要头，
    * 未存的日常对话直接丢弃（释放空间）。
-   * 未来在此处插入 AQC 质检队列。
+   *
+   * 🔴 人名抢救：压缩前全文本扫描所有用户对话，提取姓+名/阿X/小X
+   *    并写入 entity_relations 表，防止压缩后永久丢失。
+   *    比如"熊勇说""熊梓玥今天""跟徐诗雨""阿珍她"等句式漏掉的人名。
    */
   private async compressTurnsSmart(turns: ConversationTurn[], sqlite: any | null): Promise<ConversationTurn[]> {
+    // ── 人名抢救：压缩前全文本扫描 ──
+    this.rescueNamesBeforeCompression(turns, sqlite);
+
     const result: ConversationTurn[] = [];
     const CHUNK_SIZE = 4;
 
@@ -318,6 +324,98 @@ export class MaintenanceService {
   }
 
   /** 旧版压缩方法已替换为 compressTurnsSmart（保留 `已存金库` 检测） */
+
+  /**
+   * 🔴 人名抢救：在对话压缩前，全文本扫描所有用户轮次，
+   * 提取中文人名（姓+名、阿X、小X）并写入 entity_relations 和 knowledge_base，
+   * 防止压缩后原始对话丢失导致人名永久遗漏。
+   */
+  private rescueNamesBeforeCompression(turns: ConversationTurn[], sqlite: any | null): void {
+    if (!sqlite) return;
+    const now = new Date().toISOString();
+    const SURNAMES_SET = new Set(
+      '赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公'
+    );
+    // 停用字（名字后跟这些字说明不是名字的完整部分）
+    const TRAILING_STOP = new Set('昨今明去来也和就都在这那而已了过');
+
+    function isName(t: string): boolean {
+      if (t.length < 2 || t.length > 3) return false;
+      if (t.length === 2 && t[0] === '阿' && /[一-龥]/.test(t[1]) && !TRAILING_STOP.has(t[1])) return true;
+      if (t.length === 2 && (t[0] === '老' || t[0] === '小') && /[一-龥]/.test(t[1]) && !TRAILING_STOP.has(t[1])) return true;
+      return SURNAMES_SET.has(t[0]);
+    }
+
+    // 是否长词误匹配
+    function isCompoundWord(name: string, text: string): boolean {
+      const GRAMMAR_WORDS = new Set('是说和的了在也都就来还要会能不很太把被让给对用从向跟与有没做走来看听等呢吗啊吧着过到比');
+      const idx = text.indexOf(name);
+      if (idx < 0) return false;
+      // 只检查后字：后跟中文且不是常见语法词 → 可能是复合词，拦截
+      const afterIdx = idx + name.length;
+      if (afterIdx < text.length) { const nxt = text[afterIdx]; if (/[一-龥]/.test(nxt) && !GRAMMAR_WORDS.has(nxt)) return true; }
+      return false;
+    }
+
+    const allText = turns.filter(t => t.role === 'user').map(t => t.content).join('\n');
+    if (!allText.trim()) return;
+
+    // 正则：姓氏+1~2字名 | 阿X | 老X | 小X
+    const nameRegex = /([赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公][一-龥]{1,2}|阿[一-龥]|小[一-龥])/g;
+    const rawMatches = allText.match(nameRegex);
+    if (!rawMatches) return;
+
+    // 裁剪末尾语法词："熊勇是"→"熊勇"
+    const GRAMMAR_WORDS = new Set('是说和的了在也都就来还要会能不很太把被让给对用从向跟与有没做走来看听等呢吗啊吧着过到比');
+    const matches = [...new Set(rawMatches)].map(n => {
+      while (n.length > 2 && GRAMMAR_WORDS.has(n[n.length - 1])) n = n.slice(0, -1);
+      return n;
+    }).filter(n => n.length >= 2);
+
+    const seen = new Set<string>();
+    let rescued = 0;
+    for (const rawName of matches) {
+      if (seen.has(rawName)) continue;
+      seen.add(rawName);
+      if (isCompoundWord(rawName, allText)) continue;
+
+      // 检查是否已存在于 entities
+      try {
+        const existing = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
+        if (existing.length > 0) continue; // 已有记录，跳过
+
+        // 写入 entities
+        sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', rawName, 'person');
+        sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', '我', 'self');
+
+        // 写入 entity_relations
+        const meRows = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', ['我', 'self']);
+        const personRows = sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [rawName, 'person']);
+        if (meRows.length > 0 && personRows.length > 0) {
+          sqlite.writeRaw(
+            'INSERT OR REPLACE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?)',
+            meRows[0].id, personRows[0].id, '认识的人', 0.3, now
+          );
+        }
+
+        // 写入 knowledge_base
+        const kbExisting = sqlite.queryAll('SELECT id FROM knowledge_base WHERE title = ?', [`人物: ${rawName}`]);
+        if (kbExisting.length === 0) {
+          const id = `person_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+          sqlite.writeRaw(
+            'INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            id, `人物: ${rawName}`, `${rawName}：在对话中被提及（压缩抢救）`, 'person',
+            JSON.stringify([`person:${rawName}`, 'relation:认识的人']), now, now
+          );
+        }
+        rescued++;
+        console.log(`[Compaction] 人名抢救: ${rawName}`);
+      } catch (err) {
+        console.warn(`[Compaction] 人名抢救失败 ${rawName}:`, err);
+      }
+    }
+    if (rescued > 0) console.log(`[Compaction] 人名抢救完成: ${rescued} 人`);
+  }
 
   // ─── 存储 GC ───
 

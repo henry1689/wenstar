@@ -62,25 +62,43 @@ export class M3LogicOrchestrator {
    * @returns M3 决策结果
    */
   decide(dna: DNA, context?: M3Context): M3Decision {
-    // Phase 1: 24维感知
-    const enhanced = this.analyzer.analyze(dna);
+    // Phase 1: 24维感知（含场景感知基线调整）
+    const enhanced = this.analyzer.analyze(dna, dna.scene_tags);
 
     // Phase 2: 上下文注入（时间词修正 C5，地点词修正 S6）
     this.analyzer.injectContext(enhanced, context);
 
-    // Phase 3: 钙质重算
-    const calcium = PerceptionAnalyzer.recalculateCalcium(enhanced.perception);
+    // Phase 3: 钙质重算（含场景配置偏移）
+    const calcium = PerceptionAnalyzer.recalculateCalcium(enhanced.perception, enhanced.calcium_config);
     enhanced.calcium_score = calcium.score;
     enhanced.calcium_level = calcium.level;
 
     // Phase 4: 决策路由
     const actions = this.route(enhanced);
 
-    // Phase 5: 构建输出
+    // Phase 5: P2 — 从 24D 向量推导情绪标签 + 置信度
+    const { primary, secondary } = PerceptionAnalyzer.deriveEmotionLabels(enhanced.perception);
+    const rawHits = Math.round(
+      (enhanced.perception.pleasure !== 0 ? 1 : 0) +
+      (enhanced.perception.arousal > 0 ? 1 : 0) +
+      (enhanced.perception.intimacy > 0 ? 1 : 0) +
+      (enhanced.perception.aggression > 0 ? 1 : 0) +
+      (enhanced.perception.sincerity > 0.5 ? 1 : 0) +
+      ((enhanced.perception as any).sexual_attraction > 0 ? 1 : 0) +
+      ((enhanced.perception as any).ecstasy > 0 ? 1 : 0)
+    );
+    const confidence = PerceptionAnalyzer.estimateConfidence(primary ? [primary] : [], dna.raw_input.length, rawHits);
+
+    // Phase 6: 构建输出
     const reason = this.describeActions(actions, enhanced);
     const timestamp = context?.current_time ?? new Date().toISOString();
 
-    return { enhanced, actions, reason, timestamp };
+    return {
+      enhanced, actions, reason, timestamp,
+      primary_emotion: primary,
+      secondary_emotions: secondary.length > 0 ? secondary : undefined,
+      confidence,
+    };
   }
 
   /**

@@ -69,6 +69,80 @@ export class DeepSeekLLMProvider implements LLMProvider {
     this.persona = persona;
   }
 
+  /**
+   * 调用 DeepSeek API（带超时+重试，5s~30s→降级）
+   * 返回 { text, usage } 或抛出错误
+   */
+  private async callDeepSeekApi(messages: DeepSeekMessage[], maxTokens: number, temperature: number, extraParams: { frequency_penalty?: number; presence_penalty?: number } = {}): Promise<{ text: string; usage?: { prompt: number; completion: number } }> {
+    const lastError: string[] = [];
+    const maxRetries = 2;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), attempt === 0 ? 30000 : 45000);
+
+        const response = await fetch(`${BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resolveApiKey() || process.env['DEEPSEEK_API_KEY'] || ''}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: this.model,
+            max_tokens: maxTokens,
+            messages,
+            temperature,
+            top_p: 0.95,
+            frequency_penalty: extraParams.frequency_penalty ?? 0.0,
+            presence_penalty: extraParams.presence_penalty ?? 0.2,
+          }),
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          const errText = await response.text();
+          // 429 = 限流，503 = 临时不可用 — 这两种值得重试
+          const status = response.status;
+          if ((status === 429 || status === 503) && attempt < maxRetries) {
+            const waitMs = (attempt + 1) * 2000;
+            lastError.push(`${status} (尝试 ${attempt + 1}/${maxRetries + 1})`);
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+          }
+          throw new Error(`DeepSeek API ${status}: ${errText.substring(0, 200)}`);
+        }
+
+        const data = (await response.json()) as DeepSeekResponse;
+        const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+        if (!text) throw new Error('Empty response from DeepSeek');
+
+        return {
+          text,
+          usage: data.usage
+            ? { prompt: data.usage.prompt_tokens, completion: data.usage.completion_tokens }
+            : undefined,
+        };
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          lastError.push('Timeout');
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+        }
+        if (attempt < maxRetries) {
+          lastError.push(err.message || String(err));
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw err; // 最后一次尝试失败，向上抛
+      }
+    }
+    throw new Error(`API call failed after ${maxRetries + 1} attempts: ${lastError.join(' -> ')}`);
+  }
+
   async generate(params: {
     strategy: StrategyConfig;
     cognition: CognitionObject;
@@ -85,7 +159,6 @@ export class DeepSeekLLMProvider implements LLMProvider {
     if (kb.startsWith('【角色扮演】')) {
       const rpContent = kb.replace('【角色扮演】', '').trim();
       const messages: DeepSeekMessage[] = [{ role: 'system', content: rpContent }];
-      // 带记忆消息 + 最近历史（但净化"妙玉"等触发词）
       const memoryMsg = history.find(t => t.content?.startsWith('📕 【记忆】'));
       if (memoryMsg) messages.push({ role: 'user', content: memoryMsg.content });
       const sanitize = (t: string) => t.replaceAll('妙玉', '玉儿').replaceAll('宝玉', '宝二爷').replaceAll('红楼逸事', '桃花源记');
@@ -95,19 +168,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
       }
       messages.push({ role: 'user', content: sanitize(rawInput) });
       try {
-        const r = await fetch(`${BASE_URL}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resolveApiKey() || API_KEY}` },
-          body: JSON.stringify({
-            model: this.model, max_tokens: 1500, messages,
-            temperature: 0.95, top_p: 0.9, frequency_penalty: 0.1, presence_penalty: 0.5,
-          }),
-        });
-        if (!r.ok) throw new Error(`DeepSeek API ${r.status}: ${(await r.text()).substring(0,200)}`);
-        const data = (await r.json()) as DeepSeekResponse;
-        const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-        if (!text) throw new Error('Empty');
-        return { text, usage: data.usage ? { prompt: data.usage.prompt_tokens, completion: data.usage.completion_tokens } : undefined };
+        return await this.callDeepSeekApi(messages, 1500, 0.95, { frequency_penalty: 0.1, presence_penalty: 0.5 });
       } catch (err) {
         console.error('[Roleplay]', err instanceof Error ? err.message : err);
         return { text: '…' };
@@ -294,49 +355,29 @@ ${profileText}
     }
     messages.push({ role: 'user', content: userMsgContent });
 
-    // 调用 DeepSeek API
+    // 调用 DeepSeek API（带超时+重试）
+    const maxTokens = Math.max(
+      /讲(个|一)?故事|写(个|一)?小说|写(个|一)?故事/.test(rawInput) ? 1800
+      : /感觉|感受|回忆|分享|记得|印象|那时|那次/.test(rawInput) ? 1500
+      : level >= 2 ? 1200 : 800,
+      spec.wordCountMin,
+    );
+    const temperature = level >= 2 || /感觉|感受|回忆|分享|记得|印象|讲.*故事|写.*小说/.test(rawInput) ? 1.0 : 0.9;
+    const frequencyPenalty = level >= 2 ? 0.0 : 0.3;
+    const presencePenalty = level >= 2 ? 0.2 : 0.4;
+
     try {
-      const response = await fetch(`${BASE_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${resolveApiKey() || API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          max_tokens: Math.max(
-            /讲(个|一)?故事|写(个|一)?小说|写(个|一)?故事/.test(rawInput) ? 1800
-            : /感觉|感受|回忆|分享|记得|印象|那时|那次/.test(rawInput) ? 1500
-            : level >= 2 ? 1200 : 800,
-            spec.wordCountMin, // ExpressionSpec 兜底：确保最少字数
-          ),
-          messages,
-          temperature: level >= 2 || /感觉|感受|回忆|分享|记得|印象|讲.*故事|写.*小说/.test(rawInput) ? 1.0 : 0.9,
-          top_p: 0.95,
-          frequency_penalty: level >= 2 ? 0.0 : 0.3,
-          presence_penalty: level >= 2 ? 0.2 : 0.4,
-        }),
+      return await this.callDeepSeekApi(messages, maxTokens, temperature, {
+        frequency_penalty: frequencyPenalty,
+        presence_penalty: presencePenalty,
       });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`DeepSeek API ${response.status}: ${errText.substring(0, 200)}`);
-      }
-
-      const data = (await response.json()) as DeepSeekResponse;
-      const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-
-      if (!text) throw new Error('Empty response from DeepSeek');
-
-      return {
-        text,
-        usage: data.usage
-          ? { prompt: data.usage.prompt_tokens, completion: data.usage.completion_tokens }
-          : undefined,
-      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[DeepSeekLLMProvider] Error: ${msg}`);
+      if (!process.env['DEEPSEEK_API_KEY'] && !resolveApiKey()) {
+        console.warn('[DeepSeek] 未配置 API Key，使用降级回复');
+      } else {
+        console.error('[DeepSeek] 失败:', msg);
+      }
       return { text: fallbackReply(level) };
     }
   }
