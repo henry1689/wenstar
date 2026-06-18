@@ -13,7 +13,7 @@ import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import type { Perception24D } from '../m3/types/perception.js';
 import type { DNA } from '../m1/types/dna.js';
 import type { WriteResult } from '../m2/types/index.js';
-import { computeCalcium } from '../m2/math.js';
+import { PerceptionAnalyzer } from '../m3/PerceptionAnalyzer.js';
 
 interface WorkingEntry {
   dna: DNA;
@@ -91,7 +91,8 @@ export class WorkingMemory {
    * @param seqPos 由 FusionStorageAdapter.reserveNextSeq() 预分配的位置
    */
   push(dna: DNA, perception: Perception24D, seqPos: number): void {
-    const calcium = computeCalcium(perception);
+    // 使用 M3 钙质公式（与决策路由同源，避免两套标准打架）
+    const calcium = PerceptionAnalyzer.recalculateCalcium(perception);
     const meaningful = dna.entity_genes.some(g =>
       g.type !== 'self' && g.name.length > 0
     );
