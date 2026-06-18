@@ -119,14 +119,20 @@ export class M7Orchestrator {
   // 梦境深化四模块（新增，空闲时执行）
   // ═══════════════════════════════════════════════════════════════
 
-  private _dreamModule1Done = false;
-  private _dreamModule3Done = false;
-  private _dreamModule4Done = false;
+  // 各模块每天只运行一次的日期标记
+  private _lastRunDate: Record<string, string> = {};
+
+  /** 检查模块当天是否已运行 */
+  private alreadyRanToday(moduleKey: string): boolean {
+    const today = new Date().toISOString().substring(0, 10);
+    if (this._lastRunDate[moduleKey] === today) return true;
+    this._lastRunDate[moduleKey] = today;
+    return false;
+  }
 
   /** Module 1: 高情绪事件归纳 + 共情自动提升 */
   private async summarizeHighEmotionMemory(): Promise<void> {
-    if (this._dreamModule1Done) return;
-    this._dreamModule1Done = true;
+    if (this.alreadyRanToday('m1')) return;
     const storage = this._storageRef;
     if (!storage) return;
     try {
@@ -226,8 +232,7 @@ export class M7Orchestrator {
 
   /** Module 3: 用户偏好提取 + 自我模型优化 */
   private async extractUserPrefAndOptimizeSelf(): Promise<void> {
-    if (this._dreamModule3Done) return;
-    this._dreamModule3Done = true;
+    if (this.alreadyRanToday('m3')) return;
     const storage = this._storageRef;
     const m6 = this.m6;
     if (!storage || !m6) return;
@@ -235,9 +240,7 @@ export class M7Orchestrator {
       const sqlite = typeof storage.getSQLite === 'function' ? storage.getSQLite() : null;
       if (!sqlite) return;
 
-      // 扫描砂金库最近对话，提取用户对玉瑶的评价信号
-      const convPath = require('path').join(require('path').dirname(require('url').fileURLToPath(import.meta.url)), '..', '..', 'data', 'webui', 'conversations.json');
-      // 跳过，用 memories 代替
+      // 扫描最近对话，提取用户对玉瑶的评价信号
       const recent = sqlite.queryAll('SELECT id, raw_input, perception_json FROM memories ORDER BY created_at DESC LIMIT 100');
       if (!recent || recent.length === 0) return;
 
@@ -289,8 +292,7 @@ export class M7Orchestrator {
 
   /** Module 4: 重要人物/事件复盘摘要 */
   private async digImportantPersonEvent(): Promise<void> {
-    if (this._dreamModule4Done) return;
-    this._dreamModule4Done = true;
+    if (this.alreadyRanToday('m4')) return;
     const fg = this.familyGraph;
     const kb = this.knowledgeBase;
     const storage = this._storageRef;
