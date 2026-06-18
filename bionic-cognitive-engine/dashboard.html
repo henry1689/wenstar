@@ -278,6 +278,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 <div class="toast" id="tt2"></div>
 
 <script>
+let _lastChat = null;
+// Store last chat response for additional display
+window._storeChat = function(d) { _lastChat = d; };
 const W='http://localhost:3000';let _as=30,_hb=0,_pt=-1;
 const fj=(u,o)=>fetch(u,{headers:{'Accept':'application/json'},...o,signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)throw Error(''+r.status);return r.json()});
 setInterval(()=>{_as--;_as<=0&&(_as=30,ra());document.getElementById('as').textContent=_as},1e3);
@@ -333,14 +336,22 @@ async function rm(){
   catch{document.getElementById('tb').textContent='❌';document.getElementById('tb').style.color='var(--llm)';document.getElementById('tt').textContent='离线';document.getElementById('tt').style.background='rgba(255,123,114,.15)';document.getElementById('tt').style.color='var(--llm)'}
   try{await fetch('http://localhost:7200/api/v1/health',{signal:AbortSignal.timeout(2e3)});document.getElementById('bs').textContent='✅';document.getElementById('bs').style.color='var(--m2)'}
   catch{document.getElementById('bs').textContent='❌';document.getElementById('bs').style.color='var(--llm)'}
-  document.getElementById('ms').textContent=typeof webkitSpeechRecognition!=='undefined'?'⬤':'○'
-  document.getElementById('ss').textContent='轮次'+t+' 钙质'+(h.memory?.decay?.avgStrength||0).toFixed(2)+' 地标'+(h.memory?.landmarks||0);
+  	  document.getElementById('inc').textContent=(h.conversations?.total||0)>0?'⬤':'○';
+	  document.getElementById('inc').style.color='var(--m2)';
+	  document.getElementById('ms').textContent=typeof webkitSpeechRecognition!=='undefined'?'⬤':'○'
+  	  const _q=_lastChat?(' 情感'+(_lastChat.emotionMatchScore||'-')+' 场景'+(_lastChat.sceneFitScore||'-')+(_lastChat.riskFlag?' ⚠️'+_lastChat.riskFlag:'')):'';
+	  var _emo=_lastChat?.m3?.primary_emotion||'';
+	  var _cal='('+((h.memory?.decay?.avgStrength||0).toFixed(2))+')';
+	  const _sceneLabel=_lastChat?.m1?.scene_tags?.length?' 🏷'+_lastChat.m1.scene_tags.length:'';
+	  document.getElementById('m1e').textContent=(h.memory?.entities||0)+(_lastChat?.m1?.scene_tags?.length?' 🏷'+_lastChat.m1.scene_tags.length:'');
+	  if(_emo){document.getElementById('m3c').textContent=_emo+_cal;document.getElementById('m3').querySelector('.s').textContent=_emo;}else{document.getElementById('m3c').textContent=(h.memory?.decay?.avgStrength||0).toFixed(2);}
+	  document.getElementById('ss').textContent='轮次'+t+' 钙质'+(h.memory?.decay?.avgStrength||0).toFixed(2)+' 地标'+(h.memory?.landmarks||0)+_q;
 }
 
 function da(hb){
   const svg=document.getElementById('asvg'),wrap=document.getElementById('tw');if(!svg||!wrap)return;
   svg.setAttribute('width',wrap.offsetWidth);svg.setAttribute('height',wrap.offsetHeight);
-    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','fg','sg','ba','m5','llm','m6','m8','tts','m7','m0','sq','gq','mo','va0','va1','va2'];
+    const ids=['mu','m1','m9','m2','m3','m4','fe','ke','injest','fg','sg','ba','m5','llm','m6','m8','tts','m7','m0','sq','gq','mo','va0','va1','va2'];
   const r={};for(const id of ids){const el=document.getElementById(id);if(!el)continue;const b=el.getBoundingClientRect(),wb=wrap.getBoundingClientRect();
     r[id]={cx:b.left-wb.left+b.width/2,cy:b.top-wb.top+b.height/2,right:b.right-wb.left,left:b.left-wb.left,top:b.top-wb.top,bottom:b.bottom-wb.top}}
   const c=[];
@@ -350,7 +361,9 @@ function da(hb){
   af('m4','fg');af('m4','sg');ar('fg','m4');ar('sg','m4');ar('ke','m4');ar('m6','m5');ar('m8','m5');
 ar('ba','m5');af('mo','ba');
 af('m2','m7');af('m7','m8');af('m7','m6');
-af('va0','va1');af('va1','va2');ar('va0','sq');ar('va1','gq');af('sq','va0');af('gq','va1');ar('va1','m4');ar('va2','m5');
+af('va0','va1');af('va1','va2')
+	  af('m3','ke');af('ke','injest');af('injest','ke');
+	  ar('m3','ke');;ar('va0','sq');ar('va1','gq');af('sq','va0');af('gq','va1');ar('va1','m4');ar('va2','m5');
   svg.innerHTML='';
   for(const x of c){const f=r[x.from],t=r[x.to];if(!f||!t)continue;
     const fwd=x.t===1,cls=fwd?(hb?'fwd-hb':'fwd-s'):(hb?'rev-hb':'rev-s'),ah=fwd?'ah-f':'ah-r';
@@ -380,7 +393,7 @@ async function sc(){
   const i=document.getElementById('ci'),m=i.value.trim();if(!m)return;i.value='';
   const ms=document.getElementById('cm');ms.innerHTML+='<div class="m sf"><div class="lb">你</div><div class="bb">'+esc(m)+'</div></div>';ms.scrollTop=ms.scrollHeight;
   const lid='ld'+Date.now();ms.innerHTML+='<div id="'+lid+'" class="m ot"><div class="lb">⏳</div><div class="bb">...</div></div>';
-  try{const r=await fetch(W+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,tts:false}),signal:AbortSignal.timeout(15e3)});const d=await r.json();document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">🌸</div><div class="bb">'+esc(d.reply||'(空)')+'</div></div>';await ra()}catch{document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">⚠️</div><div class="bb">连接失败</div></div>'}ms.scrollTop=ms.scrollHeight
+  try{const r=await fetch(W+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,tts:false}),signal:AbortSignal.timeout(15e3)});const d=await r.json();document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">🌸</div><div class="bb">'+esc(d.reply||'(空)')+'</div></div>';(window._storeChat(d));await ra()}catch{document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">⚠️</div><div class="bb">连接失败</div></div>'}ms.scrollTop=ms.scrollHeight
 }
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
