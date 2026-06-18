@@ -1513,6 +1513,31 @@ let finalKnowledgeText = knowledgeBaseText;
       }
     } catch (err) { console.warn('[GlobalScan] 全文扫描兜底失败:', err); }
 
+    // ── 用户反馈检测（Module 3: 梦境自我进化的输入信号） ──
+    // 检测用户对玉瑶回复的反馈信号，纯关键词，无 LLM
+    try {
+      if (ctx.m6) {
+        const posSignals = ['真温柔','贴心','懂我','可爱','真好','喜欢你这样','舒服','棒','厉害','满意'];
+        const negSignals = ['生硬','冷淡','啰嗦','不对','别这样','不好','差','太机械','死板','不像你'];
+        const userMsg = message.toLowerCase();
+        for (const sig of posSignals) {
+          if (userMsg.includes(sig)) {
+            const currentDim = ctx.m6.getTraits() ? 'agreeableness' : 'extraversion';
+            ctx.m6.applyConfirmed(currentDim, 'increase', 2);
+            console.log('[Feedback] 用户正向反馈:', sig);
+            break;
+          }
+        }
+        for (const sig of negSignals) {
+          if (userMsg.includes(sig)) {
+            ctx.m6.applyConfirmed('agreeableness', 'decrease', 1);
+            console.log('[Feedback] 用户负向反馈:', sig);
+            break;
+          }
+        }
+      }
+    } catch (err) { console.warn('[Feedback] 检测失败:', err); }
+
     // M6 自我模型演化
 
     try {

@@ -220,7 +220,12 @@ async function initPipeline(): Promise<void> {
 
   // 先创建 M8+M7（使 DreamQueue 可供 CQ/IS 联动注入）
   m8 = new M8FusionAdapter(storage);
-  m7 = new M7Orchestrator(m8);
+  m7 = new M7Orchestrator(m8, {
+    knowledgeBase,
+    familyGraph,
+    topicTracker,
+    storageRef: storage,
+  });
 
   inductionScheduler = new InductionScheduler(storage, m7.queue);
   inductionScheduler.start();
@@ -919,6 +924,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const m7Pending = m7?.queue?.getPending() ?? [];
       const m7All = m7?.queue?.getByStatus?.('confirmed') ?? [];
       const m7Logs = clueTracker?.getLogs() ?? [];
+      // M7: 梦境深化分析状态
+      const dreamDiamondCount = storage.getSQLite().queryAll(
+        `SELECT COUNT(*) as c FROM black_diamond WHERE tags LIKE '%dream_%'`,
+      ) as any[];
+      const dreamTags = storage.getSQLite().queryAll(
+        `SELECT id, summary, emotion_tag FROM black_diamond WHERE tags LIKE '%dream_%' ORDER BY created_at DESC LIMIT 5`,
+      ) as any[];
 
       // M8: 年轮 — 从融合存储的地标视图读取
       const landscape = storage.getEmotionalLandscape();
@@ -940,6 +952,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           interaction_logs: m7Logs.slice(-10),
           total_logs: m7Logs.length,
           research_stats: topicTracker?.getStats?.() ?? { tracked: 0, pendingResearch: 0, researched: 0 },
+          // 梦境深化分析新增
+          dream_analysis: {
+            total_dream_entries: dreamDiamondCount?.[0]?.c ?? 0,
+            recent_entries: (dreamTags ?? []).map((r: any) => ({
+              id: r.id,
+              summary: (r.summary || '').substring(0, 80),
+              emotion: r.emotion_tag || '未分类',
+            })),
+          },
         },
         m8: {
           total_entries: m8Status.landmarks,
