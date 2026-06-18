@@ -210,7 +210,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 
 <!-- 右栏 -->
 <div class="right">
-  <div class="ct"><div class="active">🌸 玉瑶</div></div>
+  <div class="ct"><div class="active">🌸 玉瑶</div><button id="ccb2" onclick="cc()" title="清除聊天记录" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:12px;padding:2px 6px;margin-left:auto">🗑️</button></div>
   <div class="cm" id="cm">
     <div class="m ot"><div class="lb">🌸 玉瑶</div><div class="bb">你好～想聊什么？我在呢。</div></div>
   </div>
@@ -256,7 +256,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-
 </div>
 
 <div id="kbOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300" onclick="closeKB()"></div>
-<div id="kbPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;width:420px;max-height:80vh;z-index:301;display:flex;flex-direction:column">
+<div id="kbPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;width:420px;max-height:80vh;z-index:301;flex-direction:column">
   <div style="font-size:13px;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
     <span>📚 系统知识库</span>
     <input id="kbSearch" placeholder="搜索..." style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11px;width:140px">
@@ -391,11 +391,13 @@ function startMic(){if(!('webkitSpeechRecognition'in window)){showToast('❌ 浏
 
 async function sc(){
   const i=document.getElementById('ci'),m=i.value.trim();if(!m)return;i.value='';
-  const ms=document.getElementById('cm');ms.innerHTML+='<div class="m sf"><div class="lb">你</div><div class="bb">'+esc(m)+'</div></div>';ms.scrollTop=ms.scrollHeight;
+  const ms=document.getElementById('cm');ms.innerHTML+='<div class="m sf"><div class="lb">你</div><div class="bb">'+esc(m)+'</div></div>';ms.scrollTop=ms.scrollHeight;saveChat();
   const lid='ld'+Date.now();ms.innerHTML+='<div id="'+lid+'" class="m ot"><div class="lb">⏳</div><div class="bb">...</div></div>';
-  try{const r=await fetch(W+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,tts:false}),signal:AbortSignal.timeout(15e3)});const d=await r.json();document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">🌸</div><div class="bb">'+esc(d.reply||'(空)')+'</div></div>';(window._storeChat(d));await ra()}catch{document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">⚠️</div><div class="bb">连接失败</div></div>'}ms.scrollTop=ms.scrollHeight
+  try{const r=await fetch(W+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,tts:false}),signal:AbortSignal.timeout(15e3)});const d=await r.json();document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">🌸</div><div class="bb">'+esc(d.reply||'(空)')+'</div></div>';(window._storeChat(d));saveChat();await ra()}catch{document.getElementById(lid)?.remove();ms.innerHTML+='<div class="m ot"><div class="lb">⚠️</div><div class="bb">连接失败</div></div>'}ms.scrollTop=ms.scrollHeight
 }
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function cc(){if(!confirm('确定清除对话记录？'))return;document.getElementById('cm').innerHTML='<div class="m ot"><div class="lb">🌸 玉瑶</div><div class="bb">你好～想聊什么？我在呢。</div></div>';localStorage.removeItem('dash_chat')}
+function saveChat(){var ms=document.getElementById('cm').children;var arr=[];for(var i=0;i<ms.length;i++){var c=ms[i];var r=c.className.includes('sf')?'u':'a';var t=c.querySelector('.bb')?.textContent||'';if(t&&c.className.includes('m'))arr.push({role:r,text:t})}try{localStorage.setItem('dash_chat',JSON.stringify(arr.slice(-100)))}catch{}}
 
 function tj(){const p=document.getElementById('jh');p.classList.toggle('open');p.classList.contains('open')&&document.getElementById('jm').children.length<=1&&jc('汇报三库状态')}
 async function sj(){const i=document.getElementById('ji'),m=i.value.trim();if(!m)return;i.value='';document.getElementById('jm').innerHTML+='<div class="msg sf"><div class="bb">'+esc(m)+'</div></div>';await pj(m)}
@@ -416,6 +418,8 @@ async function svf(){const body={summary:document.getElementById('fs').value,emo
   try{await fj(W+'/api/vault/diamond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});st('✅ 已添加');cf();await ra()}catch(e){st('❌ '+e.message)}}
 function st(t){const e=document.getElementById('tt2');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3e3)}
 
+// 恢复历史对话
+(function(){try{const s=localStorage.getItem('dash_chat');if(!s)return;const ms=JSON.parse(s);if(!ms.length)return;const cm=document.getElementById('cm');cm.innerHTML='';for(const m of ms){const side=m.role==='u'?'sf':'ot';const lb=m.role==='u'?'你':'🌸';cm.innerHTML+='<div class="m '+side+'"><div class="lb">'+lb+'</div><div class="bb">'+esc(m.text)+'</div></div>'}cm.scrollTop=cm.scrollHeight}catch{}})();
 ra();setInterval(()=>{document.getElementById('clk').textContent=new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})},1e3);
 </script>
 </body>

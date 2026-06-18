@@ -1459,8 +1459,13 @@ let finalKnowledgeText = knowledgeBaseText;
           while (n.length > 2 && grammarWords.has(n[n.length - 1])) n = n.slice(0, -1);
           return n;
         }).filter(n => n.length >= 2 && n !== '有人' && n !== '某人' && n !== '大家');
+        // 排除常见非人名词（姓氏+常见词尾的组合）
+        const nonNameSuffix = new Set(['室','服','变','便','天','心','子','学','院','里','种','员','篇','摘','那','衣','呢','块','段','片','次','些','点','面','头','边','者','性','化','机','器','型','号']);
         for (const rawName of uniqueNames) {
           try {
+            // 过滤非人名词："公室"(办公室)、"舒服"(不舒服)、"全长变"→跳过
+            if (rawName.length === 2 && nonNameSuffix.has(rawName[1])) continue;
+            if (rawName.length === 3 && nonNameSuffix.has(rawName[2])) continue;
             // 过滤长词误匹配（如"车载空气净化器"中的"车载空"）
             // 规则：名字后跟中文且该字不是常见语法词(是说和的了在也都就还要会能不很太) → 可能是复合词，跳过
             // "熊勇是我的"→ "是"是语法词→不跳过 ✓ | "车载空气净化器"→ "气"不是语法词→跳过 ✓
