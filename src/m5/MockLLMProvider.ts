@@ -541,9 +541,22 @@ export class MockLLMProvider implements LLMProvider {
     // 优先使用 userMessage（原始用户输入，不经 M1-M4 处理管线）
     // 降级到 raw_input（经 M1 DNA 编码管线的输出）
     const ri = params.userMessage ?? params.cognition.current.raw_input ?? '';
-    const txt = ri + ' ' + ents;
+    let txt = ri + ' ' + ents;
 
-    // ═══════════════════════════════════════════════════════════════
+    
+    // 上下文话题继承：当前输入≤4字或无内容时从conversationHistory取最近用户消息补话题
+    if (txt.trim().length <= 4 || /^(嗯|啊|哦|唔|好|行|是|对|嗯嗯|好啊|好的|行吧|哦哦|嗯哼)$/.test(ri.trim())) {
+      const hist = params.conversationHistory || [];
+      for (let i = hist.length - 1; i >= 0; i--) {
+        const t = hist[i];
+        if (t.role === 'user' && t.content && t.content.length > 4) {
+          txt = t.content + ' ' + ents;
+          break;
+        }
+      }
+    }
+
+// ═══════════════════════════════════════════════════════════════
     // 话题延续性检测 — 用户当前输入决定话题，不是 M3 感知值
     // 即使上一轮感知值很高，用户换话题了就该跟着换
     // ═══════════════════════════════════════════════════════════════

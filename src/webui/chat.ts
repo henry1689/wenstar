@@ -1248,9 +1248,15 @@ let finalKnowledgeText = knowledgeBaseText;
 
     const nowTs = new Date().toISOString();
 
-    ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs });
+    
+    // 话题追踪标记
+    const _topicKw = {'健身':/健[身康]|运动|跑步|深蹲|健身|增肌|减脂/,'工作':/工作|项目|代码|开发|调试|bug|加班|会议|客户|方案/,'情感':/想|爱|思念|难过|开心|快乐|委屈|焦虑|压力|累/,'家庭':/妈|爸|家|家人|父母|亲戚|姐姐|妹妹/,'亲密':/操|干|日|插|高潮|抱|吻|摸|亲热/,'知识':/知识库|看过|知道|记得|查|找资料/,'健康':/生病|感冒|失眠|睡|药|医院|体检/};
+    let _topic = '';
+    for (const [_t,_re] of Object.entries(_topicKw)) { if (_re.test(message)) { _topic = _t; break; } }
 
-    ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs });
+    ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic });
+
+    ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic });
 
     ctx.saveConversationHistory();
 
