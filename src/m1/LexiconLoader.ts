@@ -87,7 +87,7 @@ export function loadEmotionLexicon(): Record<string, Set<string>> {
 export function loadEntityRules(): Array<{ name: string; type: string; patterns: string[] }> {
   if (entityRulesCache !== null) return entityRulesCache;
   try {
-    const path = join(LEXICON_DIR, 'entity_rules.json');
+    const path = join(__dirname, 'config', 'entity_rules.json');
     if (!existsSync(path)) {
       console.warn('[LexiconLoader] entity_rules.json not found, using fallback.');
       entityRulesCache = [];
