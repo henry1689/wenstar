@@ -397,11 +397,15 @@ async function initPipeline(): Promise<void> {
       if (result.scanned > 0) console.log(`[SandQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条`);
     } catch (err) { console.warn('[SandQC] 失败:', err); }
   }, 60 * 60 * 1000);
-  // 金库质检员（每小时扫描 M2）
+  // 金库质检员 + 自动提炼（每小时）
   setInterval(async () => {
     try {
       const result = runGoldQC(storage.getSQLite());
       if (result.scanned > 0) console.log(`[GoldQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条, 拒绝 ${result.rejected} 条`);
+      // 自动提炼：扫描高钙质记忆提升到黑钻（与 GoldQC 互补，门槛不同）
+      const { autoPromoteCandidates } = await import('../app/vault/VaultManager.js');
+      const promoted = autoPromoteCandidates(storage.getSQLite(), 5);
+      if (promoted.length > 0) console.log(`[Vault] 自动提炼: ${promoted.length} 条→黑钻`);
     } catch (err) { console.warn('[GoldQC] 失败:', err); }
   }, 60 * 60 * 1000);
   // 启动后10分钟首次执行
