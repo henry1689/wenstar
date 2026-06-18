@@ -7,6 +7,7 @@ import { PreferenceManager } from './PreferenceManager.js';
 import { BoundaryManager } from './BoundaryManager.js';
 import { NarrativeBuilder } from './NarrativeBuilder.js';
 import type { EvolutionDecision, M6SelfModel, SelfModelTraits, Preference, Boundary, NarrativeLayer, CoreIdentityAnchors } from './types/index.js';
+import type { M8Engine } from '../m8/M8Engine.js';
 
 export interface M6InputSignal {
   dimension: string;
@@ -20,6 +21,7 @@ export interface M6InputSignal {
 }
 
 export class M6Orchestrator {
+  private m8: M8Engine | null = null;
   /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法（getModel/getTraits 等） */
   public manager: SelfModelManager;
   /** @deprecated 直接访问内部引擎破坏封装，请改用编排器代理方法（applyConfirmed 等） */
@@ -41,6 +43,9 @@ export class M6Orchestrator {
 
   // ─── 代理方法（收敛外部访问，替代直接访问内部引擎） ───
 
+  /** 注入 M8 引擎（可选，用于疤痕冲突检查） */
+  setM8(m8: M8Engine): void { this.m8 = m8; }
+
   getModel(): M6SelfModel { return this.manager.getModel(); }
   getTraits(): SelfModelTraits { return this.manager.getTraits(); }
   getPreferences(): Preference[] { return this.manager.getPreferences(); }
@@ -59,6 +64,30 @@ export class M6Orchestrator {
    */
   async processSignal(signal: M6InputSignal): Promise<EvolutionDecision[]> {
     const decisions: EvolutionDecision[] = [];
+
+    // ① M8 疤痕冲突检查（如有 M8 引擎）
+    if (this.m8) {
+      try {
+        const conflict = await this.m8.checkConflict({
+          target: signal.dimension,
+          direction: signal.direction,
+          delta: signal.delta,
+        });
+        if (conflict.hasConflict) {
+          console.warn('[M6] 疤痕冲突: ' + conflict.description + ' → 建议: ' + conflict.suggestion);
+          if (conflict.suggestion === 'block') {
+            console.warn('[M6] 疤痕拦截: ' + signal.dimension + ' 变更被阻止');
+            return [{ applied: false, level: 'blocked', reason: 'blocked_by_scar: ' + conflict.description }];
+          }
+          if (conflict.suggestion === 'soften') {
+            signal.delta = Math.min(signal.delta, 3);
+            console.log('[M6] 疤痕软化: delta 降至 ' + signal.delta);
+          }
+        }
+      } catch (err) {
+        console.warn('[M6] checkConflict 失败:', err);
+      }
+    }
 
     // 第1步：特质演化
     // 先映射到 trait 再存储和计算，否则 buffer 里的原始实体名与 trait 键不匹配

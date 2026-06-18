@@ -240,6 +240,8 @@ async function initPipeline(): Promise<void> {
   m6 = new M6Orchestrator();
   // 延迟注入 M6 到 M7（修复梦境→演化链路）
   if (m7) m7.setM6(m6);
+  // 注入 M8 到 M6（疤痕冲突检查）
+  m6.setM8(m8);
   // M6 周期性维护（15分钟一次）
   if (m6Timer) clearInterval(m6Timer);
   m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000); addTimer(m6Timer);
@@ -763,6 +765,39 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const relations = storage.getEntityRelationSummary();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ count: relations.length, relations }));
+      return;
+    }
+
+    // ── M8: 年轮检索（线索协助式查找地标记忆） ──
+    if (req.method === 'GET' && url.pathname === '/api/rings') {
+      const query = url.searchParams.get('query') || '';
+      const limit = parseInt(url.searchParams.get('limit') || '5', 10);
+      try {
+        const result = await m8.matchByClue({
+          original_query: query, user_clue: query,
+          limit,
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ count: result.entries.length, latency_ms: result.latency_ms, entries: result.entries }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message }));
+      }
+      return;
+    }
+
+    // ── M8: 疤痕列表 ──
+    if (req.method === 'GET' && url.pathname === '/api/scars') {
+      try {
+        const landscape = storage.getEmotionalLandscape();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          total: landscape.scars.length,
+          unhealed: landscape.scars.filter(s => !((s as any).healed)).length,
+          scars: landscape.scars,
+        }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message }));
+      }
       return;
     }
 
@@ -1319,6 +1354,8 @@ async function main(): Promise<void> {
     console.log('  ║                                      ║');
     console.log('  ║   /api/chat   聊天+M1-M5数据         ║');
     console.log('  ║   /api/modules M6-M8全模块数据       ║');
+    console.log('  ║   /api/rings  年轮检索               ║');
+    console.log('  ║   /api/scars 疤痕视图               ║');
     console.log('  ║   /api/reset  重置                  ║');
     console.log('  ║   /api/search 线索检索              ║');
     console.log('  ║   Ctrl+C     退出                   ║');

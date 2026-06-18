@@ -1592,6 +1592,26 @@ let finalKnowledgeText = knowledgeBaseText;
 
         }
 
+        // ① M8 情感共鸣巩固: 高钙事件触发年轮写入
+        if (ctx.m8 && decision.enhanced.calcium_level >= 3) {
+          try {
+            const m8Result = await ctx.m8.write({
+              sensory_anchor: message.substring(0, 30),
+              perception: p,
+              emotional_valence: decision.primary_emotion || '强烈',
+              narrative_tag: dna.locus_path || 'general',
+              raw_input: message,
+              calcium_at_event: decision.enhanced.calcium_score,
+              write_source: 'emergency',
+            });
+            if (m8Result.ritual_phrase) {
+              console.log('[M8] 锚定话术:', m8Result.ritual_phrase);
+            }
+          } catch (err) {
+            console.warn('[M8] 情感共鸣巩固失败:', err);
+          }
+        }
+
       }
 
     } catch (err) { console.warn('[M6Evol] 失败:', err); }
