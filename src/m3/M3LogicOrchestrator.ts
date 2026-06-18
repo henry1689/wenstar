@@ -87,7 +87,7 @@ export class M3LogicOrchestrator {
       ((enhanced.perception as any).sexual_attraction > 0 ? 1 : 0) +
       ((enhanced.perception as any).ecstasy > 0 ? 1 : 0)
     );
-    const emotions = [primary, ...(secondary || [])].filter(Boolean);
+    const emotions: string[] = [primary, ...(secondary || [])].filter((e): e is string => Boolean(e));
     const confidence = PerceptionAnalyzer.estimateConfidence(emotions, dna.raw_input.length, rawHits, enhanced.calcium_score);
 
     // Phase 6: 构建输出

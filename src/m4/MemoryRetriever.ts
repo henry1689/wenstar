@@ -65,7 +65,7 @@ export class MemoryRetriever {
         const _cached = await keywordCache.get(cacheKey);
         if (_cached) { byKeyword.push(..._cached); }
         else {
-        （与 3001 MAX_SAVED_TURNS 对齐，覆盖完整对话上下文）
+        // 与 3001 MAX_SAVED_TURNS 对齐，覆盖完整对话上下文
         // findBySeqPosRange 默认 DESC 排序，ascending 参数不被 QueryOptions 支持
         const recent = await this.storage.findBySeqPosRange(0, 999_999_999, { limit: 200 });
         const seen = new Set<string>();
@@ -77,6 +77,7 @@ export class MemoryRetriever {
               break;
             }
           }
+        }
         }
       } catch (err) {
         console.warn("[M4] 检索失败:", err);
@@ -91,13 +92,13 @@ export class MemoryRetriever {
     // 改后：只要情感强度足够就检索，不依赖 M1 实体提取的准确率
     const hasEmotionType = entities.some(e => e.type === 'emotion');
     const hasMeaningfulEntity = entities.some(e => e.name.length > 0 && e.type !== 'self');
-    const shouldEmotionSearch = perception !== undefined && (hasEmotionType || hasMeaningfulEntity);
+    const shouldEmotionSearch = options?.perception !== undefined && (hasEmotionType || hasMeaningfulEntity);
     const byEmotion: DNA[] = [];
-    if (shouldEmotionSearch && perception) {
+    if (shouldEmotionSearch && options?.perception) {
       try {
         // 使用情感向量相似度检索（按 valence/arousal 等 24 维坐标匹配）
         const scored = this.storage.findByEmotionalSimilarity({
-          current_perception: perception,
+          current_perception: options?.perception!,
           entities: entities.filter(e => e.type === 'emotion').map(e => e.name),
           similarity_mode: 'mood_congruent',
           limit: 10,

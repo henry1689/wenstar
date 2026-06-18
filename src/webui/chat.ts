@@ -233,7 +233,7 @@ export interface ChatResponse {
 
   m1: { branch_id: string; locus_path: string; seq_pos: number; leaf_zone: string; ref: string; entities: Array<{ name: string; type: string }>; raw_input: string; entity_genes: any[]; scene_tags?: string[]; ambiguity_score?: number };
 
-  m3: { quadrant1: any[]; quadrant2: any[]; quadrant3: any[]; quadrant4: any[]; calcium: { score: number; level: number; label: string; breakdown: any }; actions: string[]; reason: string };
+  m3: { quadrant1: any[]; quadrant2: any[]; quadrant3: any[]; quadrant4: any[]; calcium: { score: number; level: number; label: string; breakdown: any }; actions: string[]; reason: string; primary_emotion?: string; secondary_emotions?: string[]; confidence?: number };
 
   m4: { timeline: Array<{ time: string; summary: string; calcium_level?: number }>; total: number; family: number };
 
@@ -1254,9 +1254,9 @@ let finalKnowledgeText = knowledgeBaseText;
     let _topic = '';
     for (const [_t,_re] of Object.entries(_topicKw)) { if (_re.test(message)) { _topic = _t; break; } }
 
-    ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic });
+    ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
 
-    ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic });
+    ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 
     ctx.saveConversationHistory();
 
@@ -1658,7 +1658,7 @@ let finalKnowledgeText = knowledgeBaseText;
         const replyLower = reply.toLowerCase();
         if (decision.primary_emotion) {
           const emoKeywords = { '思念': ['想','念','回','见','梦'], '焦虑': ['担心','别急','没事','放心','慢慢'], '疲惫': ['累','休息','歇','放松','辛苦'], '委屈': ['委屈','难受','心疼','抱','懂'], '愤怒': ['气','消消气','别气','理解'], '快乐': ['开心','高兴','好','棒'], '爱意': ['爱','喜欢','想','宝贝','亲'] };
-          const kws = emoKeywords[decision.primary_emotion];
+          const kws = (emoKeywords as Record<string, string[]>)[decision.primary_emotion];
           if (kws) { const hits = kws.filter(w => replyLower.includes(w)).length; emotionMatchScore = Math.min(50 + hits * 12, 100); }
         }
         if (reply.length > 30 && reply.length < 800) emotionMatchScore += 10;

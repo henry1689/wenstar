@@ -3,6 +3,7 @@
 
 import type { M3Decision } from '../m3/types/perception.js';
 import type { M4Context } from './types/index.js';
+import type { DNA } from "../m1/types/dna.js";
 import type { ScoredMemory } from '../m2/types/index.js';
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import { MemoryRetriever } from './MemoryRetriever.js';
@@ -90,7 +91,7 @@ export class M4Orchestrator {
         avg_match_score: memories.length > 0
           ? Math.round(memories.reduce((s: number, m: DNA) => Math.max(s, m.calcium_score ?? 0), 0) / memories.length * 100) / 100
           : 0,
-        strategies_used: strategyUsed,
+        strategies_used: ["locus", "keyword", "emotion"].filter(s => s !== ""),
       },
     };
   }

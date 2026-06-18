@@ -694,7 +694,7 @@ export class PerceptionAnalyzer {
    * 纯规则，基于各维度阈值组合判定。
    * 注意：所有 a_safeVal 确保 NaN 不会导致规则跳过。
    */
-  static deriveEmotionLabels(perception: Perception24D): { primary: string | undefined; secondary: string[] } {
+  static deriveEmotionLabels(perception: Perception24D): { primary: string | undefined; secondary: string[] | undefined } {
     const p = perception;
     // 数据安全读取（防 NaN）
     const pleasure = safeVal(p.pleasure);
