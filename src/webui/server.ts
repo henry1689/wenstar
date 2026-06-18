@@ -479,26 +479,28 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const body = JSON.parse(await readBody(req));
       if (!body.message || typeof body.message !== 'string') { res.writeHead(400); res.end(JSON.stringify({error:'message required'})); return; }
       const result = await processChat(body.message.trim());
+
+      // TTS 异步生成：先回复，再生成语音，不阻塞聊天
+      const tts = body.tts !== false;
       let audio_url: string | null = null;
-      const tts = body.tts !== false; // 默认开启 TTS
-      if (tts && result.reply && result.reply.length < 500) {
-        try {
-          const ttsRes = await fetch('http://localhost:8765/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: result.reply }),
-            signal: AbortSignal.timeout(30000),
-          });
-          if (ttsRes.ok) {
-            const ttsData = await ttsRes.json() as any;
-            audio_url = ttsData.url || null;
-          }
-        } catch (err) {
-          console.warn('[TTS] 生成失败:', (err as Error).message);
-        }
-      }
+      const reply = result.reply || '';
+
+      // 先回 HTTP 响应（不阻塞），TTS 后台异步生成
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ...result, audio_url }));
+      res.end(JSON.stringify({ ...result, audio_url: null }));
+      if (tts && reply && reply.length < 500 && reply.length > 1) {
+        (async () => {
+          try {
+            const ttsRes = await fetch('http://localhost:8765/tts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: reply }),
+              signal: AbortSignal.timeout(15000),
+            });
+            if (ttsRes.ok) console.log('[TTS] 后台生成完成');
+          } catch { /* TTS 失败不影响聊天 */ }
+        })();
+      }
       return;
     }
 
