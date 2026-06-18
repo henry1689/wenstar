@@ -29,6 +29,7 @@ import type { WorkingMemory } from '../m9/WorkingMemory.js';
 import type { KnowledgeBase } from '../m2/KnowledgeBase.js';
 
 import type { M5ClueAssistant } from '../m5/clue/M5ClueAssistant.js';
+import type { MasterProfileService } from '../app/profile/MasterProfileService.js';
 
 import type { TopicTracker } from '../app/knowledge/TopicTracker.js';
 
@@ -84,6 +85,8 @@ export interface ChatContext {
   m6?: M6Orchestrator;
 
   m7?: M7Orchestrator;
+
+  masterProfile?: MasterProfileService;
 
   workingMemory: WorkingMemory;
 
@@ -540,6 +543,27 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     }
 
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
+
+    // 主人大脑镜像提取：每轮对话后自动提取+审查+存储
+    if (ctx.masterProfile && message.length > 3) {
+      try {
+        const extractResult = await ctx.masterProfile.extract(
+          message,
+          decision.enhanced.calcium_score,
+          undefined // LLM辅助可选，暂不传
+        );
+        if (extractResult.subjective.length > 0 || extractResult.objective.length > 0) {
+          if (ctx.masterProfile.review(message, decision.enhanced.calcium_score, dna.entity_genes.length > 0)) {
+            ctx.masterProfile.store(message, extractResult);
+            if (extractResult.subjective.length > 0 || extractResult.objective.length > 0) {
+              console.log('[Mirror] 记录:', extractResult.subjective.map(s=>s.category).concat(extractResult.objective.map(o=>o.table)).join(','));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Mirror] 提取失败:', (err as Error).message);
+      }
+    }
 
     const p = decision.enhanced.perception;
 
@@ -1275,9 +1299,16 @@ let finalKnowledgeText = knowledgeBaseText;
           const historyLink = '【历史关联】' + memoryText + '\n（用自然的方式在回复中提及这段过往，不要说"根据历史记录"）';
           finalKnowledgeText = historyLink + (finalKnowledgeText ? '\n\n' + finalKnowledgeText : '');
         }
-        // 家族/社交铁律注入（硬约束 — LLM 不得编造，以 FamilyGraph 记录为准）
+        // 家族/社交铁律注入
         if (familyConstraint) {
           finalKnowledgeText = familyConstraint + '\n\n' + finalKnowledgeText;
+        }
+        // 主人大脑镜像注入
+        if (ctx.masterProfile) {
+          const aboutYou = ctx.masterProfile.retrieveAboutYou(5);
+          if (aboutYou) {
+            finalKnowledgeText = aboutYou + finalKnowledgeText;
+          }
         }
 
         // ① M6 人格特质注入 — 让玉瑶的说话风格随人格演化而变

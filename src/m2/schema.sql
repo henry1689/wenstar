@@ -176,3 +176,76 @@ CREATE TABLE IF NOT EXISTS aqc_records (
 
 CREATE INDEX IF NOT EXISTS idx_aqc_status ON aqc_records(status);
 CREATE INDEX IF NOT EXISTS idx_aqc_source ON aqc_records(source_type, status);
+
+-- ═══════════════════════════════════════════════════
+-- 主人大脑镜像 — 主人的完整个人世界
+-- ═══════════════════════════════════════════════════
+
+-- 主观世界：精神/内心/感官/生活/娱乐/健康/学习
+CREATE TABLE IF NOT EXISTS master_profile (
+    id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    subcategory TEXT,
+    content TEXT NOT NULL,
+    source TEXT,
+    confidence REAL DEFAULT 0.5,
+    calcium_score REAL DEFAULT 0,
+    mention_count INTEGER DEFAULT 1,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    tags TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_profile_category ON master_profile(category);
+CREATE INDEX IF NOT EXISTS idx_profile_confidence ON master_profile(confidence DESC);
+
+-- 客观世界：工作/商业/事务
+CREATE TABLE IF NOT EXISTS master_affairs (
+    id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    description TEXT,
+    related_persons TEXT,
+    priority TEXT DEFAULT 'medium',
+    start_date TEXT,
+    end_date TEXT,
+    next_action TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_affairs_status ON master_affairs(status);
+CREATE INDEX IF NOT EXISTS idx_affairs_category ON master_affairs(category);
+
+-- 客观世界：人脉/社交资本
+CREATE TABLE IF NOT EXISTS master_network (
+    id TEXT PRIMARY KEY,
+    person_name TEXT NOT NULL,
+    relation_type TEXT,
+    organization TEXT,
+    role TEXT,
+    context TEXT,
+    importance INTEGER DEFAULT 3,
+    last_contact TEXT,
+    tags TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_network_name ON master_network(person_name);
+CREATE INDEX IF NOT EXISTS idx_network_importance ON master_network(importance DESC);
+
+-- 客观世界：主人人生重要事件
+CREATE TABLE IF NOT EXISTS master_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    date TEXT,
+    emotion_tag TEXT,
+    calcium_score REAL,
+    summary TEXT,
+    related_persons TEXT,
+    impact TEXT DEFAULT 'medium',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_type ON master_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_date ON master_events(date);

@@ -133,6 +133,18 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification TEXT"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification_pending INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
 
+    // 迁移：主人大脑镜像 — 4张表（DDL 中含 IF NOT EXISTS，但不是所有环境都会重跑 DDL）
+    try { this.db.run("SELECT COUNT(*) FROM master_profile"); } catch {
+      // 表不存在 — 重新执行 DDL 创建它
+      try { const fullDdl = readFileSync(SCHEMA_PATH, 'utf-8'); this.db.run(fullDdl); } catch (e2) { console.warn('[SQLite] 主人镜像表迁移失败:', e2); }
+    }
+
+    // 迁移：主人大脑镜像 — 4张表（DDL 中含 IF NOT EXISTS，但不是所有环境都会重跑 DDL）
+    try { this.db.run("SELECT COUNT(*) FROM master_profile"); } catch {
+      // 表不存在 — 重新执行 DDL 创建它
+      try { const fullDdl = readFileSync(SCHEMA_PATH, 'utf-8'); this.db.run(fullDdl); } catch (e2) { console.warn('[SQLite] 主人镜像表迁移失败:', e2); }
+    }
+
     this.ready = true;
     console.log(`[SQLiteAdapter] 初始化完成: ${this.dbPath}`);
   }

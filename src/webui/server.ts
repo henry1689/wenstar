@@ -24,6 +24,7 @@ import { ConsolidationQueue } from '../m7/ConsolidationQueue.js';
 import { M7Orchestrator, startM7Interval } from '../m7/M7Orchestrator.js';
 import busboy from 'busboy';
 import { M8FusionAdapter } from '../m8/M8FusionAdapter.js';
+import { MasterProfileService } from '../app/profile/MasterProfileService.js';
 import { computeCalcium } from '../m2/math.js';
 import { getHitReport } from '../m3/PerceptionAnalyzer.js';
 import { rerank } from '../m4/Reranker.js';
@@ -176,6 +177,7 @@ let m7Timer: ReturnType<typeof setInterval> | null = null;
 let m6Timer: ReturnType<typeof setInterval> | null = null;
 let workingMemory: WorkingMemory;
 let knowledgeBase: KnowledgeBase;
+let masterProfile: MasterProfileService;
 let clueTracker: ClueTracker;
 let llmProvider: DeepSeekLLMProvider;
 let clueAssistant: M5ClueAssistant;
@@ -379,6 +381,9 @@ async function initPipeline(): Promise<void> {
   }, 5 * 60 * 1000); // 5分钟
   console.log('  知识库已启动 ✓');
 
+  masterProfile = new MasterProfileService(storage.getSQLite());
+  console.log('  主人镜像已启动 ✓');
+
   // 注册任务代理工具
   ToolRegistry.register(calendarTool);
   ToolRegistry.register(reminderTool);
@@ -453,6 +458,7 @@ interface ChatResponse {
 async function processChat(message: string): Promise<ChatResponse> {
   return processChatNew(message, {
     encoder, storage, m3, m4, m5, m6, m7,
+    masterProfile,
     workingMemory, knowledgeBase, clueAssistant, llmProvider,
     topicTracker, consolidationQueue,
     conversationHistory, m8, somaticMemory,
@@ -765,6 +771,21 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const relations = storage.getEntityRelationSummary();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ count: relations.length, relations }));
+      return;
+    }
+
+    // ── 主人大脑镜像 API ──
+    if (req.method === 'GET' && url.pathname === '/api/mirror') {
+      const result: Record<string, any> = {};
+      try {
+        result.profile = storage.getSQLite().queryAll('SELECT category, content, confidence FROM master_profile ORDER BY confidence DESC LIMIT 20');
+        result.affairs = storage.getSQLite().queryAll("SELECT title, category, status FROM master_affairs WHERE status != 'abandoned' ORDER BY updated_at DESC LIMIT 10");
+        result.network = storage.getSQLite().queryAll('SELECT person_name, relation_type, organization FROM master_network ORDER BY importance DESC LIMIT 10');
+        result.events = storage.getSQLite().queryAll('SELECT title, event_type, date FROM master_events ORDER BY created_at DESC LIMIT 10');
+        result.about_you = masterProfile.retrieveAboutYou(10);
+      } catch (err) { result.error = (err as Error).message; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
       return;
     }
 
@@ -1362,6 +1383,7 @@ async function main(): Promise<void> {
     console.log(`  ║   http://localhost:${PORT}               ║`);
     console.log('  ║                                      ║');
     console.log('  ║   /api/chat   聊天+M1-M5数据         ║');
+    console.log('  ║   /api/mirror 主人镜像               ║');
     console.log('  ║   /api/modules M6-M8全模块数据       ║');
     console.log('  ║   /api/rings  年轮检索               ║');
     console.log('  ║   /api/scars 疤痕视图               ║');
