@@ -65,6 +65,18 @@ const DB_PATH = path.join(DATA_DIR, 'knowledge', 'family_graph.db');
 const HTML_PATH = path.join(__dirname, 'index.html');
 const CONV_LOG_PATH = path.join(DATA_DIR, 'conversations.json');
 const PORT = parseInt(process.env.PORT || '3000', 10);
+const TTS_URL = process.env.TTS_URL || 'http://localhost:8765';
+
+/** 统一错误输出 */
+function writeErr(res, code, msg) {
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify({ error: msg }));
+}
+
+/** 定时器统一管理 */
+const _timers = [];
+function addTimer(t) { _timers.push(t); return t; }
+function clearAllTimers() { for (const t of _timers) { try { clearInterval(t); clearTimeout(t); } catch {} } _timers.length = 0; }
 
 // M6 自我模型（延迟初始化，在 initPipeline 中赋值）
 let m6: M6Orchestrator;
@@ -173,6 +185,10 @@ let somaticMemory: SomaticMemory;
 let taskAgent: TaskAgentEngine;
 let memoryVault: MemoryVault;
 async function initPipeline(): Promise<void> {
+  for (const d of [DATA_DIR, path.join(DATA_DIR, 'uploads'), path.join(DATA_DIR, 'audio')]) {
+    if (!existsSync(d)) mkdirSync(d, { recursive: true });
+    try { fs.accessSync(d, fs.constants.W_OK); } catch { console.warn('[Server] 目录不可写:', d); }
+  }
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
   encoder = new DNAEncoder(getSelfModel());
   storage = new FusionStorageAdapter(DATA_DIR);
@@ -221,7 +237,7 @@ async function initPipeline(): Promise<void> {
   if (m7) m7.setM6(m6);
   // M6 周期性维护（15分钟一次）
   if (m6Timer) clearInterval(m6Timer);
-  m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000);
+  m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000); addTimer(m6Timer);
   console.log('  自我模型已启动 ✓');
 
   // 记忆仓每日备份（启动后5分钟首次执行）
@@ -491,7 +507,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (tts && reply && reply.length < 500 && reply.length > 1) {
         (async () => {
           try {
-            const ttsRes = await fetch('http://localhost:8765/tts', {
+            const ttsRes = await fetch(TTS_URL + '/tts', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ text: reply }),
