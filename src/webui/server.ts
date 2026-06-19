@@ -778,6 +778,52 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 金库记忆管理 API ──
+    if (req.method === 'GET' && url.pathname === '/api/memory/stats') {
+      const stats = storage.getSQLite().getGoldStats();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(stats));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/memory/') && url.pathname !== '/api/memory/stats' && !url.pathname.startsWith('/api/memory/emotion/') && !url.pathname.startsWith('/api/memory/search')) {
+      const id = decodeURIComponent(url.pathname.substring('/api/memory/'.length));
+      const mem = storage.getSQLite().getMemoryById(id);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(mem || { error: 'not found' }));
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/lock') {
+      try { const body = JSON.parse(await readBody(req)); const r = storage.getSQLite().lockMemory(body.id); res.writeHead(200); res.end(JSON.stringify({ ok: r })); }
+      catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/tag') {
+      try { const body = JSON.parse(await readBody(req)); const r = storage.getSQLite().tagMemory(body.id, body.tag); res.writeHead(200); res.end(JSON.stringify({ ok: r })); }
+      catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/memory/')) {
+      const id = decodeURIComponent(url.pathname.substring('/api/memory/'.length));
+      const r = storage.getSQLite().deleteMemory(id);
+      res.writeHead(200); res.end(JSON.stringify({ ok: r }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/memory/emotion/')) {
+      const emotion = decodeURIComponent(url.pathname.substring('/api/memory/emotion/'.length));
+      const mems = storage.getSQLite().findByEmotion(emotion, 20);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ count: mems.length, memories: mems }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory/search') {
+      const keyword = url.searchParams.get('q') || '';
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '10', 10), 100);
+      const mems = storage.getSQLite().queryAll('SELECT id, raw_input, primary_emotion, calcium_score, calcium_level, effective_strength, created_at FROM memories WHERE raw_input LIKE ? ORDER BY created_at DESC LIMIT ?', ['%' + keyword + '%', limit]);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ count: mems.length, memories: mems }));
+      return;
+    }
+
     // ── M8: 年轮检索（线索协助式查找地标记忆） ──
     if (req.method === 'GET' && url.pathname === '/api/rings') {
       const query = url.searchParams.get('query') || '';
@@ -1372,6 +1418,7 @@ async function main(): Promise<void> {
     console.log(`  ║   http://localhost:${PORT}               ║`);
     console.log('  ║                                      ║');
     console.log('  ║   /api/chat   聊天+M1-M5数据         ║');
+    console.log('  ║   /api/memory 金库记忆管理            ║');
     console.log('  ║   /api/mirror 主人镜像               ║');
     console.log('  ║   /api/modules M6-M8全模块数据       ║');
     console.log('  ║   /api/rings  年轮检索               ║');

@@ -100,7 +100,7 @@ export class WorkingMemory {
       g.type !== 'self' && g.name.length > 0
     );
 
-    this.buffer.push({
+    const entry: WorkingEntry = {
       dna,
       perception,
       calciumScore: calcium.score,
@@ -109,7 +109,22 @@ export class WorkingMemory {
       cycleCount: 0,
       hasMeaningfulEntity: meaningful,
       createdAt: Date.now(),
-    });
+    };
+
+    // P4(简化): 毕业即写入 — 符合条件的直接进金库，不入buffer
+    const tier = this.shouldGraduate(entry);
+    if (tier === 'full') {
+      entry.dna.seq_pos = entry.seqPos;
+      this.storage.write(entry.dna, entry.perception, primaryEmotion, secondaryEmotions).then(() => {
+        console.log('[WM] 即时毕业');
+      }).catch((err) => {
+        console.warn('[WM] 即时毕业失败，入buffer:', err);
+      });
+    } else if (tier === 'light') {
+      this.writeLightEntry(entry).catch((e) => { console.warn('[WM] 轻量失败:', e); });
+    } else {
+      this.buffer.push(entry);
+    }
 
     // 超过阈值时触发巩固（通过 consolidateSafe 避免并发重叠）
     if (this.buffer.length >= this.maxSize) {
@@ -122,9 +137,15 @@ export class WorkingMemory {
   // 毕业规则：砂金库(conversations.json)已有全部原始对话
   // 合格(钙质≥1+实体)→进金库；不合格→丢弃
 
-  /** 唯一毕业条件：钙质≥1 且 含有效实体 */
-  private shouldGraduate(entry: WorkingEntry): boolean {
-    return entry.calciumLevel >= 1 && entry.hasMeaningfulEntity;
+  /** P0: 三级毕业策略
+   *  full: 钙质≥1+有实体 → 完整24D写入金库
+   *  light: 钙质≥0.5+有实体 → 轻量写入
+   *  false: 留在砂金库 */
+  private shouldGraduate(entry: WorkingEntry): 'full' | 'light' | false {
+    if (!entry.hasMeaningfulEntity) return false;
+    if (entry.calciumLevel >= 1) return 'full';
+    if (entry.calciumScore >= 0.5) return 'light';
+    return false;
   }
 
   async consolidate(): Promise<WriteResult[]> {
@@ -132,9 +153,13 @@ export class WorkingMemory {
     const snapshot: WorkingEntry[] = [...this.buffer];
     snapshot.sort((a, b) => a.createdAt - b.createdAt);
     for (const entry of snapshot) {
-      if (this.shouldGraduate(entry)) {
+      const tier = this.shouldGraduate(entry);
+      if (tier === 'full') {
         const result = await this.writeEntry(entry);
         results.push(result);
+      } else if (tier === 'light') {
+        const result = await this.writeLightEntry(entry);
+        if (result) results.push(result);
       }
     }
     this.buffer = [];
@@ -143,6 +168,34 @@ export class WorkingMemory {
     }
     return results;
   }
+  /** P0: 轻量毕业 — 只存 raw_input + seqPos，不写 24D 感知 */
+  private async writeLightEntry(entry: WorkingEntry): Promise<WriteResult | null> {
+    try {
+      const sqlite = typeof (this.storage as any).getSQLite === 'function' ? (this.storage as any).getSQLite() : null;
+      if (!sqlite) return null;
+      const now = new Date().toISOString();
+      const entities = entry.dna.entity_genes;
+      const entityNames = entities.filter((g: any) => g.type !== 'self').map((g: any) => g.name);
+      // 轻量写入 memories 表（钙质按比例降级）
+      sqlite.writeRaw(
+        'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'light_' + entry.dna.branch_id, entry.seqPos, now,
+        JSON.stringify(Array(24).fill(0.01)), entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
+        entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
+        entry.dna.raw_input, 0.3, now, '中性'
+      );
+      sqlite.insertConversation('user', entry.dna.raw_input, {
+        seqPos: entry.seqPos, entityNames,
+        calciumScore: entry.calciumScore,
+      });
+      console.log('[WM] 轻量毕业: ' + entry.dna.raw_input.substring(0, 30));
+      return { success: true, real_ref: 'light_' + entry.seqPos, seq_pos: entry.seqPos };
+    } catch (err) {
+      console.warn('[WM] 轻量写入失败:', err);
+      return null;
+    }
+  }
+
   /** 写入一条记录到 M2，使用预分配的 seqPos */
   private async writeEntry(entry: WorkingEntry): Promise<WriteResult> {
     // 在 DNA 中设入预分配的 seq_pos，FusionStorageAdapter.write() 会读取它
@@ -152,7 +205,7 @@ export class WorkingMemory {
 
   /** 获取缓冲状态 */
   getStatus(): { size: number; maxSize: number; utilization: number; pendingGraduates: number } {
-    const pending = this.buffer.filter(e => this.shouldGraduate(e)).length;
+    const pending = this.buffer.filter(function(e) { return !!e.hasMeaningfulEntity; }).length;
     return {
       size: this.buffer.length,
       maxSize: this.maxSize,
@@ -167,8 +220,8 @@ export class WorkingMemory {
     const dropped: number[] = [];
     for (const entry of this.buffer) {
       try {
-        // 保留毕业逻辑：钙质 0 且无实体 → 噪声，跳过
-        if (!this.shouldGraduate(entry)) {
+        const _tier = this.shouldGraduate(entry);
+        if (!_tier) {
           dropped.push(entry.seqPos);
           continue;
         }

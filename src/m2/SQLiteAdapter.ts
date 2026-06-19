@@ -755,6 +755,84 @@ export class SQLiteAdapter {
     });
   }
 
+
+  // ─── P2: 金库管理 API ───
+
+  /** 获取单条记忆 */
+  getMemoryById(id: string): Record<string, unknown> | null {
+    this.ensureReady();
+    const rows = this.queryAll('SELECT * FROM memories WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /** 锁定记忆（阻止衰减）*/
+  lockMemory(id: string): boolean {
+    this.ensureReady();
+    try {
+      this.runSql('UPDATE memories SET effective_strength = 1.0, strength_updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+      this.save();
+      return true;
+    } catch { return false; }
+  }
+
+  /** 删除记忆 */
+  deleteMemory(id: string): boolean {
+    this.ensureReady();
+    try {
+      this.runSql('DELETE FROM memories WHERE id = ?', [id]);
+      this.save();
+      return true;
+    } catch { return false; }
+  }
+
+  /** 标记记忆 */
+  tagMemory(id: string, tag: string): boolean {
+    this.ensureReady();
+    try {
+      const existing = this.queryAll('SELECT narrative_tag FROM memories WHERE id = ?', [id]);
+      if (existing.length > 0) {
+        const oldTag = existing[0].narrative_tag || '';
+        const newTag = oldTag ? oldTag + ',' + tag : tag;
+        this.runSql('UPDATE memories SET narrative_tag = ? WHERE id = ?', [newTag, id]);
+        this.save();
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  /** 按情绪标签检索 */
+  findByEmotion(emotion: string, limit = 20): EmotionalMemoryRecord[] {
+    this.ensureReady();
+    const res = this.execSql(
+      'SELECT * FROM memories WHERE primary_emotion = ? ORDER BY calcium_score DESC LIMIT ?',
+      [emotion, limit]
+    );
+    return this.rowsToRecords(res);
+  }
+
+  /** 金库统计 */
+  getGoldStats(): Record<string, number | string> {
+    this.ensureReady();
+    const rows = this.queryAll(
+      `SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN is_landmark = 1 THEN 1 ELSE 0 END) as landmarks,
+        SUM(CASE WHEN scar_type IS NOT NULL THEN 1 ELSE 0 END) as scarred,
+        SUM(CASE WHEN calcium_level >= 2 THEN 1 ELSE 0 END) as highCalcium,
+        AVG(effective_strength) as avgStrength,
+        MIN(created_at) as oldest,
+        MAX(created_at) as newest
+      FROM memories`
+    );
+    const r = rows[0] || {};
+    return {
+      total: Number(r.total) || 0, landmarks: Number(r.landmarks) || 0,
+      scarred: Number(r.scarred) || 0, highCalcium: Number(r.highCalcium) || 0,
+      avgStrength: Number(r.avgStrength) || 0,
+      oldest: String(r.oldest || ''), newest: String(r.newest || ''),
+    };
+  }
+
   // ─── 实体关系检索 ───
 
   /**
