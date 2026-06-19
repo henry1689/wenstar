@@ -1291,6 +1291,17 @@ let finalKnowledgeText = knowledgeBaseText;
             console.warn('[KBRoute] 路由失败:', (_err as Error).message);
           }
         }
+
+        // P2: 知识边界检测 — 玉瑶不知道的事诚实说不知道
+        var _isSelfQ = /(你|玉瑶)[是有的在做能会]/.test(message);
+        var _isWorkQ = /(你|玉瑶)[的]?(工作|忙|项目|客户|公司)/.test(message);
+        if (_isSelfQ && !_isWorkQ && !knowledgeBaseText) {
+          // 关于玉瑶自己的事但知识库里没有 → 诚实说不知道
+          if (!knowledgeBaseText) knowledgeBaseText = '';
+          if (knowledgeBaseText.indexOf('【不知道】') < 0) {
+            knowledgeBaseText = '【不知道】这个问题我确实不知道答案。我不想编造，所以诚实地告诉你我不清楚。\n' + knowledgeBaseText;
+          }
+        }
         // ① 历史场景衔接：将记忆碎片作为【历史关联】注入 finalKnowledgeText
         if (memoryText && !finalKnowledgeText.includes('【相关记忆】')) {
           const historyLink = '【历史关联】' + memoryText + '\n（用自然的方式在回复中提及这段过往，不要说"根据历史记录"）';

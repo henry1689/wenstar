@@ -242,6 +242,30 @@ async function initPipeline(): Promise<void> {
   if (m7) m7.setM6(m6);
   // 注入 M8 到 M6（疤痕冲突检查）
   m6.setM8(m8);
+
+  // P0: 角色切换广播 — 系统级隔离
+  PersonaRegistry.onSwitch(function(personaId) {
+    try {
+      // M6 切换对应人格特质
+      if (m6) {
+        var traitMap: Record<string, any> = {
+          yuyao: { openness: 0.7, conscientiousness: 0.5, extraversion: 0.6, agreeableness: 0.8, neuroticism: 0.3 },
+          secretary: { openness: 0.5, conscientiousness: 0.9, extraversion: 0.4, agreeableness: 0.7, neuroticism: 0.2 },
+          mentor: { openness: 0.9, conscientiousness: 0.7, extraversion: 0.3, agreeableness: 0.6, neuroticism: 0.2 },
+          counselor: { openness: 0.8, conscientiousness: 0.6, extraversion: 0.3, agreeableness: 0.9, neuroticism: 0.1 },
+        };
+        var traits = traitMap[personaId] || traitMap.yuyao;
+        // M6 trait reset 逻辑
+        if (m6.manager && m6.manager.getModel) {
+          var model = m6.manager.getModel();
+          model.traits = { ...traits };
+        }
+        console.log('[Persona] 角色切换: ' + personaId + ', M6特质已同步');
+      }
+    } catch (e) {
+      console.warn('[Persona] 角色切换失败:', e);
+    }
+  });
   // M6 周期性维护（15分钟一次）
   if (m6Timer) clearInterval(m6Timer);
   m6Timer = setInterval(() => { try { m6?.maintenance(); } catch (err) { console.error('[M6] 定时维护失败:', err); } }, 15 * 60 * 1000); addTimer(m6Timer);

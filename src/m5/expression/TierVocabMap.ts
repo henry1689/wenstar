@@ -58,6 +58,15 @@ export const TIER_MAP: Record<number, TierConfig> = {
 /**
  * 强度计算 (同校准测试)
  */
+/** P4: 历史等级追踪（平滑用） */
+let _prevLevel = 0;
+
+/** 重置等级历史（角色切换时调用） */
+export function resetEmotionHistory(): void { _prevLevel = 0; }
+
+/** 获取当前平滑后的等级 */
+export function getSmoothedLevel(): number { return _prevLevel; }
+
 export function calcLevel(
   pleasure: number, intimacy: number, sexual_attraction: number,
   sensory_craving: number, energy_merge: number, possessiveness: number,
@@ -85,7 +94,14 @@ export function calcLevel(
   else if (raw >= 0.1) lv = 1;
   const signed = pol === 'p' ? lv : pol === 'n' ? -lv : 0;
   const clamped = Math.max(-2, Math.min(2, signed)) as -2|-1|0|1|2;
-  return { level: clamped, tier: TIER_MAP[clamped], raw };
+
+  // P4: 情感等级平滑 — 突变阈值1.5
+  const _jump = Math.abs(clamped - _prevLevel);
+  const _allowedJump = _jump > 1.5 ? 1.5 : 1.0;
+  const _sign = clamped >= _prevLevel ? 1 : -1;
+  const _smoothed = Math.max(-2, Math.min(2, Math.round(_prevLevel + _sign * _allowedJump))) as -2|-1|0|1|2;
+  _prevLevel = _smoothed;
+  return { level: _smoothed, tier: TIER_MAP[_smoothed], raw };
 }
 
 /**

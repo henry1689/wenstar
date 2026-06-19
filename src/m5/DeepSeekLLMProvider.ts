@@ -27,6 +27,13 @@ const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
 const BASE_URL = 'https://api.deepseek.com/v1';
 const MAX_HISTORY_TURNS = 200; // 保留最近 100 轮完整对话
 
+/** P3: 分级超时 — 日常10s / 冲突15s / 亲密20s */
+function getTieredTimeout(level: number): number {
+  if (level >= -1 && level <= 0) return 10000;  // 日常
+  if (level <= -2) return 15000;                // 冲突
+  return 20000;                                  // 亲密
+}
+
 interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -79,8 +86,10 @@ export class DeepSeekLLMProvider implements LLMProvider {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
+        const _dl = (extraParams as any).level ?? 0;
+        const _timeoutMs = getTieredTimeout(_dl);
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), attempt === 0 ? 30000 : 45000);
+        const timeout = setTimeout(() => controller.abort(), _timeoutMs);
 
         const response = await fetch(`${BASE_URL}/chat/completions`, {
           method: 'POST',
@@ -370,7 +379,8 @@ ${profileText}
       return await this.callDeepSeekApi(messages, maxTokens, temperature, {
         frequency_penalty: frequencyPenalty,
         presence_penalty: presencePenalty,
-      });
+        level: level,
+      } as any);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!process.env['DEEPSEEK_API_KEY'] && !resolveApiKey()) {
