@@ -24,6 +24,7 @@ import { ConsolidationQueue } from '../m7/ConsolidationQueue.js';
 import { M7Orchestrator, startM7Interval } from '../m7/M7Orchestrator.js';
 import busboy from 'busboy';
 import { M8FusionAdapter } from '../m8/M8FusionAdapter.js';
+import { MasterProfileService } from '../app/profile/MasterProfileService.js';
 import { computeCalcium } from '../m2/math.js';
 import { getHitReport } from '../m3/PerceptionAnalyzer.js';
 import { rerank } from '../m4/Reranker.js';
@@ -63,7 +64,6 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const DATA_DIR = path.join(PROJECT_ROOT, 'data', 'webui');
 const DB_PATH = path.join(DATA_DIR, 'knowledge', 'family_graph.db');
 const HTML_PATH = path.join(__dirname, 'index.html');
-const CONV_LOG_PATH = path.join(DATA_DIR, 'conversations.json');
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const TTS_URL = process.env.TTS_URL || 'http://localhost:8765';
 
@@ -106,44 +106,34 @@ function getSelfModel(): SelfModelV1 {
   };
 }
 
-// ── 对话记忆 ──
+// ── 对话记忆（砂金库驱动 — SQLite 即时落盘） ──
 let conversationHistory: ConversationTurn[] = [];
-const MAX_SAVED_TURNS = 500; // 保留最近 250 轮完整对话（鸿艺要求，注意100轮以上）
+const MAX_SAVED_TURNS = 500;
 function loadConversationHistory(): void {
   try {
-    if (existsSync(CONV_LOG_PATH)) {
-      const raw = fs.readFileSync(CONV_LOG_PATH, 'utf-8');
-      const data = JSON.parse(raw);
-      if (Array.isArray(data)) {
-        conversationHistory = data.filter(
-          (t: any) => t.role && (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string'
-        );
-      }
-      console.log(`  从磁盘加载了 ${conversationHistory.length} 条对话记忆 ✓`);
+    if (storage) {
+      const recent = storage.getSQLite().getRecentConversations(500);
+      conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }));
     }
-  } catch (err) { console.error('[Conv] 加载对话历史失败:', err); conversationHistory = []; }
+    console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+  } catch (err) { console.error('[Conv] 砂金库加载失败:', err); conversationHistory = []; }
 }
-let _convSaveTimer: ReturnType<typeof setTimeout> | null = null;
-function saveConversationHistory(): void {
-  // 防抖：500ms 内的多次写入合并为一次
-  if (_convSaveTimer) clearTimeout(_convSaveTimer);
-  _convSaveTimer = setTimeout(() => {
-    try { fs.writeFileSync(CONV_LOG_PATH, JSON.stringify(conversationHistory.slice(-MAX_SAVED_TURNS), null, 2), 'utf-8'); } catch (err) { console.error('[Conv] 保存对话历史失败:', err); }
-    _convSaveTimer = null;
-  }, 500);
-}
-/** 强制立即保存对话历史（关闭前调用） */
-function flushConversationHistory(): void {
-  if (_convSaveTimer) { clearTimeout(_convSaveTimer); _convSaveTimer = null; }
-  try { fs.writeFileSync(CONV_LOG_PATH, JSON.stringify(conversationHistory.slice(-MAX_SAVED_TURNS), null, 2), 'utf-8'); } catch (err) { console.error('[Conv] 强制保存失败:', err); }
-}
-function recordTurn(role: 'user' | 'assistant', content: string): void {
-  try { conversationHistory.push({ role, content }); saveConversationHistory(); } catch (err) { console.error('[Conv] recordTurn失败:', err); }
-}
+function saveConversationHistory(): void { /* 不再需要 — SQLite 已即时落盘 */ }
+function flushConversationHistory(): void { /* 不再需要 */ }
 function resetConversationHistory(): void {
   conversationHistory = [];
-  try { if (existsSync(CONV_LOG_PATH)) fs.unlinkSync(CONV_LOG_PATH); } catch (err) { console.error('[Conv] 重置对话历史失败:', err); }
 }
+
+function recordTurn(role: 'user' | 'assistant', content: string): void {
+  try {
+    conversationHistory.push({ role, content });
+    // 即时落盘到砂金库 SQLite
+    if (storage) {
+      storage.getSQLite().insertConversation(role, content);
+    }
+  } catch (err) { console.error('[Conv] recordTurn失败:', err); }
+}
+
 
 // ── 维护引擎 ──
 const maintenance = new MaintenanceService();
@@ -176,6 +166,7 @@ let m7Timer: ReturnType<typeof setInterval> | null = null;
 let m6Timer: ReturnType<typeof setInterval> | null = null;
 let workingMemory: WorkingMemory;
 let knowledgeBase: KnowledgeBase;
+let masterProfile: MasterProfileService;
 let clueTracker: ClueTracker;
 let llmProvider: DeepSeekLLMProvider;
 let clueAssistant: M5ClueAssistant;
@@ -403,6 +394,9 @@ async function initPipeline(): Promise<void> {
   }, 5 * 60 * 1000); // 5分钟
   console.log('  知识库已启动 ✓');
 
+  masterProfile = new MasterProfileService(storage.getSQLite());
+  console.log('  主人镜像已启动 ✓');
+
   // 注册任务代理工具
   ToolRegistry.register(calendarTool);
   ToolRegistry.register(reminderTool);
@@ -496,6 +490,7 @@ interface ChatResponse {
 async function processChat(message: string): Promise<ChatResponse> {
   return processChatNew(message, {
     encoder, storage, m3, m4, m5, m6, m7,
+    masterProfile,
     workingMemory, knowledgeBase, clueAssistant, llmProvider,
     topicTracker, consolidationQueue,
     conversationHistory, m8, somaticMemory,
@@ -733,7 +728,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     // ── 清除聊天记录（轻量版，仅清对话不关服务） ──
     if (req.method === 'POST' && url.pathname === '/api/chat/clear') {
       conversationHistory = [];
-      try { if (existsSync(CONV_LOG_PATH)) fs.writeFileSync(CONV_LOG_PATH, '[]', 'utf-8'); } catch (err) { console.error('[Conv] 清除失败:', err); }
+      /* CONV_LOG_PATH 已废弃 — 砂金库 SQLite 接管 */
       flushConversationHistory();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ status: 'ok' }));
@@ -836,6 +831,67 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const relations = storage.getEntityRelationSummary();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ count: relations.length, relations }));
+      return;
+    }
+
+    // ── 主人大脑镜像 API ──
+    if (req.method === 'GET' && url.pathname === '/api/mirror') {
+      const result: Record<string, any> = {};
+      try {
+        result.profile = storage.getSQLite().queryAll('SELECT category, content, confidence FROM master_profile ORDER BY confidence DESC LIMIT 20');
+        result.affairs = storage.getSQLite().queryAll("SELECT title, category, status FROM master_affairs WHERE status != 'abandoned' ORDER BY updated_at DESC LIMIT 10");
+        result.network = storage.getSQLite().queryAll('SELECT person_name, relation_type, organization FROM master_network ORDER BY importance DESC LIMIT 10');
+        result.events = storage.getSQLite().queryAll('SELECT title, event_type, date FROM master_events ORDER BY created_at DESC LIMIT 10');
+        result.about_you = masterProfile.retrieveAboutYou(10);
+      } catch (err) { result.error = (err as Error).message; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+      return;
+    }
+
+    // ── 金库记忆管理 API ──
+    if (req.method === 'GET' && url.pathname === '/api/memory/stats') {
+      const stats = storage.getSQLite().getGoldStats();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(stats));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/memory/') && url.pathname !== '/api/memory/stats' && !url.pathname.startsWith('/api/memory/emotion/') && !url.pathname.startsWith('/api/memory/search')) {
+      const id = decodeURIComponent(url.pathname.substring('/api/memory/'.length));
+      const mem = storage.getSQLite().getMemoryById(id);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(mem || { error: 'not found' }));
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/lock') {
+      try { const body = JSON.parse(await readBody(req)); const r = storage.getSQLite().lockMemory(body.id); res.writeHead(200); res.end(JSON.stringify({ ok: r })); }
+      catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/tag') {
+      try { const body = JSON.parse(await readBody(req)); const r = storage.getSQLite().tagMemory(body.id, body.tag); res.writeHead(200); res.end(JSON.stringify({ ok: r })); }
+      catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/memory/')) {
+      const id = decodeURIComponent(url.pathname.substring('/api/memory/'.length));
+      const r = storage.getSQLite().deleteMemory(id);
+      res.writeHead(200); res.end(JSON.stringify({ ok: r }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/memory/emotion/')) {
+      const emotion = decodeURIComponent(url.pathname.substring('/api/memory/emotion/'.length));
+      const mems = storage.getSQLite().findByEmotion(emotion, 20);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ count: mems.length, memories: mems }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory/search') {
+      const keyword = url.searchParams.get('q') || '';
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '10', 10), 100);
+      const mems = storage.getSQLite().queryAll('SELECT id, raw_input, primary_emotion, calcium_score, calcium_level, effective_strength, created_at FROM memories WHERE raw_input LIKE ? ORDER BY created_at DESC LIMIT ?', ['%' + keyword + '%', limit]);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ count: mems.length, memories: mems }));
       return;
     }
 
@@ -1474,7 +1530,12 @@ async function main(): Promise<void> {
     console.log(`  ║   http://localhost:${PORT}               ║`);
     console.log('  ║                                      ║');
     console.log('  ║   /api/chat   聊天+M1-M5数据         ║');
+
     console.log('  ║   /events    SSE实时推送            ║');
+
+    console.log('  ║   /api/memory 金库记忆管理            ║');
+    console.log('  ║   /api/mirror 主人镜像               ║');
+
     console.log('  ║   /api/modules M6-M8全模块数据       ║');
     console.log('  ║   /api/rings  年轮检索               ║');
     console.log('  ║   /api/scars 疤痕视图               ║');

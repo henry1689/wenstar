@@ -29,6 +29,7 @@ import type { WorkingMemory } from '../m9/WorkingMemory.js';
 import type { KnowledgeBase } from '../m2/KnowledgeBase.js';
 
 import type { M5ClueAssistant } from '../m5/clue/M5ClueAssistant.js';
+import type { MasterProfileService } from '../app/profile/MasterProfileService.js';
 
 import type { TopicTracker } from '../app/knowledge/TopicTracker.js';
 
@@ -84,6 +85,8 @@ export interface ChatContext {
   m6?: M6Orchestrator;
 
   m7?: M7Orchestrator;
+
+  masterProfile?: MasterProfileService;
 
   workingMemory: WorkingMemory;
 
@@ -541,6 +544,27 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
 
+    // 主人大脑镜像提取：每轮对话后自动提取+审查+存储
+    if (ctx.masterProfile && message.length > 3) {
+      try {
+        const extractResult = await ctx.masterProfile.extract(
+          message,
+          decision.enhanced.calcium_score,
+          undefined // LLM辅助可选，暂不传
+        );
+        if (extractResult.subjective.length > 0 || extractResult.objective.length > 0) {
+          if (ctx.masterProfile.review(message, decision.enhanced.calcium_score, dna.entity_genes.length > 0)) {
+            ctx.masterProfile.store(message, extractResult);
+            if (extractResult.subjective.length > 0 || extractResult.objective.length > 0) {
+              console.log('[Mirror] 记录:', extractResult.subjective.map(s=>s.category).concat(extractResult.objective.map(o=>o.table)).join(','));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Mirror] 提取失败:', (err as Error).message);
+      }
+    }
+
     const p = decision.enhanced.perception;
 
     const seqPos = ctx.storage.reserveNextSeq();
@@ -554,6 +578,31 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // 修复：干净的三层注入结构——对话原文/enrichedHistory、记忆/memoryFragments、知识/knowledgeBaseText
     let memoryFragments: string[] = [];
     let enrichedHistory = ctx.conversationHistory.slice(-60);
+    // 时间导航：检测用户是否在问"昨天/上周说了什么"
+    const _tmMatch = message.match(/(昨天|前天|上周|上个月|前几天|最近|刚才)/);
+    if (_tmMatch && (message.indexOf('说') >= 0 || message.indexOf('聊') >= 0 || message.indexOf('提') >= 0)) {
+      try {
+        const _tmNow = new Date();
+        const _tmStart = new Date();
+        const _tmEnd = new Date();
+        const _tmUnit = _tmMatch[1];
+        if (_tmUnit === '昨天') { _tmStart.setDate(_tmNow.getDate() - 1); }
+        else if (_tmUnit === '前天') { _tmStart.setDate(_tmNow.getDate() - 2); _tmEnd.setDate(_tmNow.getDate() - 1); }
+        else if (_tmUnit === '上周') { _tmStart.setDate(_tmNow.getDate() - 7); }
+        else if (_tmUnit === '上个月') { _tmStart.setMonth(_tmNow.getMonth() - 1); }
+        else if (_tmUnit === '前几天') { _tmStart.setDate(_tmNow.getDate() - 3); }
+        else if (_tmUnit === '刚才') { _tmStart.setHours(_tmNow.getHours() - 1); }
+        const _tmRows = ctx.storage.getSQLite().findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
+        if (_tmRows && _tmRows.length > 0) {
+          const _tmTexts = _tmRows.map(function(r){return r.content;}).filter(Boolean).join(' | ').substring(0, 300);
+          memoryFragments.push('【时间检索】' + _tmUnit + '的对话：' + _tmTexts);
+          console.log('[TimeNav] ' + _tmUnit + ' 检索到 ' + _tmRows.length + ' 条');
+        }
+      } catch (err) {
+        console.warn('[TimeNav] 检索失败:', err);
+      }
+    }
+
 
     let emotionalMemories: ScoredMemory[] = [];
 
@@ -973,6 +1022,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const ctx_m4 = await ctx.m4.orchestrate(decision, emotionalMemories);
 
+      // 砂金库降级：当金库检索结果不足时，从砂金库补充
+      if (ctx_m4.memory_summary.timeline.length < 2 && message.length > 4) {
+        try {
+          const sandResults = ctx.storage.getSQLite().searchConversations(message, 3);
+          if (sandResults.length > 0) {
+            ctx_m4.memory_summary.timeline = sandResults.map((r: any) => ({
+              time: r.timestamp, summary: r.content.substring(0, 60), calcium_level: 0
+            })).concat(ctx_m4.memory_summary.timeline);
+            console.log('[M4] 砂金库补充: ' + sandResults.length + ' 条');
+          }
+        } catch (err) {
+          console.warn('[M4] 砂金库检索失败:', err);
+        }
+      }
+
     // M4 知识融合
 
     // ── MemoryGate 幻觉防护 — 基于实际检索结果生成精确防护
@@ -1307,9 +1371,16 @@ let finalKnowledgeText = knowledgeBaseText;
           const historyLink = '【历史关联】' + memoryText + '\n（用自然的方式在回复中提及这段过往，不要说"根据历史记录"）';
           finalKnowledgeText = historyLink + (finalKnowledgeText ? '\n\n' + finalKnowledgeText : '');
         }
-        // 家族/社交铁律注入（硬约束 — LLM 不得编造，以 FamilyGraph 记录为准）
+        // 家族/社交铁律注入
         if (familyConstraint) {
           finalKnowledgeText = familyConstraint + '\n\n' + finalKnowledgeText;
+        }
+        // 主人大脑镜像注入
+        if (ctx.masterProfile) {
+          const aboutYou = ctx.masterProfile.retrieveAboutYou(5);
+          if (aboutYou) {
+            finalKnowledgeText = aboutYou + finalKnowledgeText;
+          }
         }
 
         // ① M6 人格特质注入 — 让玉瑶的说话风格随人格演化而变
@@ -1389,6 +1460,8 @@ let finalKnowledgeText = knowledgeBaseText;
     for (const [_t,_re] of Object.entries(_topicKw)) { if (_re.test(message)) { _topic = _t; break; } }
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
+        ctx.saveConversationHistory();
+        try { ctx.storage.getSQLite().insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 

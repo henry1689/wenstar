@@ -145,6 +145,74 @@ export class SQLiteAdapter {
     this.ready = false;
   }
 
+  // ─── 砂金库：全量对话活档案 ───
+
+  /** 写入一条对话记录（即时落盘） */
+  insertConversation(role: string, content: string, options?: {
+    seqPos?: number; topic?: string; entityNames?: string[];
+    perception?: { pleasure: number; arousal: number; intimacy: number };
+    calciumScore?: number;
+  }): number {
+    this.ensureReady();
+    const now = new Date().toISOString();
+    this.runSql(
+      'INSERT INTO conversations (role, content, timestamp, seq_pos, topic, entity_names, perception_summary, calcium_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [role, content, now, options?.seqPos ?? null, options?.topic ?? null,
+       options?.entityNames ? JSON.stringify(options.entityNames) : null,
+       options?.perception ? JSON.stringify(options.perception) : null,
+       options?.calciumScore ?? null]
+    );
+    this.save();
+    return this.queryAll('SELECT last_insert_rowid() as id')[0]?.id as number || 0;
+  }
+
+  /** 搜索砂金库对话（降级检索用） */
+  searchConversations(keyword: string, limit = 10): Array<{ id: number; role: string; content: string; timestamp: string; topic?: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp, topic FROM conversations WHERE content LIKE ? AND is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+      ['%' + keyword + '%', limit]
+    );
+  }
+
+  /** 按实体名搜索（M4降级路径） */
+  searchConversationsByEntity(entityName: string, limit = 10): Array<{ id: number; role: string; content: string; timestamp: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp FROM conversations WHERE entity_names LIKE ? AND is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+      ['%' + entityName + '%', limit]
+    );
+  }
+
+  /** 按时间范围检索（"上周说了什么"） */
+  findByTimeRange(start: string, end: string, limit = 20): Array<{ id: number; role: string; content: string; timestamp: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp FROM conversations WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC LIMIT ?',
+      [start, end, limit]
+    );
+  }
+
+  /** 获取砂金库统计 */
+  getConversationStats(): { total: number; userCount: number; assistantCount: number; oldest: string; newest: string } {
+    this.ensureReady();
+    const rows = this.queryAll(
+      "SELECT COUNT(*) as total, SUM(CASE WHEN role='user' THEN 1 ELSE 0 END) as userCount, SUM(CASE WHEN role='assistant' THEN 1 ELSE 0 END) as assistantCount, MIN(timestamp) as oldest, MAX(timestamp) as newest FROM conversations"
+    );
+    const r = rows[0] || { total: 0, userCount: 0, assistantCount: 0, oldest: '', newest: '' };
+    return { total: Number(r.total) || 0, userCount: Number(r.userCount) || 0, assistantCount: Number(r.assistantCount) || 0, oldest: String(r.oldest || ''), newest: String(r.newest || '') };
+  }
+
+  /** 获取最近对话（供 LLM 上下文拼接） */
+  getRecentConversations(limit = 100): Array<{ role: string; content: string }> {
+    this.ensureReady();
+    const rows = this.queryAll<{ role: string; content: string }>(
+        'SELECT role, content FROM conversations WHERE is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+        [limit]
+      );
+      return rows.reverse();
+  }
+
   // ─── 写入 ───
 
   write(record: EmotionalMemoryRecord): void {
@@ -673,6 +741,84 @@ export class SQLiteAdapter {
       columns.forEach((col: string, idx: number) => { obj[col] = row[idx]; });
       return obj as T;
     });
+  }
+
+
+  // ─── P2: 金库管理 API ───
+
+  /** 获取单条记忆 */
+  getMemoryById(id: string): Record<string, unknown> | null {
+    this.ensureReady();
+    const rows = this.queryAll('SELECT * FROM memories WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /** 锁定记忆（阻止衰减）*/
+  lockMemory(id: string): boolean {
+    this.ensureReady();
+    try {
+      this.runSql('UPDATE memories SET effective_strength = 1.0, strength_updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+      this.save();
+      return true;
+    } catch { return false; }
+  }
+
+  /** 删除记忆 */
+  deleteMemory(id: string): boolean {
+    this.ensureReady();
+    try {
+      this.runSql('DELETE FROM memories WHERE id = ?', [id]);
+      this.save();
+      return true;
+    } catch { return false; }
+  }
+
+  /** 标记记忆 */
+  tagMemory(id: string, tag: string): boolean {
+    this.ensureReady();
+    try {
+      const existing = this.queryAll('SELECT narrative_tag FROM memories WHERE id = ?', [id]);
+      if (existing.length > 0) {
+        const oldTag = existing[0].narrative_tag || '';
+        const newTag = oldTag ? oldTag + ',' + tag : tag;
+        this.runSql('UPDATE memories SET narrative_tag = ? WHERE id = ?', [newTag, id]);
+        this.save();
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  /** 按情绪标签检索 */
+  findByEmotion(emotion: string, limit = 20): EmotionalMemoryRecord[] {
+    this.ensureReady();
+    const res = this.execSql(
+      'SELECT * FROM memories WHERE primary_emotion = ? ORDER BY calcium_score DESC LIMIT ?',
+      [emotion, limit]
+    );
+    return this.rowsToRecords(res);
+  }
+
+  /** 金库统计 */
+  getGoldStats(): Record<string, number | string> {
+    this.ensureReady();
+    const rows = this.queryAll(
+      `SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN is_landmark = 1 THEN 1 ELSE 0 END) as landmarks,
+        SUM(CASE WHEN scar_type IS NOT NULL THEN 1 ELSE 0 END) as scarred,
+        SUM(CASE WHEN calcium_level >= 2 THEN 1 ELSE 0 END) as highCalcium,
+        AVG(effective_strength) as avgStrength,
+        MIN(created_at) as oldest,
+        MAX(created_at) as newest
+      FROM memories`
+    );
+    const r = rows[0] || {};
+    return {
+      total: Number(r.total) || 0, landmarks: Number(r.landmarks) || 0,
+      scarred: Number(r.scarred) || 0, highCalcium: Number(r.highCalcium) || 0,
+      avgStrength: Number(r.avgStrength) || 0,
+      oldest: String(r.oldest || ''), newest: String(r.newest || ''),
+    };
   }
 
   // ─── 实体关系检索 ───
