@@ -2,6 +2,7 @@
 // Ref: M4-design-v1.md §4
 
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
+import type { KnowledgeBase } from '../m2/KnowledgeBase.js';
 import type { DNA } from '../m1/types/dna.js';
 import type { Perception24D } from '../m3/types/perception.js';
 import type { MemorySummary } from './types/index.js';
@@ -12,8 +13,10 @@ const keywordCache = new LocalCache<string, DNA[]>({ ttlMs: 30_000, namespace: '
 
 export class MemoryRetriever {
   private storage: FusionStorageAdapter;
+  private knowledgeBase: KnowledgeBase | null = null;
 
-  constructor(storage: FusionStorageAdapter) {
+  constructor(storage: FusionStorageAdapter, knowledgeBase?: KnowledgeBase) {
+    this.knowledgeBase = knowledgeBase ?? null;
     this.storage = storage;
   }
 
@@ -133,6 +136,42 @@ export class MemoryRetriever {
       if (!seen.has(dna.branch_id) && merged.length < limit) {
         seen.add(dna.branch_id);
         merged.push(dna);
+      }
+    }
+
+    // P1: 知识库跨场景融合 — 当检索结果不足时补充
+    if (merged.length < limit * 0.5 && this.knowledgeBase && options?.perception) {
+      try {
+        const sceneTags = locusPath ? locusPath.split('.').filter(Boolean) : [];
+        const entityKws = entities.filter(function(e) { return e.name.length > 0 && e.type !== 'self'; }).map(function(e) { return e.name; });
+        const kbKeywords = [...entityKws, locusPath.split('.').pop() || ''].filter(Boolean).join(' ');
+        if (kbKeywords.length > 2) {
+          const kbResults = await this.knowledgeBase.weightedSearch(kbKeywords, sceneTags, {
+            pleasure: options.perception.pleasure,
+            arousal: options.perception.arousal,
+            intimacy: options.perception.intimacy,
+          }, limit - merged.length);
+          for (const kb of kbResults) {
+            if (!seen.has('kb_' + kb.id)) {
+              seen.add('kb_' + kb.id);
+              merged.push({
+                branch_id: 'kb_' + kb.id,
+                locus_path: 'knowledge.' + (kb.classification || 'general'),
+                taxonomy_version: '1.0',
+                seq_pos: 0,
+                leaf_zone: 'language_semantic_zone',
+                ref: 'kb_' + kb.id,
+                entity_genes: [],
+                raw_input: kb.title + '：' + (kb.content || '').substring(0, 60),
+                created_at: kb.created_at,
+                calcium_score: 0,
+                calcium_level: 0,
+              } as DNA);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[M4] 知识库检索失败:', err);
       }
     }
 

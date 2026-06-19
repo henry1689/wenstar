@@ -1198,7 +1198,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
           );
           if (!alreadyAsked) {
             const age = Date.now() - new Date(item.created_at).getTime();
-            if (age > oneDayMs && age > 30 * oneDayMs) {
+            if (age > 3 * oneDayMs) {
               classificationGuard = '📋 用户之前提到过"' + title + '"还没分类，有空跟我说说这是关于什么的？';
               break;
             }
@@ -1207,7 +1207,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[Classify] 分类反问失败:', err); }
 
-    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard].filter(Boolean).join('\n');
+    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard, classificationGuard].filter(Boolean).join('\n');
 
     let reply: string;
 
@@ -1270,6 +1270,27 @@ let finalKnowledgeText = knowledgeBaseText;
 
         }
 
+        // P4: LLM 辅助知识路由 — 知识查询模式时补充检索
+        if (memoryGate.mode === 'knowledge_query' && ctx.llmProvider && message.length > 3) {
+          try {
+            const _kbPrompt = '从以下问题中提取2-4个最可能用于知识库搜索的关键词（中文），只返回关键词用逗号分隔。问题: ' + message;
+            const _kbResult = await (ctx.llmProvider as any).generate({
+              strategy: { strategy_id: 'keyword-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 100 } },
+              cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0 }, raw_input: _kbPrompt, calcium: 0 } },
+              userMessage: _kbPrompt,
+            });
+            const _kbText = _kbResult?.text?.trim();
+            if (_kbText && _kbText.length > 1) {
+              const _extraKb = await ctx.knowledgeBase.search(_kbText, 2);
+              if (_extraKb.length > 0 && knowledgeBaseText) {
+                knowledgeBaseText += '\n\n【知识库补充】' + _extraKb.map(function(k) { return k.title; }).join(', ') + '\n' + _extraKb.map(function(k) { return (k.content || '').substring(0, 200); }).join('\n');
+                console.log('[KBRoute] LLM路由: ' + _kbText + ' → ' + _extraKb.length + ' 条');
+              }
+            }
+          } catch (_err) {
+            console.warn('[KBRoute] 路由失败:', (_err as Error).message);
+          }
+        }
         // ① 历史场景衔接：将记忆碎片作为【历史关联】注入 finalKnowledgeText
         if (memoryText && !finalKnowledgeText.includes('【相关记忆】')) {
           const historyLink = '【历史关联】' + memoryText + '\n（用自然的方式在回复中提及这段过往，不要说"根据历史记录"）';

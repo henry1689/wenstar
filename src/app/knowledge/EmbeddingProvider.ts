@@ -1,100 +1,138 @@
 /**
- * EmbeddingProvider — 嵌入提供者
+ * EmbeddingProvider — 嵌入提供者（双层策略）
  *
- * 使用本地中文 N-gram 频率向量作为嵌入（零外部依赖）。
- * 基于字符 Bigram + Trigram 统计，对中文语义相似度效果良好。
+ * P0: 首选 DeepSeek API (1536维真实语义)
+ *     降级 本地 N-gram 256维（API不可用时）
  *
- * 如需更高质量嵌入，可替换为 OpenAI/其他 Embedding API。
+ * 设计原则：这是识别类工具，不是创造类。
+ * 嵌入是将文本转为向量用于相似度检索，属于分类/识别范畴。
  */
-
 export interface EmbeddingProvider {
-  /** 将文本转为向量 */
   embed(text: string): Promise<number[]>;
-  /** 批量文本转向量 */
   embedBatch(texts: string[]): Promise<number[][]>;
-  /** 是否可用 */
   isAvailable(): boolean;
-  /** 向量维度 */
   readonly dimension: number;
 }
 
-/** N-gram 特征提取：字符 bigram + trigram */
+/** 本地 N-gram 特征提取（降级方案） */
 function extractNgrams(text: string, maxFeatures = 2000): Map<string, number> {
   const freq = new Map<string, number>();
-
-  // Bigrams
   for (let i = 0; i < text.length - 1; i++) {
     const gram = text.slice(i, i + 2);
     freq.set(gram, (freq.get(gram) ?? 0) + 1);
   }
-
-  // Trigrams
   for (let i = 0; i < text.length - 2; i++) {
     const gram = text.slice(i, i + 3);
     freq.set(gram, (freq.get(gram) ?? 0) + 1);
   }
-
-  // 限制特征数
   const sorted = [...freq.entries()].sort((a, b) => b[1] - a[1]);
   const result = new Map<string, number>();
-  for (const [k, v] of sorted.slice(0, maxFeatures)) {
-    result.set(k, v);
-  }
+  for (const [k, v] of sorted.slice(0, maxFeatures)) result.set(k, v);
   return result;
 }
 
-/** 从 N-gram 频率图生成固定维度向量 */
 function ngramsToVector(ngrams: Map<string, number>, dim = 256): number[] {
   const vec = new Array(dim).fill(0);
   let idx = 0;
   for (const [gram, count] of ngrams) {
-    // 用 gram 的哈希值决定位置
     let hash = 0;
     for (let i = 0; i < gram.length; i++) {
       hash = ((hash << 5) - hash) + gram.charCodeAt(i);
-      hash = hash & hash; // Convert to 32bit integer
+      hash = hash & hash;
     }
     const pos = Math.abs(hash) % dim;
-    vec[pos] += Math.log(1 + count); // log 频率减少长文本偏差
+    vec[pos] += Math.log(1 + count);
     idx++;
-    if (idx >= 2000) break; // 最多用 2000 个特征
+    if (idx >= 2000) break;
   }
-  // L2 归一化
   let norm = 0;
   for (const v of vec) norm += v * v;
   norm = Math.sqrt(norm);
-  if (norm > 0) {
-    for (let i = 0; i < dim; i++) vec[i] /= norm;
-  }
+  if (norm > 0) { for (let i = 0; i < dim; i++) vec[i] /= norm; }
   return vec;
 }
 
+function localEmbed(text: string): number[] {
+  const normalized = text.replace(/[\s\r\n]+/g, '').toLowerCase();
+  const ngrams = extractNgrams(normalized);
+  return ngramsToVector(ngrams, 256);
+}
+
 /**
- * 创建本地嵌入提供者
- *
- * 基于中文 N-gram 统计，零外部依赖，同步计算。
+ * 创建双层策略嵌入提供者
+ * - 首选 DeepSeek API (1536维)
+ * - 降级 本地 N-gram (256维)
  */
 export function createLocalEmbedding(): EmbeddingProvider {
-  const dimension = 256;
+  const API_DIMENSION = 1536;
+  const LOCAL_DIMENSION = 256;
 
-  function embed(text: string): Promise<number[]> {
-    const normalized = text.replace(/[\s\r\n]+/g, '').toLowerCase();
-    const ngrams = extractNgrams(normalized);
-    const vec = ngramsToVector(ngrams, dimension);
-    return Promise.resolve(vec);
+  async function embed(text: string): Promise<number[]> {
+    // 首选：DeepSeek API
+    try {
+      const key = typeof process !== 'undefined' && process.env ? process.env['DEEPSEEK_API_KEY'] : undefined;
+      if (key) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch('https://api.deepseek.com/v1/embeddings', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'deepseek-embedding', input: text }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.data?.[0]?.embedding) return data.data[0].embedding;
+        }
+      }
+    } catch { /* 静默降级到本地 */ }
+    // 降级：本地 N-gram
+    return localEmbed(text);
   }
 
   async function embedBatch(texts: string[]): Promise<number[][]> {
     const results: number[][] = [];
-    for (const t of texts) {
-      results.push(await embed(t));
-    }
+    // DeepSeek API 批量
+    try {
+      const key = typeof process !== 'undefined' && process.env ? process.env['DEEPSEEK_API_KEY'] : undefined;
+      if (key && texts.length > 0) {
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+          const batch = texts.slice(i, i + BATCH_SIZE);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
+          const res = await fetch('https://api.deepseek.com/v1/embeddings', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'deepseek-embedding', input: batch }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.data) {
+              for (const d of data.data) results.push(d.embedding);
+              continue;
+            }
+          }
+          // 批量失败，逐条降级
+          for (const t of batch) results.push(localEmbed(t));
+        }
+        return results;
+      }
+    } catch { /* 批量失败 */ }
+    // 降级：逐条本地嵌入
+    for (const t of texts) results.push(localEmbed(t));
     return results;
   }
 
-  function isAvailable(): boolean {
-    return true; // 本地嵌入永远可用
-  }
+  function isAvailable(): boolean { return true; }
 
-  return { embed, embedBatch, isAvailable, dimension };
+  return {
+    embed,
+    embedBatch,
+    isAvailable,
+    dimension: API_DIMENSION,
+  };
 }

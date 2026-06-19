@@ -19,6 +19,7 @@ import { VectorStore } from './VectorStore.js';
 import { hybridSearch } from './RAGPipeline.js';
 import { writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { LocalCache } from '../tools/LocalCache.js';
 import { fileURLToPath } from 'node:url';
 
 // ── MD 同步路径 ──
@@ -101,6 +102,8 @@ ${entry.source_name ? `source_name: "${entry.source_name}"\n` : ''}${entry.file_
 
 // ── 模块级单例（跨多次 createKnowledgeEngine 调用持久化） ──
 const vectorStore = new VectorStore();
+/** P2: 检索缓存（30秒TTL） */
+const searchCache = new LocalCache<string, KnowledgeItem[]>({ ttlMs: 30_000, namespace: 'kb_search' });
 const embedProvider = createLocalEmbedding();
 let _indexReady = false;
 
@@ -161,19 +164,14 @@ async function indexContent(
   sqlite.writeRaw(`DELETE FROM knowledge_chunks WHERE kn_id = ?`, knId);
   const removed = vectorStore.removeByPrefix(knId);
 
-  for (const chunk of chunkResult.chunks) {
-    const chunkId = `${knId}_${chunk.index}`;
-    let embedding: number[] = [];
+  // P0: 批量嵌入 — 减少 API 调用次数
+  const chunkTexts = chunkResult.chunks.map(function(c) { return c.content; });
+  const embeddings = embedProvider.isAvailable() ? await embedProvider.embedBatch(chunkTexts).catch(function() { return []; }) : [];
 
-    // 尝试嵌入
-    if (embedProvider.isAvailable()) {
-      try {
-        embedding = await embedProvider.embed(chunk.content);
-      } catch (err) {
-        console.warn("[KE] 嵌入失败:", err instanceof Error ? err.message : String(err));
-        // 嵌入失败，跳过
-      }
-    }
+  for (let ci = 0; ci < chunkResult.chunks.length; ci++) {
+    const chunk = chunkResult.chunks[ci];
+    const chunkId = `${knId}_${chunk.index}`;
+    const embedding = embeddings[ci] || [];
 
     // 存 SQLite
     sqlite.writeRaw(
@@ -311,7 +309,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     return true;
   }
 
-  /** 搜索（混合检索：向量语义 + 关键词 + 情绪关联 + 交互型分类过滤） */
+  /** 搜索（混合检索：向量语义 + 关键词 + 情绪关联 + 交互型分类过滤 + 缓存） */
   async function search(keyword: string, limit = 10, emotionalContext?: { pleasure: number; arousal: number; intimacy: number }, interactionType?: string): Promise<KnowledgeItem[]> {
     // LIKE 后备搜索函数（支持按 interaction_type 过滤）
     const keywordSearch = (kw: string, lim: number) => {
@@ -328,6 +326,11 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
 
     const trimmed = keyword.trim();
     if (!trimmed) return keywordSearch('', limit);
+
+    // P2: 缓存检查
+    const cacheKey = trimmed + '_' + (interactionType || '') + '_' + limit;
+    const cached = await searchCache.get(cacheKey);
+    if (cached) { return cached; }
 
     // 1. 先用完整句子搜索
     let results = keywordSearch(trimmed, limit);
@@ -362,6 +365,12 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
       }
     }
 
+    // P2: 缓存结果 + 质量报告
+    searchCache.set(cacheKey, results).catch(function() {});
+    if (results.length > 0) {
+      const avgScore = results.reduce(function(s: number, r: any) { return s + (r.matchScore || 0.5); }, 0) / results.length;
+      console.log('[KB] 检索: ' + trimmed.substring(0,20) + ' → ' + results.length + '条 (均分' + avgScore.toFixed(2) + ')');
+    }
     return results;
   }
 

@@ -197,7 +197,7 @@ async function initPipeline(): Promise<void> {
   await memoryVault.initialize();
   familyGraph = new FamilyGraph(DB_PATH);
   await familyGraph.initialize();
-  m4 = new M4Orchestrator(storage, familyGraph);
+  m4 = new M4Orchestrator(storage, familyGraph, knowledgeBase);
   await m4.initialize();
   m3 = new M3LogicOrchestrator();
   llmProvider = deepseekAvailable() ? new DeepSeekLLMProvider() : new MockLLMProvider();

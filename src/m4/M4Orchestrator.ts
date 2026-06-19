@@ -13,8 +13,8 @@ export class M4Orchestrator {
   private memoryRetriever: MemoryRetriever;
   private familyGraph: FamilyGraph;
 
-  constructor(storage: FusionStorageAdapter, familyGraph?: FamilyGraph) {
-    this.memoryRetriever = new MemoryRetriever(storage);
+  constructor(storage: FusionStorageAdapter, familyGraph?: FamilyGraph, knowledgeBase?: any) {
+    this.memoryRetriever = new MemoryRetriever(storage, knowledgeBase);
     this.familyGraph = familyGraph ?? new FamilyGraph();
   }
 
