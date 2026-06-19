@@ -1486,6 +1486,27 @@ let finalKnowledgeText = knowledgeBaseText;
 
     } catch (err) { console.warn('[TopicTracker] 失败:', err); }
 
+    // P3: 记忆强化仪式 — AQC GoldQC 通过后追加话术
+    try {
+      if (ctx.storage) {
+        const _qcRecent = ctx.storage.getSQLite().queryAll(
+          "SELECT COUNT(*) as cnt FROM aqc_records WHERE source_type='gold' AND status='approved' AND evaluated_at > datetime('now', '-1 hour')"
+        );
+        const _qcPassed = Number((_qcRecent?.[0] as any)?.cnt || 0) > 0;
+        if (_qcPassed && reply.indexOf('回想了') < 0 && reply.indexOf('\n\n（轻笑）') < 0) {
+          reply += '\n\n（轻笑）对了，刚才我回想了下…这件事突然变得更清晰了。';
+        }
+        // 成长警示：连续7天自动毕业率 > 80%
+        const _gcRate = ctx.storage.getSQLite().queryAll(
+          "SELECT CAST(SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) AS REAL) / MAX(COUNT(*), 1) as rate FROM aqc_records WHERE source_type='sand' AND evaluated_at > datetime('now', '-7 days')"
+        );
+        const _autoRate = Number((_gcRate?.[0] as any)?.rate || 0);
+        if (_autoRate > 0.8 && reply.indexOf('忘记一点') < 0) {
+          reply += '\n\n（停顿）最近我好像记住了很多事…你希望我继续保持这样，还是偶尔忘记一点更像真实的我们？';
+        }
+      }
+    } catch (_qcErr) { /* AQC 消费链失败不影响主流程 */ }
+
     // 主动建档 + 人际关系
 
     try {

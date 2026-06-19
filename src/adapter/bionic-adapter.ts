@@ -19,6 +19,7 @@
  */
 import type { Perception24D } from '../m3/types/perception.js';
 import { LocalCache } from '../app/tools/LocalCache.js';
+import { createHash } from 'node:crypto';
 
 // ── 配置 ──
 const BIONIC_API = process.env.BIONIC_API_URL || 'http://localhost:7200/api/v1';
@@ -26,6 +27,13 @@ const EMOTION_API = process.env.EMOTION_API_URL || 'http://localhost:8100/api/v1
 
 // 外部查询缓存：按 query+userId 缓存 30 秒（短期防重复，不阻塞新鲜结果）
 const bionicSearchCache = new LocalCache<string, any[]>({ ttlMs: 30_000, namespace: 'bionic_search' });
+
+/** P1: 情感指纹缓存 — 离线降级用 */
+const _bionicLocalCache = new LocalCache<string, any>({ ttlMs: 60_000, namespace: 'bionic_fallback', maxKeys: 200 });
+function _genCtxHash(input: string, emotion?: { pleasure?: number; arousal?: number }): string {
+  const payload = input + '_' + (emotion?.pleasure?.toFixed(2) || '0') + '_' + (emotion?.arousal?.toFixed(2) || '0');
+  try { return createHash('sha256').update(payload).digest('hex').substring(0, 16); } catch { return payload.substring(0, 32); }
+}
 
 // ── 类型定义 ──
 
@@ -111,13 +119,22 @@ class BionicAdapter {
     const cached = await bionicSearchCache.get(cacheKey);
     if (cached) return cached as BionicSearchResult[];
 
+    const _ctxHash = _genCtxHash(query);
     const r = await bionicFetch<any>(
       `/search?q=${encodeURIComponent(query.slice(0, 200))}&user_id=${encodeURIComponent(userId)}&limit=5`
-    );
+    ).catch(async function(err) {
+      console.warn('[Bionic] 搜索失败, 尝试本地缓存:', err.message);
+      const _cached = await _bionicLocalCache.get(_ctxHash).catch(function() { return null; });
+      if (_cached && Array.isArray(_cached)) {
+        console.log('[Bionic] 离线降级(缓存命中): ' + query.slice(0, 40));
+        return { results: _cached };
+      }
+      throw err;
+    });
     const results = r?.results ?? [];
-    // 有结果才缓存（空结果不缓存，下次继续尝试）
     if (results.length > 0) {
-      bionicSearchCache.set(cacheKey, results).catch(() => {});
+      bionicSearchCache.set(cacheKey, results).catch(function() {});
+      _bionicLocalCache.set(_ctxHash, results).catch(function() {});
     }
     return results;
   }

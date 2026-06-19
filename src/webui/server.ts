@@ -497,6 +497,20 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+// P2: SSE 客户端池 + 呼吸间隙
+const sseClients: Set<http.ServerResponse> = new Set();
+const MIN_EVENT_INTERVAL = 1500;
+let _lastSseEvent = 0;
+function broadcastEvent(event: string, data: any): void {
+  const now = Date.now();
+  if (now - _lastSseEvent < MIN_EVENT_INTERVAL) return;
+  _lastSseEvent = now;
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(msg); } catch { sseClients.delete(client); }
+  }
+}
+
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -504,6 +518,20 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  // P2: SSE 实时推送端点
+  if (req.method === 'GET' && url.pathname === '/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.write('event: connected\ndata: {"status":"ok"}\n\n');
+    sseClients.add(res);
+    req.on('close', function() { sseClients.delete(res); });
+    return;
+  }
 
   try {
     // ── 首页 ──
@@ -1386,6 +1414,7 @@ async function main(): Promise<void> {
     console.log(`  ║   http://localhost:${PORT}               ║`);
     console.log('  ║                                      ║');
     console.log('  ║   /api/chat   聊天+M1-M5数据         ║');
+    console.log('  ║   /events    SSE实时推送            ║');
     console.log('  ║   /api/modules M6-M8全模块数据       ║');
     console.log('  ║   /api/rings  年轮检索               ║');
     console.log('  ║   /api/scars 疤痕视图               ║');
