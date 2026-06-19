@@ -297,7 +297,7 @@ export function autoPromoteCandidates(sqlite: SQLiteAdapter, limit = 5): BlackDi
   const candidates = sqlite.queryAll(
     `SELECT id, raw_input, calcium_level, recall_count, is_landmark, scar_type, narrative_tag
      FROM memories
-     WHERE calcium_level >= 2 AND (recall_count >= 3 OR calcium_level >= 3 OR is_landmark = 1)
+     WHERE (calcium_level >= 2 AND (recall_count >= 1 OR is_landmark = 1)) OR (calcium_level >= 3)
      ORDER BY calcium_level DESC, recall_count DESC
      LIMIT ?`,
     [limit],

@@ -8,6 +8,7 @@ import { ClueTracker } from './ClueTracker.js';
 import type { PendingDream } from './types/index.js';
 import type { KnowledgeBase } from '../m2/KnowledgeBase.js';
 import type { M6Orchestrator } from '../m6/M6Orchestrator.js';
+import crypto from 'node:crypto';
 import type { FamilyGraph } from '../m4/FamilyGraph.js';
 import type { TopicTracker } from '../app/knowledge/TopicTracker.js';
 import type { M8Engine } from '../m8/M8Engine.js';
@@ -171,7 +172,7 @@ export class M7Orchestrator {
         const summary = '【梦境】高情绪_' + emotion + ': ' + data.count + '次 · ' + data.samples.join(' | ');
         sqlite.writeRaw(
           'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, tags, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          'dream_he_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
+          'dh_' + crypto.createHash('md5').update(summary).digest('hex').substring(0, 12),
           summary, emotion, 'dream_high_emotion', 2,
           JSON.stringify(['dream_high_emotion', emotion, '梦境自动沉淀']),
           '梦境情感雷达于 ' + now, now, now
@@ -278,7 +279,7 @@ export class M7Orchestrator {
         const now = new Date().toISOString();
         sqlite.writeRaw(
           'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, tags, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          'dream_evo_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2,6),
+          'de_' + crypto.createHash('md5').update('【梦境自我优化】正向反馈' + positiveCount + '次, 负向' + negativeCount + '次').digest('hex').substring(0, 12),
           '【梦境自我优化】正向反馈' + positiveCount + '次, 负向' + negativeCount + '次',
           '中性', 'dream_evolution', 1,
           JSON.stringify(['dream_evolution', 'self_optimize']),
