@@ -54,6 +54,38 @@ export interface VaultReport {
   gold: { total: number; avgStrength: number; highCalciumCount: number; topTags: string[] };
   blackDiamond: { total: number; recentEntries: string[] };
   overall: string;
+  trends?: {
+    gold_growth_7d: number;
+    promote_count_7d: number;
+    avg_strength_change: number;
+    health_score: number;
+    health_status: string;
+    narrative: string;
+  };
+  alerts?: string[];
+}
+
+// ─── 操作日志 ───
+
+/** 记录三库操作（景幻仙姑审计日志） */
+export function logVaultOperation(
+  sqlite: SQLiteAdapter,
+  operation: string,
+  sourceType?: string,
+  sourceId?: string,
+  targetId?: string,
+  detail?: string,
+): void {
+  const id = 'vl_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+  sqlite.writeRaw(
+    'INSERT INTO vault_log (id, operation, source_type, source_id, target_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, operation, sourceType || null, sourceId || null, targetId || null, detail || null, new Date().toISOString(),
+  );
+}
+
+/** 获取操作日志 */
+export function getVaultLog(sqlite: SQLiteAdapter, limit = 20): any[] {
+  return sqlite.queryAll('SELECT * FROM vault_log ORDER BY created_at DESC LIMIT ?', [limit]);
 }
 
 // ─── 黑钻库数据访问 ───
@@ -238,6 +270,8 @@ export function promoteToBlackDiamond(sqlite: SQLiteAdapter, memoryId: string): 
   const mem = rows[0] as any;
   const rawInput = (mem.raw_input as string) || '';
   const emotionTag = (mem.scar_type as string) || (mem.narrative_tag as string) || '中性';
+  // P1: 提炼日志
+  logVaultOperation(sqlite, 'promote', 'gold', memoryId, undefined, `提炼至黑钻: ${rawInput.substring(0, 30)}`);
   const tags = ['gold_提炼', emotionTag];
   if (mem.is_landmark === 1) tags.push('地标');
 
@@ -278,6 +312,51 @@ export function autoPromoteCandidates(sqlite: SQLiteAdapter, limit = 5): BlackDi
   return results;
 }
 
+// ─── P2: 批量操作 + 导出 ───
+
+/** 批量删除黑钻（核心安全防护：core_safety > 0.7 需二次确认） */
+export function batchDeleteDiamonds(sqlite: SQLiteAdapter, ids: string[]): { deleted: number; protected_: string[] } {
+  const protected_: string[] = [];
+  let deleted = 0;
+  for (const id of ids) {
+    // 核心记忆防护
+    const mem = sqlite.queryAll('SELECT raw_input, calcium_score FROM memories WHERE id = (SELECT source_id FROM black_diamond WHERE id = ? LIMIT 1)', [id]);
+    const isCore = mem.length > 0 && /结婚|救命|重要|第一[次个]|生日|纪念/.test((mem[0] as any)?.raw_input || '') && (mem[0] as any)?.calcium_score > 0.7;
+    if (isCore) { protected_.push(id); continue; }
+    const ok = deleteBlackDiamond(sqlite, id);
+    if (ok) deleted++;
+  }
+  logVaultOperation(sqlite, 'batch_delete', 'black_diamond', undefined, undefined, `批量删除 ${deleted} 条, ${protected_.length} 条受保护`);
+  return { deleted, protected_ };
+}
+
+/** 导出黑钻库 */
+export function exportDiamonds(sqlite: SQLiteAdapter, format: 'json' | 'csv' = 'json'): string {
+  const items = listBlackDiamonds(sqlite, 1000);
+  if (format === 'csv') {
+    const header = 'id,summary,emotion_tag,calcium_level,recall_count,created_at\n';
+    const rows = items.map(function(i) {
+      return [i.id, '"' + (i.summary || '').replace(/"/g, '""') + '"', i.emotion_tag || '', i.calcium_level, i.recall_count, i.created_at].join(',');
+    }).join('\n');
+    return header + rows;
+  }
+  return JSON.stringify(items, null, 2);
+}
+
+// ─── P3: 砂金库操作 ───
+
+/** 压缩砂金库（标记旧数据可清理） */
+export function compactAlluvial(sqlite: SQLiteAdapter, cutoffDays = 30): number {
+  const cutoff = new Date(Date.now() - cutoffDays * 86400000).toISOString();
+  const old = sqlite.queryAll('SELECT COUNT(*) as cnt FROM conversations WHERE timestamp < ? AND is_summary = 0', [cutoff]);
+  const count = Number((old[0] as any)?.cnt || 0);
+  if (count > 0) {
+    sqlite.writeRaw('UPDATE conversations SET is_summary = 1 WHERE timestamp < ? AND is_summary = 0', [cutoff]);
+    logVaultOperation(sqlite, 'compact', 'alluvial', undefined, undefined, `压缩 ${count} 条超过 ${cutoffDays} 天的砂金库对话`);
+  }
+  return count;
+}
+
 // ─── 景幻仙姑 · 三库健康报告 ───
 
 /**
@@ -293,6 +372,23 @@ export function generateVaultReport(
   const alluvialSummary = getAlluvialSummary(conversationHistory, compressionThreshold);
   const diamonds = listBlackDiamonds(sqlite, 5);
 
+  // P4: 趋势数据
+  const gold7d = sqlite.queryAll("SELECT COUNT(*) as cnt FROM memories WHERE created_at > datetime('now', '-7 days')");
+  const promote7d = sqlite.queryAll("SELECT COUNT(*) as cnt FROM vault_log WHERE operation = 'promote' AND created_at > datetime('now', '-7 days')");
+  const avgStr7d = sqlite.queryAll("SELECT AVG(effective_strength) as avg FROM memories WHERE created_at > datetime('now', '-7 days')");
+  const goldGrowth7d = Number((gold7d[0] as any)?.cnt || 0);
+  const promoteCount7d = Number((promote7d[0] as any)?.cnt || 0);
+  const avgStrengthChange = Number((avgStr7d[0] as any)?.avg || 0);
+
+  const healthScore = goldSummary.total > 0 ? Math.min(1, goldSummary.avgStrength * goldSummary.total / 10) : 0;
+  const healthStatus = healthScore > 0.6 ? '繁茂' : healthScore > 0.3 ? '稳定' : '休耕期';
+
+  // 预警 + 记忆韧性提示
+  const alerts: string[] = [];
+  if (goldSummary.total === 0) alerts.push('金库为空');
+  if (goldSummary.avgStrength < 0.2) alerts.push('当前金库强度偏低，但人类记忆本就有模糊性——正如老照片会褪色，珍贵的褶皱反而更真实');
+  if (goldGrowth7d === 0 && promoteCount7d === 0 && goldSummary.total > 0) alerts.push('7天无新记忆, 记忆森林进入休耕期');
+
   const overallStatus =
     goldSummary.total > 0 && goldSummary.avgStrength > 0.1
       ? '健康'
@@ -300,8 +396,13 @@ export function generateVaultReport(
         ? '金库空（新系统）'
         : '注意（金库强度偏低）';
 
+  const narrativeMemories = sqlite.queryAll("SELECT raw_input FROM memories WHERE calcium_score > 0.6 ORDER BY created_at DESC LIMIT 3");
+  const narrative = `记忆森林正在自然演替：新芽（7日新增金库）：${goldGrowth7d} 条 | 老树（保留黑钻）：${promoteCount7d} 颗 | 当前生态健康度：${healthStatus}`;
+
   return {
     timestamp: new Date().toISOString(),
+    trends: { gold_growth_7d: goldGrowth7d, promote_count_7d: promoteCount7d, avg_strength_change: Math.round(avgStrengthChange * 100) / 100, health_score: Math.round(healthScore * 100) / 100, health_status: healthStatus, narrative },
+    alerts,
     alluvial: {
       total: alluvialSummary.total,
       oldestAgeHours: alluvialSummary.oldestAgeHours,

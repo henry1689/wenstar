@@ -450,6 +450,25 @@ async function initPipeline(): Promise<void> {
   console.log('  AQC 质检引擎已启动 ✓');
 
   console.log(`  融合存储已初始化 (${storage.getSQLite().getStatus().totalRecords} 条记忆 ✓`);
+  // 景幻仙姑自动巡检（每30分钟）
+  setInterval(async () => {
+    try {
+      const sqlite = storage.getSQLite();
+      if (!sqlite) return;
+      const vaultMod = await import('../app/vault/VaultManager.js');
+      const promoted = vaultMod.autoPromoteCandidates(sqlite, 3);
+      if (promoted && promoted.length > 0) {
+        vaultMod.logVaultOperation(sqlite, 'auto_promote', 'gold', undefined, undefined, '巡检提炼' + promoted.length + '条');
+        console.log('[Jinghuan] 自动巡检: 提炼 ' + promoted.length + ' 条');
+      }
+      const report = vaultMod.generateVaultReport(sqlite, conversationHistory, 200, null);
+      if (report.trends && report.trends.gold_growth_7d === 0 && report.gold && report.gold.total === 0) {
+        console.log('[Jinghuan] 金库为空，记忆播种协议待触发');
+      }
+    } catch (e) {
+      console.warn('[Jinghuan] 巡检失败:', e);
+    }
+  }, 30 * 60 * 1000);
 }
 
 import { deriveM5Strategy } from './chat.js';
@@ -975,6 +994,47 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
 
     // ── 自动提炼（批量扫描金库） ──
+    // P2: 黑钻批量删除
+    if (req.method === 'POST' && url.pathname === '/api/vault/diamond/batch-delete') {
+      try {
+        const { batchDeleteDiamonds } = await import('../app/vault/VaultManager.js');
+        const body = JSON.parse(await readBody(req));
+        const result = batchDeleteDiamonds(storage.getSQLite(), body.ids || []);
+        res.writeHead(200); res.end(JSON.stringify(result));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+
+    // P2: 黑钻导出
+    if (req.method === 'GET' && url.pathname === '/api/vault/diamond/export') {
+      const { exportDiamonds } = await import('../app/vault/VaultManager.js');
+      const format = url.searchParams.get('format') || 'json';
+      const data = exportDiamonds(storage.getSQLite(), format as any);
+      res.writeHead(200, { 'Content-Type': format === 'csv' ? 'text/csv; charset=utf-8' : 'application/json; charset=utf-8' });
+      res.end(data);
+      return;
+    }
+
+    // P3: 砂金库压缩
+    if (req.method === 'POST' && url.pathname === '/api/vault/alluvial/compact') {
+      try {
+        const { compactAlluvial } = await import('../app/vault/VaultManager.js');
+        const days = parseInt(url.searchParams.get('days') || '30', 10);
+        const count = compactAlluvial(storage.getSQLite(), days);
+        res.writeHead(200); res.end(JSON.stringify({ compacted: count }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+
+    // P1: 操作日志查询
+    if (req.method === 'GET' && url.pathname === '/api/vault/log') {
+      const { getVaultLog } = await import('../app/vault/VaultManager.js');
+      const log = getVaultLog(storage.getSQLite(), parseInt(url.searchParams.get('limit') || '20', 10));
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ count: log.length, log }));
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/vault/auto-promote') {
       const { autoPromoteCandidates } = await import('../app/vault/VaultManager.js');
       const entries = autoPromoteCandidates(storage.getSQLite(), 5);

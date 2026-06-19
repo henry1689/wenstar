@@ -176,3 +176,17 @@ CREATE TABLE IF NOT EXISTS aqc_records (
 
 CREATE INDEX IF NOT EXISTS idx_aqc_status ON aqc_records(status);
 CREATE INDEX IF NOT EXISTS idx_aqc_source ON aqc_records(source_type, status);
+
+
+-- 景幻仙姑 · 三库操作日志（提炼追溯/批量操作审计）
+CREATE TABLE IF NOT EXISTS vault_log (
+    id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,
+    source_type TEXT,
+    source_id TEXT,
+    target_id TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vault_log_op ON vault_log(operation);
+CREATE INDEX IF NOT EXISTS idx_vault_log_time ON vault_log(created_at);
