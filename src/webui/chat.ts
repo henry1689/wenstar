@@ -1808,7 +1808,7 @@ let finalKnowledgeText = knowledgeBaseText;
             // 检查回复末尾是否已有反问
             const alreadyHasQuestion = reply.includes('？') && reply.length > (reply.lastIndexOf('？') + 2 > reply.length * 0.7 ? 0 : 999);
 
-            if (!askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
+            if (targetPerson && targetPerson.length > 0 && !askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
               // 选择问题（4级递进）
               let question = '';
               if (lowestCompleteness < 0.2) {
