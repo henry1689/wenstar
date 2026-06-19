@@ -1792,6 +1792,16 @@ let finalKnowledgeText = knowledgeBaseText;
             const profile = graph.getPersonProfile(targetPerson);
             const asked = profile?.asked_questions || [];
 
+            // 已知信息(completeness>0.5)或已提及≥3次 → 不再提问
+            if (profile && profile.completeness && profile.completeness > 0.5) { targetPerson = ''; }
+            if (targetPerson) {
+              var _mc = 0;
+              for (var _i = 0; _i < ctx.conversationHistory.length; _i++) {
+                if (ctx.conversationHistory[_i].content && ctx.conversationHistory[_i].content.indexOf(targetPerson) >= 0) _mc++;
+              }
+              if (_mc >= 3) { targetPerson = ''; }
+            }
+
             // 检查今天是否问过此人
             const today = new Date().toISOString().substring(0, 10);
             const askedToday = asked.some((q: string) => q.startsWith(today));

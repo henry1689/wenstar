@@ -173,6 +173,10 @@ class TokenBasedEntityExtractor {
     this.segmenter = new ChineseSegmenter(rules);
   }
 
+  extractTokens(text: string): string[] {
+    return this.segmenter.segment(text.toLowerCase());
+  }
+
   extract(text: string): Array<{ name: string; type: EntityType; allele: string }> {
     const found: Array<{ name: string; type: EntityType; allele: string }> = [];
     const seen = new Set<string>();
@@ -304,21 +308,17 @@ export class L3EntityAnnotator {
   ): L3AnnotationResult {
     if (!text) return { entity_genes: [] };
     const entities = this.extractor.extract(text);
-    // P2: 人名二次检测 — 对未匹配的2-3字token做姓氏检测
+    // P2: 人名二次检测 — 基于FMM分词token，不再直接滑窗（防"宝贝安安"→"贝安"）
     const existingNames = new Set(entities.map(e => e.name));
-    for (let i = 0; i < text.length; i++) {
-      for (let len = 2; len <= 3 && i + len <= text.length; len++) {
-        const rawToken = text.substring(i, i + len);
-        let cleaned = rawToken;
-        while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
-          cleaned = cleaned.substring(0, cleaned.length - 1);
-        }
-        // 3字人名如前两字已匹配则跳过（避免"熊勇请"→"熊勇"已匹配时重复）
-        if (cleaned.length === 3 && existingNames.has(cleaned.substring(0, 2))) continue;
-        if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
-          existingNames.add(cleaned);
-          entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
-        }
+    const tokens = this.extractor.extractTokens(text);  // 复用FMM分词
+    for (const token of tokens) {
+      let cleaned = token;
+      while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
+        cleaned = cleaned.substring(0, cleaned.length - 1);
+      }
+      if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
+        existingNames.add(cleaned);
+        entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
       }
     }
     const fullContext = `${text} ${context}`;

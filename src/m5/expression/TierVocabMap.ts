@@ -84,11 +84,17 @@ export function calcLevel(
   const intimateBoost = highIntimateCount >= 4 ? 0.25 : highIntimateCount >= 3 ? 0.15 : highIntimateCount >= 2 ? 0.08 : 0;
 
   const comp = rawText.includes('不太好')||rawText.includes('不好')||rawText.includes('失望')||rawText.includes('孤独')||rawText.includes('愤怒')||rawText.includes('受够')||rawText.includes('自私')||rawText.includes('恨')||rawText.includes('不在乎')||rawText.includes('低落');
+
   const care = !comp && pleasure < -0.3 && sincerity > 0.4 && aggression < 0.2;
   let pol = 'z', raw = 0;
   if (care) { pol = 'p'; raw = Math.min(pc + 0.15, 0.45); }
   else if (pc > nc && pc > 0.08) { pol = 'p'; raw = Math.min(pc + intimateBoost, 1); }
   else if (nc > pc && nc > 0.08) { pol = 'n'; raw = nc; }
+
+  // 温情场景保护：涉及孩子/家人时压制等级
+  const familyContext = /宝宝|宝贝|孩子|女儿|儿子|妈妈|奶奶|爷爷|外婆|外公|小[朋友孩宝]|安安|[一-龥]{2,4}岁/.test(rawText);
+  if (familyContext && pol === 'p' && raw > 0.35) { raw = 0.35; }
+
   let lv = 0;
   if (raw >= 0.4) lv = 2;
   else if (raw >= 0.1) lv = 1;
