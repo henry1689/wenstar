@@ -9,7 +9,7 @@ const path = require('path');
 
 const PORT = 5174;
 const DIST = __dirname + '/dist';
-const API_TARGET = { host: 'localhost', port: 3001 };
+const API_TARGET = { host: 'localhost', port: 3000 };
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -24,6 +24,25 @@ const MIME = {
 
 http.createServer((req, res) => {
   const url = req.url;
+
+  // API 代理
+  if (url.startsWith('/voices') || url.startsWith('/voice') || url.startsWith('/engine')) {
+    const ttsOpts = {
+      host: 'localhost',
+      port: 8765,
+      path: url,
+      method: req.method,
+      headers: { ...req.headers, host: 'localhost:8765' },
+    };
+    const ttsReq = http.request(ttsOpts, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+    ttsReq.on('error', () => { res.writeHead(502); res.end('502'); });
+    if (req.method !== 'GET' && req.method !== 'HEAD') req.pipe(ttsReq);
+    else ttsReq.end();
+    return;
+  }
 
   // API 代理
   if (url.startsWith('/api/') || url.startsWith('/audio/')) {

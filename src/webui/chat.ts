@@ -190,6 +190,12 @@ const LEVEL_NAMES = ['粉末','液体','固体','晶体'];
 
 const topicAskCount = new Map<string, number>();
 
+/** P3: AQC 记忆强化仪式防重复 */
+let _qcRitualDone = false;
+
+/** P3: 成长警示防重复 */
+let _qcGrowthAlertDone = false;
+
 function getTopicRepeatCount(message: string): number {
 
   const words = message.match(/[一-龥]{4,}/g);
@@ -1241,7 +1247,17 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const beijingTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
-    const timeGuard = `[当前时间] ${beijingTime}（北京时间）——回答时间问题时必须以此为准，不能编造。`;
+    // 农历日期（2026年映射表）
+    const lunarMap: Record<number, string> = {
+      119:'腊月廿一',128:'正月初一',129:'正月初二',217:'腊月三十',218:'正月初一',
+      312:'正月廿四',405:'二月十八',502:'三月十五',605:'四月十九',619:'五月初五',
+      702:'五月十七',801:'六月十七',905:'七月廿四',927:'八月十六',1003:'八月廿二',
+      1101:'九月廿二',1201:'十月廿二',
+    };
+    const _md = (now.getMonth()+1)*100+now.getDate();
+    const lunarDate = lunarMap[_md] || '';
+
+    const timeGuard = `[当前时间] ${beijingTime}（北京时间）${lunarDate ? ' 农历' + lunarDate : ''}——回答时间、日期、节气、节日问题必须以此为准，不能编造。`;
 
     // 通用幻觉防护：禁止编造过去事件、日期、用户生活细节
     const memoryGuard = '注意：你没有记忆的过去事件、日期、穿着、对话内容绝对不能编造。不确定就说不记得了。宁可少说，不能说错。';
