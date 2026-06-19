@@ -266,6 +266,28 @@ export class MaintenanceService {
     this.setConversationHistory(compacted);
     this.saveConversationHistory();
 
+    // 砂金库同步：压缩后清理 SQLite 旧数据 + 写入摘要
+    if (this._sqliteGetter) {
+      try {
+        const sqlite = this._sqliteGetter();
+        if (sqlite) {
+          const firstTs = toCompact.length > 0 ? (toCompact[0].timestamp || new Date().toISOString()) : new Date().toISOString();
+          const lastTs = toCompact.length > 0 ? (toCompact[toCompact.length - 1].timestamp || new Date().toISOString()) : new Date().toISOString();
+          if (summaries.length > 0) {
+            const summaryText = summaries.map(function(s) { return s.content; }).filter(Boolean).join(' | ');
+            if (summaryText) {
+              sqlite.insertConversation('assistant', '【对话摘要】' + summaryText.substring(0, 200), { seqPos: 0 });
+            }
+          }
+          const cutoff = remaining.length > 0 ? (remaining[0].timestamp || new Date().toISOString()) : new Date().toISOString();
+          sqlite.writeRaw('DELETE FROM conversations WHERE timestamp < ? AND is_summary = 0', [cutoff]);
+          console.log('[Maintenance] 砂金库同步完成, 清理 < ' + cutoff);
+        }
+      } catch (e) {
+        console.warn('[Maintenance] 砂金库同步失败:', e);
+      }
+    }
+
     this.lastCompaction = new Date().toISOString();
     console.log(
       `[Maintenance] 对话压缩: ${history.length} → ${compacted.length} 条 ` +
