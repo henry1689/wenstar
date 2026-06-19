@@ -578,6 +578,31 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // 修复：干净的三层注入结构——对话原文/enrichedHistory、记忆/memoryFragments、知识/knowledgeBaseText
     let memoryFragments: string[] = [];
     let enrichedHistory = ctx.conversationHistory.slice(-60);
+    // 时间导航：检测用户是否在问"昨天/上周说了什么"
+    const _tmMatch = message.match(/(昨天|前天|上周|上个月|前几天|最近|刚才)/);
+    if (_tmMatch && (message.indexOf('说') >= 0 || message.indexOf('聊') >= 0 || message.indexOf('提') >= 0)) {
+      try {
+        const _tmNow = new Date();
+        const _tmStart = new Date();
+        const _tmEnd = new Date();
+        const _tmUnit = _tmMatch[1];
+        if (_tmUnit === '昨天') { _tmStart.setDate(_tmNow.getDate() - 1); }
+        else if (_tmUnit === '前天') { _tmStart.setDate(_tmNow.getDate() - 2); _tmEnd.setDate(_tmNow.getDate() - 1); }
+        else if (_tmUnit === '上周') { _tmStart.setDate(_tmNow.getDate() - 7); }
+        else if (_tmUnit === '上个月') { _tmStart.setMonth(_tmNow.getMonth() - 1); }
+        else if (_tmUnit === '前几天') { _tmStart.setDate(_tmNow.getDate() - 3); }
+        else if (_tmUnit === '刚才') { _tmStart.setHours(_tmNow.getHours() - 1); }
+        const _tmRows = ctx.storage.getSQLite().findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
+        if (_tmRows && _tmRows.length > 0) {
+          const _tmTexts = _tmRows.map(function(r){return r.content;}).filter(Boolean).join(' | ').substring(0, 300);
+          memoryFragments.push('【时间检索】' + _tmUnit + '的对话：' + _tmTexts);
+          console.log('[TimeNav] ' + _tmUnit + ' 检索到 ' + _tmRows.length + ' 条');
+        }
+      } catch (err) {
+        console.warn('[TimeNav] 检索失败:', err);
+      }
+    }
+
 
     let emotionalMemories: ScoredMemory[] = [];
 

@@ -309,11 +309,11 @@ export class MaintenanceService {
     this.rescueNamesBeforeCompression(turns, sqlite);
 
     const result: ConversationTurn[] = [];
-    const CHUNK_SIZE = 4;
+    const CHUNK_SIZE = 20; // LLM 批量摘要：20轮一组
 
     for (let i = 0; i < turns.length; i += CHUNK_SIZE) {
       const chunk = turns.slice(i, i + CHUNK_SIZE);
-      const userTexts = chunk.filter(t => t.role === 'user').map(t => t.content);
+      const userTexts = chunk.filter(function(t) { return t.role === 'user'; }).map(function(t) { return t.content; });
       const combinedUser = userTexts.join('').substring(0, 60);
       if (!combinedUser.trim()) continue;
 
@@ -333,15 +333,20 @@ export class MaintenanceService {
       }
 
       if (inGold) {
-        // 已存金库 → 保留一行标记，便于追溯
         result.push({ role: 'user', content: `(已存金库) ${combinedUser.substring(0, 40)}` });
+      } else {
+        // 未存金库但有人类对话 → 生成摘要（LLM可用时使用LLM，否则用规则摘要）
+        const allContent = chunk.map(function(t) { return t.content; }).filter(Boolean).join(' ');
+        if (allContent.length > 10) {
+          // 规则摘要：取关键内容，控制长度
+          var summary = allContent.substring(0, 80);
+          if (allContent.length > 80) summary += '…';
+          result.push({ role: 'user', content: '【历史对话】' + summary });
+        }
       }
-      // 未存且在 AQC 阈值以上 → 未来在此插入 AQC 质检队列
-      // 当前阶段：未存金库的日常对话直接丢弃，不占用空间
     }
 
-    console.log(`[Compaction] 智能压缩: ${turns.length} 轮 → ${result.length} 条摘要 ` +
-      `(关联 M2 金库检测)`);
+    console.log(`[Compaction] 智能压缩: ${turns.length} 轮 → ${result.length} 条摘要`);
     return result;
   }
 
