@@ -1806,9 +1806,10 @@ let finalKnowledgeText = knowledgeBaseText;
             const today = new Date().toISOString().substring(0, 10);
             const askedToday = asked.some((q: string) => q.startsWith(today));
             // 检查回复末尾是否已有反问
-            const alreadyHasQuestion = reply.includes('？') && reply.length > (reply.lastIndexOf('？') + 2 > reply.length * 0.7 ? 0 : 999);
+            const alreadyHasQuestion = reply.trim().endsWith('？') || reply.indexOf('\n\n❓') >= 0;
 
-            if (targetPerson && targetPerson.length > 0 && !askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
+            const _alreadyExplained = targetPerson && targetPerson.length > 0 && message.indexOf(targetPerson) >= 0 && (/是/.test(message) || /叫/.test(message));
+            if (targetPerson && targetPerson.length > 0 && !_alreadyExplained && !askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
               // 选择问题（4级递进）
               let question = '';
               if (lowestCompleteness < 0.2) {

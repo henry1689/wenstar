@@ -308,17 +308,39 @@ export class L3EntityAnnotator {
   ): L3AnnotationResult {
     if (!text) return { entity_genes: [] };
     const entities = this.extractor.extract(text);
-    // P2: 人名二次检测 — 基于FMM分词token，不再直接滑窗（防"宝贝安安"→"贝安"）
+    // P2: 人名二次检测 — 混合策略：FMM已知词 + 未知单字区滑窗
     const existingNames = new Set(entities.map(e => e.name));
-    const tokens = this.extractor.extractTokens(text);  // 复用FMM分词
-    for (const token of tokens) {
-      let cleaned = token;
-      while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
-        cleaned = cleaned.substring(0, cleaned.length - 1);
-      }
-      if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
-        existingNames.add(cleaned);
-        entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
+    const tokens = this.extractor.extractTokens(text);
+    let _tk = 0;
+    while (_tk < tokens.length) {
+      if (tokens[_tk].length === 1) {
+        const _start = _tk;
+        while (_tk < tokens.length && tokens[_tk].length === 1) _tk++;
+        const region = tokens.slice(_start, _tk).join('');
+        for (let _ri = 0; _ri < region.length; _ri++) {
+          for (let _len = 2; _len <= 3 && _ri + _len <= region.length; _len++) {
+            const _raw = region.substring(_ri, _ri + _len);
+            let cleaned = _raw;
+            while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
+              cleaned = cleaned.substring(0, cleaned.length - 1);
+            }
+            if (cleaned.length === 3 && existingNames.has(cleaned.substring(0, 2))) continue;
+            if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
+              existingNames.add(cleaned);
+              entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
+            }
+          }
+        }
+      } else {
+        let cleaned = tokens[_tk];
+        while (cleaned.length > 1 && GRAMMAR_WORDS_PERSON.has(cleaned[cleaned.length - 1])) {
+          cleaned = cleaned.substring(0, cleaned.length - 1);
+        }
+        if (cleaned.length >= 2 && cleaned.length <= 3 && !existingNames.has(cleaned) && isPersonName(cleaned)) {
+          existingNames.add(cleaned);
+          entities.push({ name: cleaned, type: 'person' as EntityType, allele: cleaned });
+        }
+        _tk++;
       }
     }
     const fullContext = `${text} ${context}`;
