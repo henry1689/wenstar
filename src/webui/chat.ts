@@ -190,11 +190,6 @@ const LEVEL_NAMES = ['粉末','液体','固体','晶体'];
 
 const topicAskCount = new Map<string, number>();
 
-/** P3: AQC 记忆强化仪式防重复 */
-let _qcRitualDone = false;
-
-/** P3: 成长警示防重复 */
-let _qcGrowthAlertDone = false;
 
 function getTopicRepeatCount(message: string): number {
 
@@ -1675,7 +1670,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
                 : options[0];
 
-              reply += '\n\n❓ 你说的' + personName + '是你的' + optionText + '呀？';
+              // ❓ 提问移除（改为上下文注入，信任LLM自然询问）
 
               break; // 一次只问一个人
 
@@ -1760,86 +1755,34 @@ let finalKnowledgeText = knowledgeBaseText;
       }
     } catch (err) { console.warn('[GlobalScan] 全文扫描兜底失败:', err); }
 
-    // ── P2: 玉瑶不经意提问 — 补齐人物画像（不查户口，自然聊天）
-    // 每次只问一个人、只问一条信息、不超过70%完整度就不问
+    // ── P2: 人物信息上下文注入（让LLM自然决定如何提及，而非硬编码提问）
     try {
-      // 从 M1 实体中找人物
       const personEntities = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name !== '有人' && g.name !== '某人' && g.name !== '大家');
       if (personEntities.length > 0 && ctx.m4) {
         const graph = ctx.m4.getFamilyGraph();
         if (graph) {
-          // 找完整度最低的人物提问
-          let targetPerson = '';
-          let lowestCompleteness = 1;
+          const personHints: string[] = [];
           for (const p of personEntities) {
             const profile = graph.getPersonProfile(p.name);
             if (profile) {
-              if (profile.completeness !== undefined && profile.completeness < lowestCompleteness) {
-                lowestCompleteness = profile.completeness;
-                targetPerson = p.name;
-              }
-            } else {
-              // 没有画像 → 说明从未被记录过
-              if (lowestCompleteness > 0) {
-                lowestCompleteness = 0;
-                targetPerson = p.name;
+              const parts: string[] = [p.name];
+              if (profile.relation_to_user && profile.relation_to_user !== '认识的人') parts.push(profile.relation_to_user);
+              if (profile.occupation) parts.push('做' + profile.occupation);
+              if (profile.traits && profile.traits.length > 0) parts.push('性格' + profile.traits.join('/'));
+              if (parts.length > 1) {
+                personHints.push('- ' + parts.join('，') + '（如果合适可以自然地聊聊他/她，但不要每轮都问）');
+              } else {
+                personHints.push('- ' + p.name + '：你刚才提到了，如果合适可以自然地问一句，但不要硬套公式');
               }
             }
           }
-
-          // 只在完整度 < 0.7 时提问
-          if (targetPerson && lowestCompleteness < 0.7) {
-            const profile = graph.getPersonProfile(targetPerson);
-            const asked = profile?.asked_questions || [];
-
-            // 已知信息(completeness>0.5)或已提及≥3次 → 不再提问
-            if (profile && profile.completeness && profile.completeness > 0.5) { targetPerson = ''; }
-            if (targetPerson) {
-              var _mc = 0;
-              for (var _i = 0; _i < ctx.conversationHistory.length; _i++) {
-                if (ctx.conversationHistory[_i].content && ctx.conversationHistory[_i].content.indexOf(targetPerson) >= 0) _mc++;
-              }
-              if (_mc >= 3) { targetPerson = ''; }
-            }
-
-            // 检查今天是否问过此人
-            const today = new Date().toISOString().substring(0, 10);
-            const askedToday = asked.some((q: string) => q.startsWith(today));
-            // 检查回复末尾是否已有反问
-            const alreadyHasQuestion = reply.trim().endsWith('？') || reply.indexOf('\n\n❓') >= 0;
-
-            const _alreadyExplained = targetPerson && targetPerson.length > 0 && message.indexOf(targetPerson) >= 0 && (/是/.test(message) || /叫/.test(message));
-            if (targetPerson && targetPerson.length > 0 && !_alreadyExplained && !askedToday && !alreadyHasQuestion && reply.indexOf('\n\n❓') === -1) {
-              // 选择问题（4级递进）
-              let question = '';
-              if (lowestCompleteness < 0.2) {
-                // 第一级：什么都不懂
-                question = targetPerson + '？这个名字我第一次听你说，你们是怎么认识的呀？';
-              } else if (lowestCompleteness < 0.4) {
-                // 第二级：知道关系但不知背景
-                question = '你好像经常提起' + targetPerson + '，你们认识很久了吗？';
-              } else if (lowestCompleteness < 0.6) {
-                // 第三级：知道基础但不知细节
-                question = targetPerson + '平时是做什么工作的呀？感觉你们挺聊得来的。';
-              } else {
-                // 第四级：大部分知道但缺故事
-                question = '你和' + targetPerson + '之间有没有什么特别有意思的故事？';
-              }
-              // 用内心独白方式追加，使提问不显得突兀
-              reply += '\n\n（想起你刚刚提到' + targetPerson + '，顺口问一句）' + question;
-
-              // 记录已问过
-              if (profile) {
-                graph.updatePersonProfile(targetPerson, {
-                  asked_questions: [...asked, today + ':level_' + Math.floor(lowestCompleteness * 10)],
-                } as any);
-              }
-            }
+          if (personHints.length > 0) {
+            knowledgeBaseText = '【人物关系】' + personHints.join('\n') + '\n\n' + knowledgeBaseText;
           }
         }
       }
     } catch (err) {
-      console.warn('[ProfileAsk] 不经意提问失败:', (err as Error).message);
+      console.warn('[ProfileCtx] 注入失败:', (err as Error).message);
     }
 
     // ── 用户反馈检测（Module 3: 梦境自我进化的输入信号） ──
