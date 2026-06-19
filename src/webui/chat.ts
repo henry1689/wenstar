@@ -997,6 +997,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const ctx_m4 = await ctx.m4.orchestrate(decision, emotionalMemories);
 
+      // 砂金库降级：当金库检索结果不足时，从砂金库补充
+      if (ctx_m4.memory_summary.timeline.length < 2 && message.length > 4) {
+        try {
+          const sandResults = ctx.storage.getSQLite().searchConversations(message, 3);
+          if (sandResults.length > 0) {
+            ctx_m4.memory_summary.timeline = sandResults.map((r: any) => ({
+              time: r.timestamp, summary: r.content.substring(0, 60), calcium_level: 0
+            })).concat(ctx_m4.memory_summary.timeline);
+            console.log('[M4] 砂金库补充: ' + sandResults.length + ' 条');
+          }
+        } catch (err) {
+          console.warn('[M4] 砂金库检索失败:', err);
+        }
+      }
+
     // M4 知识融合
 
     // ── MemoryGate 幻觉防护 — 基于实际检索结果生成精确防护
@@ -1388,6 +1403,8 @@ let finalKnowledgeText = knowledgeBaseText;
     for (const [_t,_re] of Object.entries(_topicKw)) { if (_re.test(message)) { _topic = _t; break; } }
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
+        ctx.saveConversationHistory();
+        try { ctx.storage.getSQLite().insertConversation('user', message, { seqPos, topic: _topic, perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 

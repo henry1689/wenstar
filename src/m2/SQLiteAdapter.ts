@@ -134,6 +134,9 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN classification_pending INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
 
     // 迁移：主人大脑镜像 — 4张表（DDL 中含 IF NOT EXISTS，但不是所有环境都会重跑 DDL）
+    try { this.db.run("SELECT COUNT(*) FROM conversations"); } catch {
+      try { const fullDdl = readFileSync(SCHEMA_PATH, 'utf-8'); this.db.run(fullDdl); } catch (e2) { console.warn('[SQLite] 砂金库表迁移失败:', e2); }
+    }
     try { this.db.run("SELECT COUNT(*) FROM master_profile"); } catch {
       // 表不存在 — 重新执行 DDL 创建它
       try { const fullDdl = readFileSync(SCHEMA_PATH, 'utf-8'); this.db.run(fullDdl); } catch (e2) { console.warn('[SQLite] 主人镜像表迁移失败:', e2); }
@@ -152,6 +155,74 @@ export class SQLiteAdapter {
   close(): void {
     if (this.db) this.db.close();
     this.ready = false;
+  }
+
+  // ─── 砂金库：全量对话活档案 ───
+
+  /** 写入一条对话记录（即时落盘） */
+  insertConversation(role: string, content: string, options?: {
+    seqPos?: number; topic?: string; entityNames?: string[];
+    perception?: { pleasure: number; arousal: number; intimacy: number };
+    calciumScore?: number;
+  }): number {
+    this.ensureReady();
+    const now = new Date().toISOString();
+    this.runSql(
+      'INSERT INTO conversations (role, content, timestamp, seq_pos, topic, entity_names, perception_summary, calcium_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [role, content, now, options?.seqPos ?? null, options?.topic ?? null,
+       options?.entityNames ? JSON.stringify(options.entityNames) : null,
+       options?.perception ? JSON.stringify(options.perception) : null,
+       options?.calciumScore ?? null]
+    );
+    this.save();
+    return this.queryAll('SELECT last_insert_rowid() as id')[0]?.id as number || 0;
+  }
+
+  /** 搜索砂金库对话（降级检索用） */
+  searchConversations(keyword: string, limit = 10): Array<{ id: number; role: string; content: string; timestamp: string; topic?: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp, topic FROM conversations WHERE content LIKE ? AND is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+      ['%' + keyword + '%', limit]
+    );
+  }
+
+  /** 按实体名搜索（M4降级路径） */
+  searchConversationsByEntity(entityName: string, limit = 10): Array<{ id: number; role: string; content: string; timestamp: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp FROM conversations WHERE entity_names LIKE ? AND is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+      ['%' + entityName + '%', limit]
+    );
+  }
+
+  /** 按时间范围检索（"上周说了什么"） */
+  findByTimeRange(start: string, end: string, limit = 20): Array<{ id: number; role: string; content: string; timestamp: string }> {
+    this.ensureReady();
+    return this.queryAll(
+      'SELECT id, role, content, timestamp FROM conversations WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC LIMIT ?',
+      [start, end, limit]
+    );
+  }
+
+  /** 获取砂金库统计 */
+  getConversationStats(): { total: number; userCount: number; assistantCount: number; oldest: string; newest: string } {
+    this.ensureReady();
+    const rows = this.queryAll(
+      "SELECT COUNT(*) as total, SUM(CASE WHEN role='user' THEN 1 ELSE 0 END) as userCount, SUM(CASE WHEN role='assistant' THEN 1 ELSE 0 END) as assistantCount, MIN(timestamp) as oldest, MAX(timestamp) as newest FROM conversations"
+    );
+    const r = rows[0] || { total: 0, userCount: 0, assistantCount: 0, oldest: '', newest: '' };
+    return { total: Number(r.total) || 0, userCount: Number(r.userCount) || 0, assistantCount: Number(r.assistantCount) || 0, oldest: String(r.oldest || ''), newest: String(r.newest || '') };
+  }
+
+  /** 获取最近对话（供 LLM 上下文拼接） */
+  getRecentConversations(limit = 100): Array<{ role: string; content: string }> {
+    this.ensureReady();
+    const rows = this.queryAll<{ role: string; content: string }>(
+        'SELECT role, content FROM conversations WHERE is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+        [limit]
+      );
+      return rows.reverse();
   }
 
   // ─── 写入 ───

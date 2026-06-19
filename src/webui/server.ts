@@ -64,7 +64,6 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const DATA_DIR = path.join(PROJECT_ROOT, 'data', 'webui');
 const DB_PATH = path.join(DATA_DIR, 'knowledge', 'family_graph.db');
 const HTML_PATH = path.join(__dirname, 'index.html');
-const CONV_LOG_PATH = path.join(DATA_DIR, 'conversations.json');
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const TTS_URL = process.env.TTS_URL || 'http://localhost:8765';
 
@@ -107,44 +106,34 @@ function getSelfModel(): SelfModelV1 {
   };
 }
 
-// ── 对话记忆 ──
+// ── 对话记忆（砂金库驱动 — SQLite 即时落盘） ──
 let conversationHistory: ConversationTurn[] = [];
-const MAX_SAVED_TURNS = 500; // 保留最近 250 轮完整对话（鸿艺要求，注意100轮以上）
+const MAX_SAVED_TURNS = 500;
 function loadConversationHistory(): void {
   try {
-    if (existsSync(CONV_LOG_PATH)) {
-      const raw = fs.readFileSync(CONV_LOG_PATH, 'utf-8');
-      const data = JSON.parse(raw);
-      if (Array.isArray(data)) {
-        conversationHistory = data.filter(
-          (t: any) => t.role && (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string'
-        );
-      }
-      console.log(`  从磁盘加载了 ${conversationHistory.length} 条对话记忆 ✓`);
+    if (storage) {
+      const recent = storage.getSQLite().getRecentConversations(500);
+      conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }));
     }
-  } catch (err) { console.error('[Conv] 加载对话历史失败:', err); conversationHistory = []; }
+    console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+  } catch (err) { console.error('[Conv] 砂金库加载失败:', err); conversationHistory = []; }
 }
-let _convSaveTimer: ReturnType<typeof setTimeout> | null = null;
-function saveConversationHistory(): void {
-  // 防抖：500ms 内的多次写入合并为一次
-  if (_convSaveTimer) clearTimeout(_convSaveTimer);
-  _convSaveTimer = setTimeout(() => {
-    try { fs.writeFileSync(CONV_LOG_PATH, JSON.stringify(conversationHistory.slice(-MAX_SAVED_TURNS), null, 2), 'utf-8'); } catch (err) { console.error('[Conv] 保存对话历史失败:', err); }
-    _convSaveTimer = null;
-  }, 500);
-}
-/** 强制立即保存对话历史（关闭前调用） */
-function flushConversationHistory(): void {
-  if (_convSaveTimer) { clearTimeout(_convSaveTimer); _convSaveTimer = null; }
-  try { fs.writeFileSync(CONV_LOG_PATH, JSON.stringify(conversationHistory.slice(-MAX_SAVED_TURNS), null, 2), 'utf-8'); } catch (err) { console.error('[Conv] 强制保存失败:', err); }
-}
-function recordTurn(role: 'user' | 'assistant', content: string): void {
-  try { conversationHistory.push({ role, content }); saveConversationHistory(); } catch (err) { console.error('[Conv] recordTurn失败:', err); }
-}
+function saveConversationHistory(): void { /* 不再需要 — SQLite 已即时落盘 */ }
+function flushConversationHistory(): void { /* 不再需要 */ }
 function resetConversationHistory(): void {
   conversationHistory = [];
-  try { if (existsSync(CONV_LOG_PATH)) fs.unlinkSync(CONV_LOG_PATH); } catch (err) { console.error('[Conv] 重置对话历史失败:', err); }
 }
+
+function recordTurn(role: 'user' | 'assistant', content: string): void {
+  try {
+    conversationHistory.push({ role, content });
+    // 即时落盘到砂金库 SQLite
+    if (storage) {
+      storage.getSQLite().insertConversation(role, content);
+    }
+  } catch (err) { console.error('[Conv] recordTurn失败:', err); }
+}
+
 
 // ── 维护引擎 ──
 const maintenance = new MaintenanceService();
@@ -668,7 +657,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     // ── 清除聊天记录（轻量版，仅清对话不关服务） ──
     if (req.method === 'POST' && url.pathname === '/api/chat/clear') {
       conversationHistory = [];
-      try { if (existsSync(CONV_LOG_PATH)) fs.writeFileSync(CONV_LOG_PATH, '[]', 'utf-8'); } catch (err) { console.error('[Conv] 清除失败:', err); }
+      /* CONV_LOG_PATH 已废弃 — 砂金库 SQLite 接管 */
       flushConversationHistory();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ status: 'ok' }));

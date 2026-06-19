@@ -178,6 +178,27 @@ CREATE INDEX IF NOT EXISTS idx_aqc_status ON aqc_records(status);
 CREATE INDEX IF NOT EXISTS idx_aqc_source ON aqc_records(source_type, status);
 
 -- ═══════════════════════════════════════════════════
+-- 砂金库 — 全量对话活档案（取代内存数组+JSON）
+-- ═══════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    seq_pos INTEGER,
+    topic TEXT,
+    entity_names TEXT,
+    perception_summary TEXT,
+    calcium_score REAL DEFAULT 0,
+    is_summary INTEGER DEFAULT 0,
+    summary_of_range TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_conv_timestamp ON conversations(timestamp);
+CREATE INDEX IF NOT EXISTS idx_conv_topic ON conversations(topic);
+CREATE INDEX IF NOT EXISTS idx_conv_seq ON conversations(seq_pos);
+CREATE INDEX IF NOT EXISTS idx_conv_summary ON conversations(is_summary);
+
+-- ═══════════════════════════════════════════════════
 -- 主人大脑镜像 — 主人的完整个人世界
 -- ═══════════════════════════════════════════════════
 
