@@ -279,9 +279,12 @@ export class MaintenanceService {
               sqlite.insertConversation('assistant', '【对话摘要】' + summaryText.substring(0, 200), { seqPos: 0 });
             }
           }
-          const cutoff = remaining.length > 0 ? (remaining[0].timestamp || new Date().toISOString()) : new Date().toISOString();
-          sqlite.writeRaw('DELETE FROM conversations WHERE timestamp < ? AND is_summary = 0', [cutoff]);
-          console.log('[Maintenance] 砂金库同步完成, 清理 < ' + cutoff);
+          const cutoff = remaining.length > 0 ? remaining[0].timestamp : null;
+          // 安全保护：没有timestamp时不清理（防止误删全库）
+          if (cutoff) {
+            sqlite.writeRaw('DELETE FROM conversations WHERE timestamp < ? AND is_summary = 0', [cutoff]);
+            console.log('[Maintenance] 清理 < ' + cutoff);
+          }
         }
       } catch (e) {
         console.warn('[Maintenance] 砂金库同步失败:', e);

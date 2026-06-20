@@ -113,7 +113,7 @@ function loadConversationHistory(): void {
   try {
     if (storage) {
       const recent = storage.getSQLite().getRecentConversations(500);
-      conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }));
+      conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
     }
     console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
   } catch (err) { console.error('[Conv] 砂金库加载失败:', err); conversationHistory = []; }

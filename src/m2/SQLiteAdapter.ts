@@ -204,10 +204,10 @@ export class SQLiteAdapter {
   }
 
   /** 获取最近对话（供 LLM 上下文拼接） */
-  getRecentConversations(limit = 100): Array<{ role: string; content: string }> {
+  getRecentConversations(limit = 100): Array<{ role: string; content: string; timestamp: string }> {
     this.ensureReady();
-    const rows = this.queryAll<{ role: string; content: string }>(
-        'SELECT role, content FROM conversations WHERE is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+    const rows = this.queryAll<{ role: string; content: string; timestamp: string }>(
+        'SELECT role, content, timestamp FROM conversations WHERE is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
         [limit]
       );
       return rows.reverse();
