@@ -408,6 +408,25 @@ export class FamilyGraph implements FamilyGraphInterface {
         } else {
           details.push(`边已存在: ${userName} --${relation}--> ${person.name}`);
         }
+      } else {
+        // 非亲属人名 → 社交关系记录（所有人名都入库，不丢弃）
+        const _ex = this.query('SELECT id FROM nodes WHERE name = ?', [person.name]);
+        let _pid: string;
+        if (_ex.length === 0) {
+          _pid = uid();
+          this.addNode({ id: _pid, type: 'person', name: person.name });
+          nodesCreated++;
+          details.push('创建社交节点: ' + person.name);
+          this.updatePersonProfile(person.name, {} as any);
+        } else {
+          _pid = _ex[0].id;
+        }
+        const _ee = this.query('SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?', [userId, _pid, 'acquaintance_of']);
+        if (_ee.length === 0) {
+          this.addEdge({ id: uid(), source_id: userId, target_id: _pid, relation: 'acquaintance_of' });
+          edgesCreated++;
+          details.push('创建社交边: ' + userName + ' --acquaintance_of--> ' + person.name);
+        }
       }
     }
 

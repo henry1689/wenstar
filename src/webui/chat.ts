@@ -474,6 +474,23 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
     }
 
+    // 双保险：entity_relations 备份写入
+    try {
+      const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
+      if (_pg.length > 0) {
+        const _sqlite = ctx.storage.getSQLite();
+        for (const _p of _pg) {
+          _sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', _p.name, 'person');
+          _sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', '我', 'self');
+          const _me = _sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', ['我', 'self']);
+          const _them = _sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [_p.name, 'person']);
+          if (_me.length > 0 && _them.length > 0) {
+            _sqlite.writeRaw('INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at', _me[0].id, _them[0].id, '认识的人', 0.5, new Date().toISOString());
+          }
+        }
+      }
+    } catch (_pe) {}
+
     // P3: 答案提取 — 用户回答了玉瑶之前的问题，提取信息更新画像
     try {
       let personGenes = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我');
