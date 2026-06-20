@@ -201,7 +201,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         new Date().toISOString(),
       ]
     );
-    this.markDirty();
+    this.markDirty(true);
   }
 
   async addEdge(edge: GraphEdge): Promise<void> {
@@ -217,7 +217,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         new Date().toISOString(),
       ]
     );
-    this.markDirty();
+    this.markDirty(true);
   }
 
   async findRelated(entityName: string, relation?: string): Promise<GraphQueryResult[]> {
@@ -821,11 +821,12 @@ export class FamilyGraph implements FamilyGraphInterface {
     return results;
   }
 
-  /** P4: 标记脏数据，2秒聚合落盘 */
-  private markDirty(): void {
+  /** 标记脏数据（500ms聚合落盘，平衡IO与可靠性） */
+  private markDirty(immediate = false): void {
     this._dirty = true;
+    if (immediate) { this.flush(); return; }
     if (!this._saveTimer) {
-      this._saveTimer = setTimeout(() => this.flush(), 2000);
+      this._saveTimer = setTimeout(() => this.flush(), 500);
     }
   }
 
@@ -890,7 +891,7 @@ export class FamilyGraph implements FamilyGraphInterface {
     merged.completeness = this.calcProfileCompleteness(merged);
     this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
-    this.flush(); // 画像更新频率低但关键，立即落盘
+    this.flush();
   }
 
   /**
