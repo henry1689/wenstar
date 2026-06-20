@@ -278,7 +278,7 @@ export default function ChatPanel({ inline }: Props) {
   // 发送消息
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || isTyping) return;
+    if (!text || isTyping || isTTSPlaying()) return;
     setInput('');
     setShowWelcome(false);
     addMessage('user', text);
@@ -428,7 +428,7 @@ export default function ChatPanel({ inline }: Props) {
               e.target.value = '';
             }} />
           <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么...（可粘贴文本/图片）"
-            value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping} autoFocus
+            value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping || isTTSPlaying()} autoFocus
             rows={1}
             onInput={(e) => {
               const el = e.currentTarget;
@@ -575,7 +575,7 @@ export default function ChatPanel({ inline }: Props) {
             </div>
             <div className="chat-input-area">
               <textarea ref={inputRef} className="chat-input" placeholder="对玉瑶说点什么..." autoFocus
-                value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping}
+                value={input} onChange={(e) => handleInputChange(e.target.value)} onKeyDown={handleKeyDown} disabled={isTyping || isTTSPlaying()}
                 rows={1}
                 onInput={(e) => {
                   const el = e.currentTarget;
