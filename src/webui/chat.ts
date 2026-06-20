@@ -474,19 +474,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
     }
 
-    // 双保险：entity_relations 备份写入
+    // 双保险：备份写入 FamilyGraph（所有person实体统一进家族图谱）
     try {
       const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
-      if (_pg.length > 0) {
-        const _sqlite = ctx.storage.getSQLite();
+      if (_pg.length > 0 && ctx.m4) {
+        const _fg = ctx.m4.getFamilyGraph();
         for (const _p of _pg) {
-          _sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', _p.name, 'person');
-          _sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)', '我', 'self');
-          const _me = _sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', ['我', 'self']);
-          const _them = _sqlite.queryAll('SELECT id FROM entities WHERE name = ? AND type = ?', [_p.name, 'person']);
-          if (_me.length > 0 && _them.length > 0) {
-            _sqlite.writeRaw('INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at', _me[0].id, _them[0].id, '认识的人', 0.5, new Date().toISOString());
-          }
+          _fg.integrateSocialRelation(_p.name, 'acquaintance_of', message).catch(function() {});
         }
       }
     } catch (_pe) {}
@@ -1760,14 +1754,7 @@ let finalKnowledgeText = knowledgeBaseText;
               sqlite.writeRaw('INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at',
                 newMe[0].id, newPerson[0].id, '认识的人', 0.3, new Date().toISOString());
             }
-            // 写入 knowledge_base
-            const kbRows = sqlite.queryAll('SELECT id FROM knowledge_base WHERE title = ?', ['人物: ' + rawName]);
-            if (kbRows.length === 0) {
-              const kid = 'person_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
-              sqlite.writeRaw('INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                kid, '人物: ' + rawName, rawName + '：在对话中被提及', 'person',
-                JSON.stringify(['person:' + rawName, 'relation:认识的人']), new Date().toISOString(), new Date().toISOString());
-            }
+            // 知识库不再存人（已废弃，人物统一归家族图谱）
             // 同步到社交图谱
             try {
               const graph = ctx.m4.getFamilyGraph();

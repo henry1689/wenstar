@@ -425,16 +425,7 @@ export class MaintenanceService {
           );
         }
 
-        // 写入 knowledge_base
-        const kbExisting = sqlite.queryAll('SELECT id FROM knowledge_base WHERE title = ?', [`人物: ${rawName}`]);
-        if (kbExisting.length === 0) {
-          const id = `person_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
-          sqlite.writeRaw(
-            'INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            id, `人物: ${rawName}`, `${rawName}：在对话中被提及（压缩抢救）`, 'person',
-            JSON.stringify([`person:${rawName}`, 'relation:认识的人']), now, now
-          );
-        }
+        // 知识库不再存人（已废弃，人物统一归家族图谱）
         rescued++;
         console.log(`[Compaction] 人名抢救: ${rawName}`);
       } catch (err) {

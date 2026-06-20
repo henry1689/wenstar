@@ -296,34 +296,7 @@ export function storeRelations(sqlite: any, relations: DetectedRelationship[], s
         );
       }
 
-      // 知识库条目：如果已有则追加备注，没有则新建
-      const existing = sqlite.queryAll(
-        `SELECT id, content FROM knowledge_base WHERE title = ? AND source_type = 'person' ORDER BY created_at DESC LIMIT 1`,
-        [`人物: ${rel.personName}`]
-      );
-
-      if (existing.length > 0) {
-        // 追加新备注
-        const oldContent = existing[0].content;
-        const newContent = oldContent + '\n' + rel.context;
-        sqlite.writeRaw(`UPDATE knowledge_base SET content = ?, updated_at = ? WHERE id = ?`,
-          newContent, now, existing[0].id);
-        console.log(`[Relation] 追加备注: ${rel.personName} (${rel.relation})`);
-      } else {
-        // 新建条目
-        const id = `person_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
-        const title = rel.relation === '认识的人' || rel.relation === '其他'
-          ? `人物: ${rel.personName}`
-          : `人物: ${rel.personName} (${rel.relation})`;
-        const content = `${rel.personName}：${rel.context}`;
-        sqlite.writeRaw(
-          `INSERT INTO knowledge_base (id, title, content, source_type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          id, title, content, 'person',
-          JSON.stringify([`person:${rel.personName}`, `relation:${rel.relation}`]),
-          now, now
-        );
-        console.log(`[Relation] 新建: ${title}`);
-      }
+      // 人物信息统一存储在 FamilyGraph，不再写入 knowledge_base
       stored++;
     } catch (err) {
       console.warn('[Relation] 图谱写入失败:', err);

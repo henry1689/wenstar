@@ -121,7 +121,10 @@ export class WorkingMemory {
         console.warn('[WM] 即时毕业失败，入buffer:', err);
       });
     } else if (tier === 'light') {
-      this.writeLightEntry(entry).catch((e) => { console.warn('[WM] 轻量失败:', e); });
+      this.writeLightEntry(entry).catch((e) => {
+        console.warn('[WM] 轻量失败，入buffer:', e);
+        this.buffer.push(entry);
+      });
     } else {
       this.buffer.push(entry);
     }
