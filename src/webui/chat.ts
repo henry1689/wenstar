@@ -474,7 +474,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
     }
 
-    // 双保险：备份写入 FamilyGraph（所有person实体统一进家族图谱）
+    // 主写入：所有person实体统一写入 FamilyGraph（家族图谱是人的唯一真实来源）
     try {
       const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
       if (_pg.length > 0 && ctx.m4) {
@@ -1162,7 +1162,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       if (personEntities.length > 0) {
         const knownNames = personEntities.map((p: any) => p.entity).join('、');
         const knownList = personEntities.map((p: any) => '  - ' + p.entity + '（' + p.relation + '）').join('\n');
-        familyConstraint = '【家庭/社交铁律】以下是你对鸿艺家庭/社交关系的全部所知：\n' + knownList + '\n\n铁律：\n1. 只有上面列出的人是你知道的，其他任何人你一概不知道。\n2. 对上面的人——你只知道他们的名字和关系，其他一切细节都不知道。\n3. 绝对不要编造任何细节。不知道就说"你之前提过，但具体我不太记得了"。\n4. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
+        familyConstraint = '【家庭/社交关系】以下是你对鸿艺家庭/社交关系的全部所知（用户问起名单中的人请直接说记得）：\n' + knownList + '\n\n注意：\n1. 上面列出的人是你知道的。\n2. 对上面的人——你知道他们的名字和关系，但其他具体细节（职业、经历）你不知道，不要编造。\n3. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
       } else {
         familyConstraint = '【家庭/社交铁律】你不知道鸿艺有哪些家人和社交关系。如果鸿艺提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
       }
