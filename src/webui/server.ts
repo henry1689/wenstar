@@ -5,11 +5,29 @@
  * 支持 M1-M8 完整观测数据 API + 持久化对话记忆。
  * 运行: npm run webui  |  访问: http://localhost:3000
  */
+
+// 加载 .env 文件（启动时最先执行）
+import { readFileSync as _readFile, existsSync as _exists } from 'node:fs';
+try {
+  if (_exists('./.env')) {
+    const _envContent = _readFile('./.env', 'utf-8');
+    for (const _line of _envContent.split('\n')) {
+      const _trimmed = _line.trim();
+      if (!_trimmed || _trimmed.startsWith('#')) continue;
+      const _eqIdx = _trimmed.indexOf('=');
+      if (_eqIdx < 0) continue;
+      const _key = _trimmed.substring(0, _eqIdx).trim();
+      const _value = _trimmed.substring(_eqIdx + 1).trim();
+      if (_key && !process.env[_key]) process.env[_key] = _value;
+    }
+    console.log('[Config] .env 已加载');
+  }
+} catch (_e) { /* .env not required */ }
+
 import http from 'node:http';
-import fs from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, existsSync } from 'node:fs';
 import { DNAEncoder } from '../m1/DNAEncoder.js';
 import { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';
 import { M3LogicOrchestrator } from '../m3/M3LogicOrchestrator.js';
@@ -21,6 +39,7 @@ import { FamilyGraph } from '../m4/FamilyGraph.js';
 import { MaintenanceService } from './maintenance.js';
 import { InductionScheduler } from '../m7/InductionScheduler.js';
 import { ConsolidationQueue } from '../m7/ConsolidationQueue.js';
+import { MemoryAssessor } from '../app/vault/MemoryAssessor.js';
 import { M7Orchestrator, startM7Interval } from '../m7/M7Orchestrator.js';
 import busboy from 'busboy';
 import { M8FusionAdapter } from '../m8/M8FusionAdapter.js';
@@ -1093,6 +1112,37 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // P0-3: 幻觉校验日志查询
+    if (req.method === 'GET' && url.pathname === '/api/hallucination/log') {
+      const _sqlite = storage.getSQLite();
+      try {
+        const _rows = _sqlite.queryAll('SELECT * FROM hallucination_log ORDER BY created_at DESC LIMIT 50');
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ count: (_rows as any[]).length, logs: _rows }));
+      } catch (_he) {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ count: 0, logs: [] }));
+      }
+      return;
+    }
+
+    // P2-1: 手动触发 MemoryAssessor
+    if (req.method === 'POST' && url.pathname === '/api/assessor/run') {
+      try {
+        const action = url.searchParams.get('action') || 'sand';
+        const a = new MemoryAssessor(storage);
+        let resultCount = 0;
+        if (action === 'sand') resultCount = await a.triggerSandToGold();
+        else if (action === 'diamond') resultCount = await a.triggerGoldToDiamond();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', action, count: resultCount }));
+      } catch (_ae) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: String(_ae) }));
+      }
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/vault/auto-promote') {
       const { autoPromoteCandidates } = await import('../app/vault/VaultManager.js');
       const entries = autoPromoteCandidates(storage.getSQLite(), 5);
@@ -1483,7 +1533,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           'Cache-Control': 'max-age=3600',
           'Access-Control-Allow-Origin': '*',
         });
-        res.end(fs.readFileSync(audioPath));
+        res.end(readFileSync(audioPath));
         return;
       }
       res.writeHead(404); res.end('404');

@@ -637,13 +637,18 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const hasNewEntity = dna.entity_genes.some(g => g.name && !recentContext.includes(g.name));
 
+    const hasPersonEntity = dna.entity_genes.some((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
+
     const hasContinuationMarkers = /嗯|对|好|行|是|是的|没错|就是|[那这]样/.test(message) && message.length < 20;
 
     // 日常闲聊检测 — 短消息/日常问候 → 不触发记忆检索
     const isCasualChat = /^(在干嘛|忙什么|吃了吗|睡了|晚安|早安|早上好|晚上好|刚起来|下班|到家|今天天气|好开心|好难过|好累|心情|感觉|今天.*不错|今天.*好|嗯|好|行|对|是|好的|知道了|没事|算了|哈哈|嘿嘿|哎|唉)$/i.test(message.trim())
       || (message.length < 10 && /今天|天气|吃|睡|累|困|忙|下班|到家|早安|晚安/.test(message));
 
-    const isTopicShift = hasNewEntity || (!isFollowUp && !hasContinuationMarkers && !isCasualChat);
+    // 🔴 P0-2: 跟进追问有实体时开启定向检索（跳过知识库全量搜索）
+    // P0-2: 跟进追问全部触发轻量定向检索（防止语境断层）
+    const isTopicShift = hasNewEntity || isFollowUp || (!isFollowUp && !hasContinuationMarkers && !isCasualChat);
+    const isLimitedRetrieval = isFollowUp && !hasNewEntity;
 
     // ═══════════════════════════════════════════════════════════════
 
@@ -673,6 +678,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         messageLength: message.length,
 
+        perception: p,
+
       };
 
       const modeDecision = decideMode(modeCtx);
@@ -697,13 +704,58 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
       // 情感传染：过去情绪较高的记忆 → 增强 empathy
 
-      if (isTopicShift) {
+            if (isTopicShift) {
 
         const currentEntityNames = dna.entity_genes.map(g => g.name).filter(Boolean);
 
-        const relatedEntities = currentEntityNames.length > 0
+        // P0-2: 定向检索模式（isLimitedRetrieval）— 跳过分解和实体扩展，只查当前实体
+        if (isLimitedRetrieval) {
+          const limMode: SimilarityMode = p.intimacy > 0.4 ? 'intimacy_search' : 'balanced';
+          let limMemories = ctx.storage.findByEmotionalSimilarity({
+            current_perception: p, similarity_mode: limMode,
+            entities: currentEntityNames, limit: 3,
+          });
+          limMemories = rerank(limMemories, message);
+          emotionalMemories = limMemories.filter((m: any) =>
+            (m.scores.emotional > 0.65 || m.composite > 0.35) && m.record.id !== dna.branch_id
+          ).slice(0, 2);
+          // 定向检索也输出用户曾提到
+          if (emotionalMemories.length > 0) {
+            memoryFragments.push('【用户曾提到】"' + emotionalMemories[0].record.raw_input?.substring(0, 60) + '"');
+          }
+        } else {
+          // P1-3: 多跳检索（1度→不足3条升2度）
+          let relatedEntities: Array<{ name: string; relation: string; strength: number }> = [];
+          if (currentEntityNames.length > 0) {
+            let anyType = ctx.storage;
+            let hop1 = (anyType as any).findRelatedEntitiesN(currentEntityNames, 1, 0.3) || [];
+            if (hop1.length < 3) {
+              let hop2 = (anyType as any).findRelatedEntitiesN(currentEntityNames, 2, 0.3) || [];
+              relatedEntities = [...hop1, ...hop2];
+            } else {
+              relatedEntities = hop1;
+            }
 
-          ? ctx.storage.findRelatedEntities(currentEntityNames, 0.3) : [];
+            // P1-3b: 从 FamilyGraph 补充人物关系（双源合并）
+            try {
+              const _fg = ctx.m4?.getFamilyGraph();
+              if (_fg) {
+                const _familyNames = _fg.getAllPersonNames();
+                const _matchedPerson = currentEntityNames.find((n: string) => _familyNames.includes(n));
+                if (_matchedPerson) {
+                  // 通过 getPersonProfile 获取关联人物摘要（含关系描述）
+                  const _profile = _fg.getPersonProfile(_matchedPerson);
+                  if (_profile?.relation_to_user) {
+                    relatedEntities.push({
+                      name: _matchedPerson,
+                      relation: 'known_person',
+                      strength: 0.5,
+                    });
+                  }
+                }
+              }
+            } catch (_fgErr) { /* 图谱扩展不阻塞 */ }
+          }
 
         const uniqueExpanded = [...new Set([...currentEntityNames, ...relatedEntities.map(r => r.name)])];
 
@@ -767,6 +819,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         }
 
+        } // ← P0-2: else闭合
+
         const recentHistoryRaw = enrichedHistory.slice(-4).map((t: any) => t.content).join('');
 
         let freshMemories = emotionalMemories.filter((m: any) => !recentHistoryRaw.includes(m.record.id));
@@ -816,6 +870,37 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
               } catch {}
             }
             if (_rows.length > 0) console.log('[BlackDiamond] 命中 ' + _rows.length + ' 条珍藏记忆');
+
+          // P1-1: LIKE 粗筛不足 3 条 → 向量语义补充检索
+          if (_rows.length < 3) {
+            try {
+              const _p = p;
+              const allDiamonds = _sqlite.queryAll("SELECT id, summary, emotion_tag, emotion_vector FROM black_diamond");
+              const queryVec = [_p.pleasure, _p.arousal, _p.dominance, _p.aggression, _p.sincerity, _p.humor, _p.factual, _p.logical, _p.certainty, _p.abstract, _p.temporal_focus, _p.self_ref, _p.intimacy, _p.power_diff, _p.dependency, _p.moral_judgment, _p.etiquette, _p.belonging, _p.sexual_attraction, _p.sensory_craving, _p.energy_merge, _p.possessiveness, _p.ecstasy, _p.safety];
+              const scored: Array<{ row: any; score: number }> = [];
+              for (const _d of allDiamonds as any[]) {
+                if (!_d.emotion_vector) continue;
+                try {
+                  const dv = JSON.parse(_d.emotion_vector as string);
+                  if (!dv || dv.length !== 24) continue;
+                  let dot = 0, nq = 0, nd = 0;
+                  for (let i = 0; i < 24; i++) { dot += queryVec[i] * dv[i]; nq += queryVec[i] ** 2; nd += dv[i] ** 2; }
+                  const sim = dot / (Math.sqrt(nq) * Math.sqrt(nd) || 0.0001);
+                  if (sim > 0.5) scored.push({ row: _d, score: sim });
+                } catch {}
+              }
+              scored.sort((a, b) => b.score - a.score);
+              const vecResults = scored.slice(0, 3 - _rows.length);
+              for (const _vr of vecResults) {
+                const _tag = _vr.row.emotion_tag ? "【" + _vr.row.emotion_tag + "】" : "";
+                const exists = _rows.some((_ex: any) => _ex.id === _vr.row.id);
+                if (!exists && (_vr.row.summary || "")) {
+                  memoryFragments.push("【珍藏记忆】" + _tag + (_vr.row.summary || "").substring(0, 120));
+                }
+              }
+              if (vecResults.length > 0) console.log("[BlackDiamond] 向量补充 " + vecResults.length + " 条");
+            } catch (_ve) { /* 向量降级不阻塞 */ }
+          }
           }
         }
       }
@@ -1102,6 +1187,10 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         familyContext: ctx_m4.family_context,
 
+        memoryFragments,
+
+        enableSemanticFusion: process.env["ENABLE_SEMANTIC_FUSION"] === "true",
+
       });
 
       if (fused.fusedText !== knowledgeBaseText) {
@@ -1114,22 +1203,45 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     } catch (err) { console.warn('[Fusion] 三源熔铸失败(降级为拼接):', err); }
 
-    // ── 主动推送机制：玉瑶感知情绪/话题 → 主动检索知识库 → 注入对话 ──
+    // ── P2-2: 主动推送 — 情感象限触发（情绪/亲密/真诚/实体四象限） ──
     try {
       if (isTopicShift && !isCasualChat) {
-        var _pk = '';
-        if (p.pleasure < -0.3 && p.sincerity > 0.3) { _pk = '安慰 陪伴 温暖'; }
-        else if (p.intimacy > 0.4 || /家人|妈妈|爸爸|老婆|老公|家/.test(message)) { _pk = '家人 家庭 陪伴'; }
+        var _pushKeywords = '';
+        var _pushSource = '';
+
+        // 象限1: 低落 → 安慰温暖
+        if (p.pleasure < -0.3) {
+          if (p.sincerity > 0.5) { _pushKeywords = '安慰 陪伴 温暖 依靠'; _pushSource = '低落+真诚'; }
+          else { _pushKeywords = '安慰 温暖 关怀'; _pushSource = '低落'; }
+        }
+        // 象限2: 高亲密 → 亲密回忆/情感共鸣
+        else if (p.intimacy > 0.4) {
+          if (p.sexual_attraction > 0.3) { _pushKeywords = '亲密 思念 暧昧'; _pushSource = '亲密+性吸引'; }
+          else { _pushKeywords = '陪伴 亲密 温情'; _pushSource = '亲密'; }
+        }
+        // 象限3: 高真诚 → 深入交流话题
+        else if (p.sincerity > 0.5 && p.pleasure > 0) {
+          _pushKeywords = '真诚 交心 信任 心里话'; _pushSource = '真诚';
+        }
+        // 象限4: 实体匹配 → 关联知识
         else if (dna.entity_genes.length > 0) {
           var _pe = dna.entity_genes.filter(function(g){return g.type !== 'self'}).map(function(g){return g.name}).filter(Boolean);
-          if (_pe.length > 0) _pk = _pe[0];
+          if (_pe.length > 0) { _pushKeywords = _pe[0]; _pushSource = '实体: ' + _pe[0]; }
         }
-        if (_pk) {
-          var _pr = await ctx.knowledgeBase.search(_pk, 1);
+
+        // 家族关键词增强（叠加在任意象限上）
+        if (/家人|妈妈|爸爸|老婆|老公|家|父母|孩子/.test(message)) {
+          _pushKeywords = (_pushKeywords ? _pushKeywords + ' ' : '') + '家人 家庭 亲情';
+          _pushSource += '+家庭';
+        }
+
+        if (_pushKeywords) {
+          var _pr = await ctx.knowledgeBase.search(_pushKeywords, 1);
           if (_pr.length > 0 && !knowledgeBaseText.includes(_pr[0].content.substring(0, 30))) {
             var _pc = _pr[0].content;
             if (_pc.length > 300) _pc = _pc.substring(0, 300) + '...';
-            knowledgeBaseText = '【玉瑶想起】' + _pc + String.fromCharCode(10,10) + knowledgeBaseText;         console.log('[ActivePush] ' + _pk + ' -> 已推送知识');
+            knowledgeBaseText = '【玉瑶想起】' + _pc + String.fromCharCode(10,10) + knowledgeBaseText;
+            console.log('[ActivePush] ' + _pushSource + ' -> ' + _pushKeywords.substring(0, 20));
           }
         }
       }
@@ -1162,7 +1274,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       if (personEntities.length > 0) {
         const knownNames = personEntities.map((p: any) => p.entity).join('、');
         const knownList = personEntities.map((p: any) => '  - ' + p.entity + '（' + p.relation + '）').join('\n');
-        familyConstraint = '【家庭/社交关系】以下是你对鸿艺家庭/社交关系的全部所知（用户问起名单中的人请直接说记得）：\n' + knownList + '\n\n注意：\n1. 上面列出的人是你知道的。\n2. 对上面的人——你知道他们的名字和关系，但其他具体细节（职业、经历）你不知道，不要编造。\n3. 用户如果提到上面名单以外的人，直接说"这个人我没听你提过呢"。';
+        familyConstraint = '【⚠️ 强制反编造指令 — 必须遵守】\n你从未见过鸿艺提到的这些人，也从来看不到他们的长相。\n✅ 可以说的：他们的名字，他们和鸿艺的关系（如：同事、朋友）。\n🚫 绝对禁止编造以下内容（违反就是错误的回答）：\n  - 他们的长相、身高、胖瘦、皮肤、发型、五官、笑容、酒窝、声音\n  - 他们的穿着、气质、表情、动作\n  - 他们说过什么话、做过什么事\n  ✅ 正确回答长相问题："我没见过她，不知道她长什么样"\n  ✅ 正确回答细节问题："你没跟我说过这个，我不清楚"\n  🚫 错误示范（绝对不能这样回答）："她个子不高，皮肤白白的，笑起来有酒窝"\n\n以下是你对鸿艺家庭/社交关系的全部所知（用户问起名单中的人请直接说记得）：\n' + knownList;
       } else {
         familyConstraint = '【家庭/社交铁律】你不知道鸿艺有哪些家人和社交关系。如果鸿艺提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
       }
@@ -1441,7 +1553,32 @@ let finalKnowledgeText = knowledgeBaseText;
 
         try {
 
-        reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message);
+        // 后续追问：将上一轮话题注入 finalKnowledgeText（作为系统层上下文，LLM 不会忽略）
+    var _prev = null;
+    if (/[那这]个|然后|还有|后来|可是|但是|而且|再|又|还|呢|吧|吗/.test(message) && message.length < 25) {
+      for (var _pi = ctx.conversationHistory.length - 1; _pi >= 0; _pi--) {
+        if (ctx.conversationHistory[_pi].role === 'user') { _prev = ctx.conversationHistory[_pi].content; break; }
+      }
+    }
+    if (_prev && _prev.length > 4) {
+      finalKnowledgeText = '【用户上一句】"' + _prev.substring(0, 80) + '"（这是用户刚才说的话，现在他接着这个话题继续说。直接用这个来理解他现在的意思。）\n\n【⚠️ 反编造铁律 — 绝对禁止无中生有】\n用户刚才说：' + _prev.substring(0, 60) + '，现在接着说：' + message.substring(0, 40) + '\n你对此人此事的了解仅限于你知道其名字和基础关系。\n🚫 绝不要编造：\n- 任何具体事件、对话、去过哪里、做过什么\n- 任何人物关系（XX是你老婆/你妈/你亲戚等）\n- 任何职业、经历、喜好、细节\n- 任何"上次你说""上次你们""我记得你提过"之类的具体回忆\n✅ 如果不确定，只说"这个我不太清楚了"或"我记不太清了"\n\n' + (finalKnowledgeText || '');
+      console.log('[FollowUp] prev="' + _prev.substring(0,40) + '" msg="' + message + '"');
+    }
+    reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message);
+
+    // P0-3: 规则幻觉校验 — 提取回复中的人名对照 FamilyGraph
+    try {
+      const { validateReply, writeHallucinationLog } = await import('../app/validation/HallucinationValidator.js');
+      const _fg = ctx.m4?.getFamilyGraph();
+      if (_fg && reply) {
+        const _knownNames = _fg.getAllPersonNames();
+        const _vr = validateReply(reply, _knownNames, message);
+        if (_vr.hasViolation) {
+          writeHallucinationLog(ctx.storage.getSQLite(), reply, _vr, _knownNames);
+        }
+      }
+    } catch (_ve) { /* 校验失败不阻塞主线 */ }
+
 
         // 候选回复生成（不阻塞主回复 — 默认不活跃，待前端请求时使用）
 

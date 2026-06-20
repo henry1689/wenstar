@@ -115,6 +115,7 @@ export function addBlackDiamond(
     calcium_level?: number;
     tags?: string[];
     notes?: string;
+    emotion_vector?: string;
   },
 ): BlackDiamondEntry {
   const id = `bd_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
@@ -123,7 +124,7 @@ export function addBlackDiamond(
   // P3: mark as promoted in memories table
   sqlite.writeRaw(`UPDATE memories SET promoted_to_diamond = 1 WHERE id = ?`, [params.source_id]);
   sqlite.writeRaw(
-    `INSERT INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, recall_count, tags, notes, created_at, updated_at)
+    `INSERT INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, recall_count, tags, notes, created_at, updated_at, emotion_vector)
      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
     id,
     params.summary,
@@ -132,6 +133,7 @@ export function addBlackDiamond(
     params.calcium_level ?? 1,
     JSON.stringify(tags),
     params.notes || '',
+    params.emotion_vector || null,
     now,
     now,
   );
@@ -262,7 +264,7 @@ export function promoteToBlackDiamond(sqlite: SQLiteAdapter, memoryId: string): 
   }
 
   const rows = sqlite.queryAll(
-    `SELECT id, raw_input, calcium_level, recall_count, is_landmark, scar_type, narrative_tag
+    `SELECT id, raw_input, calcium_level, recall_count, is_landmark, scar_type, narrative_tag, perception_json
      FROM memories WHERE id = ? LIMIT 1`,
     [memoryId],
   );
@@ -274,6 +276,7 @@ export function promoteToBlackDiamond(sqlite: SQLiteAdapter, memoryId: string): 
   logVaultOperation(sqlite, 'promote', 'gold', memoryId, undefined, `提炼至黑钻: ${rawInput.substring(0, 30)}`);
   const tags = ['gold_提炼', emotionTag];
   if (mem.is_landmark === 1) tags.push('地标');
+  const emotionVec = (mem as any).perception_json || null;
 
   return addBlackDiamond(sqlite, {
     summary: rawInput.length > 200 ? rawInput.substring(0, 200) + '…' : rawInput,
@@ -282,6 +285,7 @@ export function promoteToBlackDiamond(sqlite: SQLiteAdapter, memoryId: string): 
     calcium_level: mem.calcium_level as number,
     tags,
     notes: `自动提炼于 ${new Date().toISOString()}`,
+    emotion_vector: emotionVec,
   });
 }
 

@@ -18,6 +18,7 @@
  */
 
 import type { ConversationTurn } from '../../m5/types/index.js';
+import type { Perception24D } from '../../m3/types/perception.js';
 
 // ─── 对话模式 ───
 
@@ -54,6 +55,8 @@ export interface MemoryGateContext {
   calciumLevel: number;
   /** 用户消息长度 */
   messageLength: number;
+  /** P1-2: M3 24D 感知向量（用于增强模式判定） */
+  perception?: Perception24D;
 }
 
 // ─── 过去时标记词 ───
@@ -92,6 +95,20 @@ export function decideMode(ctx: MemoryGateContext): ModeDecision {
   // 日常闲聊 → casual（也不查任何东西）
   for (const marker of CASUAL_MARKERS) {
     if (marker.test(message)) {
+  // P1-2: 感知层增强 — 即使正则判定为 casual，感知信号强时也激活轻量检索
+  if (ctx.perception) {
+    const p = ctx.perception;
+    if ((p.pleasure < -0.2 && p.arousal > 0.3) || p.intimacy > 0.4) {
+      return {
+        mode: 'memory_recall',
+        needsMemorySearch: true,
+        needsKnowledgeSearch: false,
+        pastMarkers: [],
+        knowledgeMarkers: [],
+      };
+    }
+  }
+
       return {
         mode: 'casual',
         needsMemorySearch: false,

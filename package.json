@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "sandbox": "npx tsx src/cli/sandbox.ts",
     "stress-test": "npx tsx test/run-all-stress.ts",
-    "webui": "npx tsx src/webui/server.ts",
+    "webui": "node start.cjs",
     "health": "npx tsx src/cli/health-check.ts"
   },
   "devDependencies": {

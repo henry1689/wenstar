@@ -76,6 +76,22 @@ export function decompose(query: string): DecomposedQuery {
   }
 
   // 枚举拆分（逗号分隔的多意图）
+  // 枚举拆分（逗号分隔、和与及连接的多意图）
+  if (/[和与及而且]/.test(trimmed) && trimmed.length > 6) {
+    // 检测 X和Y, X与Y, X及Y 模式（问句中拆分）
+    const enumMatch = trimmed.match(/^(.{2,10})[和与及](.{2,40})$/) || trimmed.match(/^(.{2,15})而且(.{2,40})$/) || trimmed.match(/^(.{2,15})而且(.{2,40})$/);
+    if (enumMatch) {
+      const parts = [enumMatch[1].trim(), enumMatch[2].trim()].filter(Boolean);
+      if (parts.length >= 2) {
+        return {
+          original: trimmed,
+          subQueries: parts,
+          intent: 'enumeration',
+        };
+      }
+    }
+  }
+
   if (trimmed.includes('、') || trimmed.includes('，') || trimmed.includes(',')) {
     const parts = trimmed.split(ENUM_SEPARATORS).filter(s => s.length >= 2);
     if (parts.length >= 2) {

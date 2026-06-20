@@ -152,7 +152,8 @@ CREATE TABLE IF NOT EXISTS black_diamond (
     tags TEXT,
     notes TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    emotion_vector TEXT DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_black_diamond_emotion ON black_diamond(emotion_tag);
@@ -283,3 +284,15 @@ CREATE TABLE IF NOT EXISTS master_events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_type ON master_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_date ON master_events(date);
+
+-- P0-3: 幻觉校验日志（自省模块输入源）
+CREATE TABLE IF NOT EXISTS hallucination_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reply_hash TEXT NOT NULL,
+    reply_preview TEXT NOT NULL,
+    hallucinated_names TEXT NOT NULL,
+    known_names TEXT,
+    severity TEXT NOT NULL DEFAULT 'low',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hallucination_created ON hallucination_log(created_at);

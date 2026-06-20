@@ -923,6 +923,14 @@ export class FamilyGraph implements FamilyGraphInterface {
     return parts.join('，');
   }
 
+  /**
+   * P0-3: 获取所有已知人员姓名（用于幻觉校验）
+   */
+  getAllPersonNames(): string[] {
+    const rows = this.query('SELECT name FROM nodes WHERE type = ?', ['person']);
+    return (rows as any[]).map(r => r.name as string).filter(Boolean);
+  }
+
   private rowToNode(row: any): GraphNode {
     return {
       id: row.nid ?? row.id,
