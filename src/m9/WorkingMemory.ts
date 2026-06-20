@@ -137,15 +137,14 @@ export class WorkingMemory {
   // 毕业规则：砂金库(conversations.json)已有全部原始对话
   // 合格(钙质≥1+实体)→进金库；不合格→丢弃
 
-  /** P0: 三级毕业策略
+  /** 毕业策略
    *  full: 钙质≥1+有实体 → 完整24D写入金库
-   *  light: 钙质≥0.5+有实体 → 轻量写入
-   *  false: 留在砂金库 */
+   *  light: 有实体 → 轻量写入（只要有内容就记住，不论钙质高低）
+   *  false: 无实体 → 留在砂金库 */
   private shouldGraduate(entry: WorkingEntry): 'full' | 'light' | false {
     if (!entry.hasMeaningfulEntity) return false;
     if (entry.calciumLevel >= 1) return 'full';
-    if (entry.calciumScore >= 0.5) return 'light';
-    return false;
+    return 'light'; // 只要有实体就轻量记录
   }
 
   async consolidate(): Promise<WriteResult[]> {

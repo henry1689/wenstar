@@ -441,30 +441,37 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const dna = ctx.encoder.encodeSingle(message);
 
-    // P3: LLM 辅助实体提取（识别类工具，非创造类）
+    // P3: LLM 辅助实体提取（三层过滤 — prompt约束+白名单+人名正则）
     try {
       const { extractEntitiesLLM } = await import('../m1/LLMEntityExtractor.js');
       const llmGenerate = async (prompt: string) => {
-        const result = await (ctx.llmProvider).generate({
-          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 300 } } as any,
-          cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0, sexual_attraction: 0, sensory_craving: 0, energy_merge: 0, ecstasy: 0, safety: 0.5 }, raw_input: prompt, calcium: 0 } } as any,
+        const r = await (ctx.llmProvider).generate({
+          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 128 } } as any,
+          cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0 }, raw_input: prompt, calcium: 0 } } as any,
           userMessage: prompt,
         });
-        return result.text;
+        return r.text;
       };
       const llmEntities = await extractEntitiesLLM(message, llmGenerate);
+      // 以LLM为基准，规则仅补充LLM未命中的非person实体
       if (llmEntities.length > 0) {
-        const existingNames = new Set(dna.entity_genes.map(e => e.name));
+        const llmNames = new Set(llmEntities.map(e => e.name));
+        // 规则提取的person实体只有LLM也确认才保留（消除"家里""贝安"等误报）
+        const keptRules = dna.entity_genes.filter((g: any) =>
+          g.type !== 'person' || g.name === '我' || llmNames.has(g.name)
+        );
+        const existingNames = new Set(keptRules.map(e => e.name));
         for (const le of llmEntities) {
           if (!existingNames.has(le.name)) {
             existingNames.add(le.name);
-            dna.entity_genes.push({ name: le.name, type: le.type, allele: le.name, phenotype: 'neutral', knowledge_type: 'private' } as any);
+            keptRules.push({ name: le.name, type: le.type, allele: le.name, phenotype: 'neutral', knowledge_type: 'private' } as any);
           }
         }
-        console.log('[LLMEntity] 补充 ' + llmEntities.length + ' 个: ' + llmEntities.map(e => e.name).join(','));
+        dna.entity_genes = keptRules;
+        console.log('[LLMEntity] 提取: ' + llmEntities.map(e => e.name).join(','));
       }
-    } catch (err) {
-      console.warn('[LLMEntity] 失败(静默降级):', (err as Error).message);
+    } catch (_err) {
+      // 失败静默降级到纯规则
     }
 
     // P3: 答案提取 — 用户回答了玉瑶之前的问题，提取信息更新画像
@@ -1584,7 +1591,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
         if (stored > 0 && !FALLBACK_REPLIES.includes(reply)) {
 
-          reply += `\n\nð¥已记住「${relations.map(r => r.personName).join('、')}」的关系～`;
+          console.log('[Relations] 已记住: ' + relations.map(function(r){return r.personName;}).join(', '));
 
         }
 
