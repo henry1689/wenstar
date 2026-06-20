@@ -68,6 +68,28 @@ function filterEntities(entities: LLMExtractedEntity[]): LLMExtractedEntity[] {
   return result;
 }
 
+
+/** 会话缓存：输入文本 → 实体列表，3分钟TTL，上限200条 */
+const _entityCache = new Map<string, { result: LLMExtractedEntity[]; expiresAt: number }>();
+const _CACHE_TTL = 180_000;
+
+function _cacheGet(key: string): LLMExtractedEntity[] | null {
+  const entry = _entityCache.get(key) as any;
+  if (entry && entry.expiresAt > Date.now()) return entry.result as LLMExtractedEntity[];
+  _entityCache.delete(key);
+  return null;
+}
+
+function _cacheSet(key: string, result: LLMExtractedEntity[]): void {
+  _entityCache.set(key, { result, expiresAt: Date.now() + _CACHE_TTL });
+  if (_entityCache.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of _entityCache) {
+      if (v.expiresAt <= now) _entityCache.delete(k);
+    }
+  }
+}
+
 // ─── 第一层：Prompt强约束 ───
 
 const EXTRACT_PROMPT = `任务规则：
@@ -142,6 +164,11 @@ export async function extractEntitiesLLM(
 ): Promise<LLMExtractedEntity[]> {
   if (!llmGenerate || !text || text.length < 2) return [];
 
+  // 缓存命中直接返回（3分钟TTL）
+  const _ck = text.substring(0, 120);
+  const _cc = _cacheGet(_ck);
+  if (_cc) { console.log('[LLMEntity] 缓存: ' + _cc.length + ' 实体'); return _cc; }
+
   // 构建极简强约束 Prompt
   const prompt = EXTRACT_PROMPT + '\n\n待处理文本：' + text + '\n\n输出模板：{"entities":[{"name":"内容","type":"person/emotion/event"}]}';
 
@@ -163,11 +190,13 @@ export async function extractEntitiesLLM(
         .map((e: any) => ({ name: e.name, type: normalizeType(e.type) }));
       // 第二层+第三层过滤
       const filtered = filterEntities(raw);
-      if (filtered.length > 0) return filtered;
+      if (filtered.length > 0) { _cacheSet(_ck, filtered); return filtered; }
     }
   } catch {
     // 超时/失败 → 正则兜底
   }
 
-  return regexFallback(text);
+  const _fb = regexFallback(text);
+  if (_fb.length > 0) _cacheSet(_ck, _fb);
+  return _fb;
 }
