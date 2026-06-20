@@ -446,7 +446,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       const { extractEntitiesLLM } = await import('../m1/LLMEntityExtractor.js');
       const llmGenerate = async (prompt: string) => {
         const r = await (ctx.llmProvider).generate({
-          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 128 } } as any,
+          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 256 } } as any,
           cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0 }, raw_input: prompt, calcium: 0 } } as any,
           userMessage: prompt,
         });
@@ -471,7 +471,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         console.log('[LLMEntity] 提取: ' + llmEntities.map(e => e.name).join(','));
       }
     } catch (_err) {
-      // 失败静默降级到纯规则
+      console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
     }
 
     // P3: 答案提取 — 用户回答了玉瑶之前的问题，提取信息更新画像

@@ -124,7 +124,7 @@ function normalizeType(type: string): EntityType {
 
 const REGEX_FALLBACK_RULES: Array<{ type: EntityType; patterns: RegExp[] }> = [
   { type: 'person', patterns: [
-    /(?:妈妈|爸爸|妈|爸|爷爷|奶奶|外公|外婆|哥哥|弟弟|姐姐|妹妹|老公|老婆|男朋友|女朋友|同事|同学|朋友|老板|上司|领导|亲戚|姑姑|舅舅|阿姨|叔叔|室友)/,
+    /(?:妈妈|爸爸|妈|爸|爷爷|奶奶|外公|外婆|哥哥|弟弟|姐姐|妹妹|老公|老婆|男朋友|女朋友|同事|同学|朋友|老板|上司|领导|亲戚|姑姑|舅舅|阿姨|叔叔|室友|搭档|合伙人|邻居|客户|下属|徒弟|师父|师傅|医生|老师|学生|顾问)/,
   ]},
   { type: 'emotion', patterns: [
     /(?:开心|快乐|难过|伤心|痛苦|焦虑|抑郁|孤独|失落|崩溃|愤怒|生气|烦躁|害怕|紧张|喜欢|爱|思念|感动|幸福|满足|委屈|压力|累|无聊|倦)/,
@@ -135,8 +135,8 @@ const REGEX_FALLBACK_RULES: Array<{ type: EntityType; patterns: RegExp[] }> = [
 ];
 
 function regexFallback(text: string): LLMExtractedEntity[] {
-  const result: LLMExtractedEntity[] = [];
   const seen = new Set<string>();
+  const result: LLMExtractedEntity[] = [];
   for (const rule of REGEX_FALLBACK_RULES) {
     for (const re of rule.patterns) {
       const match = text.match(re);
@@ -146,7 +146,17 @@ function regexFallback(text: string): LLMExtractedEntity[] {
       }
     }
   }
-  return filterEntities(result);
+  // 正则结果跳过人名校验（已是预验证的）
+  const dedup = new Set<string>();
+  const final: LLMExtractedEntity[] = [];
+  for (const e of result) {
+    if (!TYPE_ALLOWED.has(e.type)) continue;
+    const k = e.type + ":" + e.name;
+    if (dedup.has(k)) continue;
+    dedup.add(k);
+    final.push(e);
+  }
+  return final;
 }
 
 // ─── 主入口 ───
@@ -164,7 +174,7 @@ export async function extractEntitiesLLM(
 ): Promise<LLMExtractedEntity[]> {
   if (!llmGenerate || !text || text.length < 2) return [];
 
-  // 缓存命中直接返回（3分钟TTL）
+  // 缓存命中直接返回（仅缓存有结果的，空结果不缓存）
   const _ck = text.substring(0, 120);
   const _cc = _cacheGet(_ck);
   if (_cc) { console.log('[LLMEntity] 缓存: ' + _cc.length + ' 实体'); return _cc; }
@@ -176,7 +186,7 @@ export async function extractEntitiesLLM(
     const result = await Promise.race([
       llmGenerate(prompt),
       new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error('entity extract timeout')), 1500)
+        setTimeout(() => reject(new Error('entity extract timeout')), 5000)
       ),
     ]);
 
