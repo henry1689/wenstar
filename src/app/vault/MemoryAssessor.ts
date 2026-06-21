@@ -71,7 +71,9 @@ export class MemoryAssessor {
       }
 
       let promoted = 0;
-      for (const conv of recentConvs) {
+            // P0-7: 事务保护
+      sqlite.writeRaw('BEGIN');
+for (const conv of recentConvs) {
         if (conv.role !== 'user') continue;
         const text = (conv.content || '') as string;
         if (text.length < 10) continue; // 太短跳过
@@ -95,7 +97,8 @@ export class MemoryAssessor {
         }
       }
 
-      if (promoted > 0) {
+            sqlite.writeRaw('COMMIT');
+if (promoted > 0) {
         console.log(`[MemoryAssessor] 砂金→金库: ${promoted} 条`);
       }
     } catch (err) {

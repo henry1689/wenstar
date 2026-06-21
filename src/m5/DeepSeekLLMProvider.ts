@@ -311,6 +311,9 @@ export class DeepSeekLLMProvider implements LLMProvider {
     }
 
     // ═══ 构建聊天消息流 ═══
+        // P0-6: 预估Token并告警
+    const _totalTokens = Math.round((systemPrompt.length + (params.conversationHistory || []).reduce((s: number, t: any) => s + (t.content || '').length, 0) + (rawInput || '').length) / 2);
+    if (_totalTokens > 10000) console.warn('[TokenBudget] 预估Token超限: ' + _totalTokens + ' tokens');
     const messages: DeepSeekMessage[] = [
       { role: 'system', content: systemPrompt },
     ];

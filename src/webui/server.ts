@@ -148,7 +148,7 @@ function recordTurn(role: 'user' | 'assistant', content: string): void {
     conversationHistory.push({ role, content });
     // 即时落盘到砂金库 SQLite
     if (storage) {
-      storage.getSQLite().insertConversation(role, content);
+      conversationDB?.insertConversation(role, content);
     }
   } catch (err) { console.error('[Conv] recordTurn失败:', err); }
 }
@@ -174,6 +174,7 @@ maintenance.injectDeps({
 // ── 管道 ──
 let encoder: DNAEncoder;
 let storage: FusionStorageAdapter;
+let conversationDB: import("../m2/ConversationDB.js").ConversationDB;
 let m3: M3LogicOrchestrator;
 let familyGraph: FamilyGraph;
 let m4: M4Orchestrator;
@@ -515,6 +516,7 @@ async function processChat(message: string): Promise<ChatResponse> {
     conversationHistory, m8, somaticMemory,
     saveConversationHistory,
     getSelfModel,
+    conversationDB,
   });
 }
 

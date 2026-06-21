@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS decay_log (
     PRIMARY KEY (memory_id, checked_at)
 );
 
+-- P0-5: 情感检索加速复合索引
+CREATE INDEX IF NOT EXISTS idx_memories_calcium_strength ON memories(calcium_level, effective_strength);
+
 -- 黑钻库（精选歌单·永恒珍藏 — 景幻仙姑管理）
 CREATE TABLE IF NOT EXISTS black_diamond (
     id TEXT PRIMARY KEY,

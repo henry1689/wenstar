@@ -65,6 +65,7 @@ import { bionic } from '../adapter/bionic-adapter.js';
 
 import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.js';
 import { AsyncTaskQueue } from '../app/tools/AsyncTaskQueue.js';
+import { fetchBionicMemories, getVadToneHint, pushToVadCache, isVadAvailable } from './chat/retrieval.js';
 import { ingestFromConversation } from '../app/ingestion/ConversationIngestionService.js';
 
 // 全局异步任务队列（VAD 谱曲等不阻塞主回复的后台任务）
@@ -95,6 +96,8 @@ export interface ChatContext {
   clueAssistant: M5ClueAssistant;
 
   llmProvider: DeepSeekLLMProvider;
+  /** P0-9: 独立对话存储库 */
+  conversationDB: import('../m2/ConversationDB.js').ConversationDB;
 
   topicTracker: TopicTracker;
 
@@ -112,171 +115,20 @@ export interface ChatContext {
 
 }
 
-/** 仿生智脑降级检索（抽离为独立函数，仅在话题切换时调用）
- *  ① 外部结果自动绑定当前 scene_tags + 情感标签
- *  ② 按情绪匹配度过滤（愉悦度冲突时丢弃）
- *  ③ 记录本地优先日志
- */
-async function fetchBionicMemories(
-  message: string,
-  isTopicShift: boolean,
-  hasContinuationMarkers: boolean,
-  memoryFragments: string[],
-  enrichedHistory: ConversationTurn[],
-  perception?: { pleasure: number; arousal: number; intimacy: number },
-  sceneTags?: string[],
-): Promise<BionicSearchResult[]> {
-  if (!isTopicShift || hasContinuationMarkers) return [];
-  try {
-    // ③ 本地优先日志
-    const localMatchCount = memoryFragments.length;
-    console.log(`[External] 触发外部检索: 本地匹配数=${localMatchCount}, 原因=场景"${(sceneTags || []).join(',')}"需要补充`);
 
-    const bionicMemories = await bionic.search(message);
-    if (bionicMemories.length === 0) return [];
-
-    // ② 按情绪匹配度过滤：pleasure 冲突时丢弃
-    let filteredMemories = bionicMemories;
-    if (perception && perception.pleasure < -0.3) {
-      // 负面情绪时，只保留情感倾向不明显或匹配的外部知识
-      filteredMemories = bionicMemories.filter(m => {
-        const text = (m.core_facts || m.topic || '').toLowerCase();
-        const harshIndicators = ['数据', '统计', '研究显示', '调查', '报告', '标准', '正常范围'];
-        const hasHarsh = harshIndicators.some(w => text.includes(w));
-        return !hasHarsh; // 负面情绪时过滤掉冰冷数据型内容
-      });
-    }
-
-    // ① 结果打标签（跟随当前上下文）
-    const taggedResults = filteredMemories.map(m => ({
-      ...m,
-      _scene_tags: sceneTags || [],
-      _emotion: perception ? { pleasure: perception.pleasure, arousal: perception.arousal } : null,
-    }));
-
-    if (taggedResults.length > 0 && !memoryFragments.some(f => f.includes(taggedResults[0].core_facts?.substring(0, 40) || ''))) {
-      const text = taggedResults[0].core_facts || taggedResults[0].topic || '';
-
-      // ④ 情感化改写：根据当前情绪给外部知识加适配前缀
-      let externalPrefix = '【外部参考】';
-      if (perception) {
-        if (perception.pleasure < -0.3) {
-          externalPrefix = '【外部参考】这里有一些相关信息，你随便看看就好';
-        } else if (perception.pleasure > 0.3) {
-          externalPrefix = '【外部参考】我还找到一些有意思的资料';
-        } else {
-          externalPrefix = '【外部参考】补充一些相关信息';
-        }
-      }
-      memoryFragments.push(externalPrefix + text.substring(0, 100));
-      enrichedHistory.unshift({ role: 'assistant', content: '📕 【记忆】' + text.substring(0, 100) });
-      console.log(`[External] 已注入外部记忆: ${text.substring(0, 40)}`);
-    }
-    return taggedResults;
-  } catch (err) {
-    console.warn('[BionicSearch] 检索失败:', err);
-    return [];
-  }
-}
-
-export const FALLBACK_REPLIES = [
-  '嗯～我在呢。你说，我听着。','嗯，我在听。你说。','唔…好呀，你说吧。',
-  '嗯～好呀。你说。','好嘞～你说吧，我听着呢。','诶～你说，我在听。',
-];
-
-const LEVEL_NAMES = ['粉末','液体','固体','晶体'];
-
-/** 话题追问计数器：追踪用户对同一话题的追问次数 */
-
-const topicAskCount = new Map<string, number>();
-
-
-function getTopicRepeatCount(message: string): number {
-
-  const words = message.match(/[一-龥]{4,}/g);
-
-  if (!words) return 0;
-
-  for (const w of words) {
-
-    const cnt = (topicAskCount.get(w) ?? 0) + 1;
-
-    topicAskCount.set(w, cnt);
-
-    return cnt;
-
-  }
-
-  return 0;
-
-}
-
-const PERC_LABELS: Record<string,{q:number;label:string}> = {
-
-  pleasure:{q:1,label:'E1愉悦度'}, arousal:{q:1,label:'E2唤醒度'}, dominance:{q:1,label:'E3支配感'},
-
-  aggression:{q:1,label:'E4攻击性'}, sincerity:{q:1,label:'E5真诚度'}, humor:{q:1,label:'E6幽默感'},
-
-  factual:{q:2,label:'C1事实性'}, logical:{q:2,label:'C2逻辑性'}, certainty:{q:2,label:'C3确定性'},
-
-  abstract:{q:2,label:'C4抽象度'}, temporal_focus:{q:2,label:'C5时间焦点'}, self_ref:{q:2,label:'C6自我参照'},
-
-  intimacy:{q:3,label:'S1亲密度'}, power_diff:{q:3,label:'S2权力差'}, dependency:{q:3,label:'S3依赖度'},
-
-  moral_judgment:{q:3,label:'S4道德审判'}, etiquette:{q:3,label:'S5社交礼仪'}, belonging:{q:3,label:'S6群体归属'},
-
-  sexual_attraction:{q:4,label:'I1性吸引力'}, sensory_craving:{q:4,label:'I2感官渴望'}, energy_merge:{q:4,label:'I3能量交融'},
-
-  possessiveness:{q:4,label:'I4占有欲'}, ecstasy:{q:4,label:'I5愉悦/高潮'}, safety:{q:4,label:'I6安全感'},
-
-};
-
-export interface ChatResponse {
-
-  reply: string; turn_count: number;
-
-  m1: { branch_id: string; locus_path: string; seq_pos: number; leaf_zone: string; ref: string; entities: Array<{ name: string; type: string }>; raw_input: string; entity_genes: any[]; scene_tags?: string[]; ambiguity_score?: number };
-
-  m3: { quadrant1: any[]; quadrant2: any[]; quadrant3: any[]; quadrant4: any[]; calcium: { score: number; level: number; label: string; breakdown: any }; actions: string[]; reason: string; primary_emotion?: string; secondary_emotions?: string[]; confidence?: number };
-
-  m4: { timeline: Array<{ time: string; summary: string; calcium_level?: number }>; total: number; family: number };
-
-  m5: { strategy_id: string; tone: string; depth: string; max_length: number; description: string };
-
-  emotionalFlash: boolean;
-
-  triggeredMemoryId: string | null;
-
-  vad_spectrum?: any | null;
-
-  /** 候选回复（用户可选择偏好风格） */
-
-  candidates?: any | null;
-
-  /** 回复质量评分 — 轻量自检，不精确但给 M7/前端参考 */
-  emotionMatchScore?: number;
-  sceneFitScore?: number;
-  /** 融合度风险标记：低于阈值时标记问题类型 */
-  riskFlag?: string;
-
-}
-
-/** 获取 VAD 驱动的 tone 校准 — 调用 8100 谱曲引擎获取数值，用 V/A/dominant 决定 tone */
 
 async function getVadToneHint(message: string): Promise<string> {
-
+  if (!_vadAvailable) return '';
   try {
-
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
     const vadResp = await fetch('http://localhost:8100/api/v1/emotion/compose', {
-
       method: 'POST',
-
       headers: { 'Content-Type': 'application/json' },
-
       body: JSON.stringify({ text: message }),
-
+      signal: controller.signal,
     });
-
+    clearTimeout(timeout);
     if (!vadResp.ok) return '';
 
     const vadData = await vadResp.json();
@@ -667,7 +519,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         else if (_tmUnit === '上个月') { _tmStart.setMonth(_tmNow.getMonth() - 1); }
         else if (_tmUnit === '前几天') { _tmStart.setDate(_tmNow.getDate() - 3); }
         else if (_tmUnit === '刚才') { _tmStart.setHours(_tmNow.getHours() - 1); }
-        const _tmRows = ctx.storage.getSQLite().findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
+        const _tmRows = ctx.conversationDB.findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
         if (_tmRows && _tmRows.length > 0) {
           const _tmTexts = _tmRows.map(function(r){return r.content;}).filter(Boolean).join(' | ').substring(0, 300);
           memoryFragments.push('【时间检索】' + _tmUnit + '的对话：' + _tmTexts);
@@ -947,7 +799,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                   for (let i = 0; i < 24; i++) { dot += queryVec[i] * dv[i]; nq += queryVec[i] ** 2; nd += dv[i] ** 2; }
                   const sim = dot / (Math.sqrt(nq) * Math.sqrt(nd) || 0.0001);
                   if (sim > 0.5) scored.push({ row: _d, score: sim });
-                } catch {}
+                } catch { console.warn('[RetrievalErr] 黑钻向量JSON解析失败'); }
               }
               scored.sort((a, b) => b.score - a.score);
               const vecResults = scored.slice(0, 3 - _rows.length);
@@ -959,7 +811,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                 }
               }
               if (vecResults.length > 0) console.log("[BlackDiamond] 向量补充 " + vecResults.length + " 条");
-            } catch (_ve) { /* 向量降级不阻塞 */ }
+            } catch (_ve) { console.warn('[RetrievalErr] 黑钻向量补充失败:', (_ve as Error).message); }
           }
           }
         }
@@ -967,8 +819,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     } catch (err) { console.warn('[BlackDiamond] 检索失败:', err); }
 
 
-    // 仿生智脑降级检索（话题切换时调用，带缓存+情感过滤+日志）
-    const bionicMemories = await fetchBionicMemories(message, isTopicShift, hasContinuationMarkers, memoryFragments, enrichedHistory, { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, dna.scene_tags);
+    // P0-1: 仿生智脑 + 知识库 + VAD 并行执行（三者均为异步网络调用，互不依赖）
+    const _bionicPromise = fetchBionicMemories(message, isTopicShift, hasContinuationMarkers, memoryFragments, enrichedHistory, { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, dna.scene_tags);
 
     // 躯体上下文注入（SomaticMemory → LLM 上下文 — 五重铁律协议③）
 
@@ -1020,8 +872,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         for (const k of knResults) {
           try {
             sqlite.writeRaw(`UPDATE knowledge_base SET emotion_vector = ? WHERE id = ?`, perceptionVec, k.id);
-          } catch {}
-          try { sqlite.writeRaw(`INSERT OR IGNORE INTO knowledge_memories (knowledge_id, memory_id, relevance) VALUES (?, ?, ?)`, k.id, dna.branch_id, 0.8); } catch {}
+          } catch { console.warn('[StorageErr] 情感向量写入失败'); }
+          try { sqlite.writeRaw(`INSERT OR IGNORE INTO knowledge_memories (knowledge_id, memory_id, relevance) VALUES (?, ?, ?)`, k.id, dna.branch_id, 0.8); } catch { console.warn('[StorageErr] 知识记忆关联写入失败'); }
         }
 
         // 用户问知识库 → 内容注入 knowledgeBaseText
@@ -1088,7 +940,9 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     // ═══════════════════════════════════════════════════════════════
 
-    try {
+    
+    // P0-2: 缓存当前24D感知到VAD本地池
+    pushToVadCache(p);try {
 
       // ① 获取 VAD 谱曲（当前消息的实时情感分析）
 
@@ -1100,7 +954,18 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
       let scoreText = '';
 
-      const scoreResp = await fetch('http://localhost:8100/api/v1/emotion/knowledge/export?min_intensity=0.85');
+      if (!_vadAvailable) { console.log('[VADTone] 服务离线，跳过谱曲查询'); }
+      let scoreResp: Response | null = null;
+      try {
+        const _ctrl = new AbortController();
+        const _to = setTimeout(() => _ctrl.abort(), 2000);
+        scoreResp = await fetch('http://localhost:8100/api/v1/emotion/knowledge/export?min_intensity=0.85', { signal: _ctrl.signal });
+        clearTimeout(_to);
+      } catch { scoreResp = null; }
+      if (!scoreResp) {
+        _vadAvailable = false;
+        console.warn('[VADTone] 8100不可用，置为离线，后续跳过');
+      }
 
       if (scoreResp.ok) {
 
@@ -1160,6 +1025,9 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     } catch (err) { console.warn('[VADTone] 谱曲引擎(8100)不可用，跳过:', (err as Error).message); }
 
+    // P0-1: 等待仿生智脑检索完成（与知识库/VAD并行执行）
+    const bionicMemories = await _bionicPromise;
+
     // 线索协助（集成仿生智脑检索结果，生成区分性反问）
 
     let clueReply: string | null = null;
@@ -1193,7 +1061,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       // 砂金库降级：当金库检索结果不足时，从砂金库补充
       if (ctx_m4.memory_summary.timeline.length < 2 && message.length > 4) {
         try {
-          const sandResults = ctx.storage.getSQLite().searchConversations(message, 3);
+          const sandResults = ctx.conversationDB.searchConversations(message, 3);
           if (sandResults.length > 0) {
             ctx_m4.memory_summary.timeline = sandResults.map((r: any) => ({
               time: r.timestamp, summary: r.content.substring(0, 60), calcium_level: 0
@@ -1726,7 +1594,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
         ctx.saveConversationHistory();
-        try { ctx.storage.getSQLite().insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
+        try { ctx.conversationDB.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 
