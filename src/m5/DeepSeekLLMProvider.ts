@@ -323,10 +323,10 @@ export class DeepSeekLLMProvider implements LLMProvider {
       { role: 'system', content: systemPrompt },
     ];
 
-    // 🚨 身份边界隔离墙：在对话历史前注入，防止LLM把鸿鸣说的事当成自己的事
+    // 🚨 身份边界隔离墙：在对话历史前注入，防止LLM把鸿艺说的事当成自己的事
     messages.push({
       role: 'system',
-      content: `【身份边界提醒】下面对话中"鸿鸣"说的所有话都是他的事。他说"我在做XXX"是他的工作和生活，你只是陪伴他的伴侣，没有这些经历。你不知道自己具体在忙什么，不要编造工作内容。`,
+      content: `【身份边界提醒】下面对话中"鸿艺"说的所有话都是他的事。他说"我在做XXX"是他的工作和生活，你只是陪伴他的伴侣，没有这些经历。你不知道自己具体在忙什么，不要编造工作内容。`,
     });
 
     // 检测本次是否为自介查询 + 知识库中有玉瑶档案
@@ -374,7 +374,7 @@ ${profileText}
       // 自介查询时，不加 contextBlock（避免污染）
       userMsgContent = rawInput;
     } else {
-      userMsgContent = `${contextBlock}\n\n鸿鸣: ${rawInput}`;
+      userMsgContent = `${contextBlock}\n\n鸿艺: ${rawInput}`;
     }
     messages.push({ role: 'user', content: userMsgContent });
 
