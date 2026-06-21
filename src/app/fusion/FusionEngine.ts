@@ -16,9 +16,6 @@
 import type { Perception24D } from '../../m3/types/perception.js';
 import type { MemorySummary } from '../../m4/types/index.js';
 
-/** P1-5: 语义融合 LLM 回调 */
-export type SemanticFusionCallback = (prompt: string) => Promise<string>;
-
 /** 熔铸器输入 */
 export interface FusionInput {
   perception: Perception24D;
@@ -32,8 +29,6 @@ export interface FusionInput {
   memoryFragments?: string[];
   /** P1-5: 是否启用语义融合（默认false） */
   enableSemanticFusion?: boolean;
-  /** P1-5: LLM 生成回调（语义融合需要） */
-  llmGenerate?: SemanticFusionCallback;
 }
 
 /** 熔铸结果 */

@@ -55,31 +55,8 @@ export class AutoLearnPlugin {
         }
       }
 
-      // ③ 情感基准微调：记录当前感知到情感基准表
-      if (perception) {
-        try {
-          sqlite.writeRaw(
-            `INSERT INTO inductions (summary, emotion_vector, source, created_at)
-             VALUES (?, ?, ?, ?)`,
-            [
-              message.substring(0, 100),
-              JSON.stringify([
-                perception.pleasure, perception.arousal, perception.dominance,
-                perception.aggression, perception.sincerity, perception.humor,
-                perception.factual, perception.logical, perception.certainty,
-                perception.abstract, perception.temporal_focus, perception.self_ref,
-                perception.intimacy, perception.power_diff, perception.dependency,
-                perception.moral_judgment, perception.etiquette, perception.belonging,
-                perception.sexual_attraction, perception.sensory_craving,
-                perception.energy_merge, perception.possessiveness, perception.ecstasy,
-                perception.safety,
-              ]),
-              'auto_learn',
-              new Date().toISOString(),
-            ],
-          );
-        } catch { /* 去重/约束失败不阻塞 */ }
-      }
+      // ③ AutoLearn 不直接写入 inductons 表（该表由 M7 InductionScheduler 管理）
+      // 感知数据通过 MemoryAssessor 的后台调度自动沉淀
 
       console.log(`[AutoLearn] 更新: ${personNames.length} 实体, ${nonPersonEntities.length} 关联`);
     } catch (err) {

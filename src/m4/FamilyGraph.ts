@@ -34,7 +34,7 @@ const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'data', 'knowledge', 'family
  * 存储在 node.properties JSON 中，每次对话逐步丰富。
  */
 interface PersonProfile {
-  // 基础
+  // ── 基础 ──
   name: string;
   relation_to_user: string;
   /** 首次提及日期 */
@@ -43,14 +43,31 @@ interface PersonProfile {
   last_mentioned: string;
   /** 累计提及次数 */
   mention_count: number;
-  /** 提取到的特征词：开朗/幽默/热心 等 */
+
+  // ── 人物全方位档案（用户说的所有信息累计） ──
+  /** 外貌长相：身高、脸型、五官、皮肤、发型等 */
+  appearance?: string;
+  /** 身体特征：身材、胸、臀、腰、腿等 */
+  body_features?: string;
+  /** 穿着风格 */
+  style?: string;
+  /** 性格特征：开朗/幽默/热心 等 */
   traits?: string[];
+  /** 性格自由描述 */
+  personality?: string;
   /** 职业 */
   occupation?: string;
   /** 兴趣爱好 */
   interests?: string[];
-  /** 自由文本描述 */
+  /** 习惯 */
+  habits?: string;
+  /** 心理/内心特征 */
+  psychology?: string;
+  /** 声音特征 */
+  voice?: string;
+  /** 自由文本描述（累计所有说过的话） */
   description?: string;
+
   /** 重要事件时间线 */
   timeline?: Array<{
     date: string;
@@ -891,7 +908,7 @@ export class FamilyGraph implements FamilyGraphInterface {
     merged.completeness = this.calcProfileCompleteness(merged);
     this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
-    this.flush();
+    this.markDirty(true);
   }
 
   /**

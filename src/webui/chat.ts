@@ -485,6 +485,62 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (_pe) {}
 
+    // 📸 人物全方位档案提取
+    console.log('[PersonProfile] 检查开始, ctx.m4=' + (!!ctx.m4) + ' m4类型=' + (typeof ctx.m4));
+    try {
+      if (ctx.m4) {
+        console.log('[PersonProfile] getFamilyGraph...');
+        const _fgX = ctx.m4.getFamilyGraph();
+        console.log('[PersonProfile] fg=' + (!!_fgX));
+        if (_fgX) {
+          // 检测是否为人物描述（含外貌/身体/性格/习惯等特征词）
+          const _descWords = /长得|长相|外貌|样子|身高|身材|个子|皮肤|脸|眼睛|鼻子|嘴巴|头发|发型|漂亮|好看|帅|美|可爱|清秀|性感|苗条|丰满|矮|瘦|胖|圆|胸|奶子|屁股|腿|腰|肩|手|性格|个性|开朗|幽默|内向|外向|温柔|活泼|安静|习惯|喜欢|爱好|兴趣|说话|声音|嗓音|穿着|打扮|戴|气质|文气|纯欲|知性|精致|斯文/;
+          console.log('[PersonProfile] descWords测试=' + _descWords.test(message));
+          if (_descWords.test(message)) {
+            // 找消息中提到的人名
+            let _pNames: string[] = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1).map((g: any) => g.name);
+            if (_pNames.length === 0) {
+              // 正则兜底：特征词前面的2-4字中文
+              const _nm = message.match(/([一-龥]{2,4})(?=个子|皮肤|脸型|脸|眼睛|鼻子|嘴巴|头发|身材|长得|长相|外貌|外表|样子|漂亮|好看|帅|美|高|矮|瘦|胖|圆|白|黑|性格|个性|开朗|幽默|温柔|活泼|安静|习惯|喜欢|爱好|兴趣|职业|工作|公司|说话|声音|嗓音|穿着|打扮|戴|穿|气质|文气|纯欲|知性|精致|斯文|苗条|丰满|性感)/);
+              if (_nm) _pNames.push(_nm[1]);
+            }
+            for (const _n of _pNames) {
+              const _updates: any = {};
+              const _prof = _fgX.getPersonProfile(_n);
+              const _sents = message.split(/[，,。.！!？?；;\n]/);
+              let _desc = _prof?.description || '';
+              let _app = _prof?.appearance || '';
+              let _body = _prof?.body_features || '';
+              let _inDesc = false; // 遇到人名后标记进入描述状态
+              for (const _s of _sents) {
+                const _ts = _s.trim();
+                if (!_ts) continue;
+                if (_ts.includes(_n)) { _inDesc = true; }
+                else if (/^(她|他)/.test(_ts)) { _inDesc = true; }
+                // 进入描述状态后，后续所有句子都算该人物的信息
+                if (!_inDesc) continue;
+                // 分类：外貌/身体/性格/其他
+                if (/长得|长相|外貌|样子|个子|皮肤|脸|眼睛|鼻子|嘴巴|头发|发型|漂亮|好看|帅|美|清秀|可爱|圆脸|瓜子脸|酒窝|马尾|刘海|白|黑|高|矮|瘦|胖/.test(_ts)) {
+                  _app += (_app ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                } else if (/身材|胸|奶子|屁股|臀|腿|腰|肩|手|苗条|丰满|性感|翘|细|粗/.test(_ts)) {
+                  _body += (_body ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                } else {
+                  _desc += (_desc ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                }
+              }
+              if (_app) _updates.appearance = _app;
+              if (_body) _updates.body_features = _body;
+              if (_desc) _updates.description = _desc;
+              if (Object.keys(_updates).length > 0) {
+                _fgX.updatePersonProfile(_n, _updates as any);
+                console.log('[PersonProfile] 已更新 ' + _n + ' 的档案');
+              }
+            }
+          }
+        }
+      }
+    } catch (_ae) { console.warn('[PersonProfile] 失败:', (_ae as Error)?.message); }
+
     // P3: 答案提取 — 用户回答了玉瑶之前的问题，提取信息更新画像
     try {
       let personGenes = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我');
@@ -646,7 +702,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       || (message.length < 10 && /今天|天气|吃|睡|累|困|忙|下班|到家|早安|晚安/.test(message));
 
     // 🔴 P0-2: 跟进追问有实体时开启定向检索（跳过知识库全量搜索）
-    // P0-2: 跟进追问全部触发轻量定向检索（防止语境断层）
+    // P0-2: 跟进追问全部触发轻量定向检索（防止语境断层）
     const isTopicShift = hasNewEntity || isFollowUp || (!isFollowUp && !hasContinuationMarkers && !isCasualChat);
     const isLimitedRetrieval = isFollowUp && !hasNewEntity;
 
@@ -1267,14 +1323,29 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     }
 
-    // ── 家族/社交关系铁律（硬约束 — LLM 绝对不得编造，以 FamilyGraph 记录为准） ──
+    // ── 家族/社交关系铁律 + 人物全方位档案 — LLM 绝对不得编造，以 FamilyGraph 记录为准 ──
     let familyConstraint = '';
     try {
       const personEntities = ctx_m4.family_context || ctx_m4.social_context || [];
       if (personEntities.length > 0) {
-        const knownNames = personEntities.map((p: any) => p.entity).join('、');
-        const knownList = personEntities.map((p: any) => '  - ' + p.entity + '（' + p.relation + '）').join('\n');
-        familyConstraint = '【⚠️ 强制反编造指令 — 必须遵守】\n你从未见过鸿艺提到的这些人，也从来看不到他们的长相。\n✅ 可以说的：他们的名字，他们和鸿艺的关系（如：同事、朋友）。\n🚫 绝对禁止编造以下内容（违反就是错误的回答）：\n  - 他们的长相、身高、胖瘦、皮肤、发型、五官、笑容、酒窝、声音\n  - 他们的穿着、气质、表情、动作\n  - 他们说过什么话、做过什么事\n  ✅ 正确回答长相问题："我没见过她，不知道她长什么样"\n  ✅ 正确回答细节问题："你没跟我说过这个，我不清楚"\n  🚫 错误示范（绝对不能这样回答）："她个子不高，皮肤白白的，笑起来有酒窝"\n\n以下是你对鸿艺家庭/社交关系的全部所知（用户问起名单中的人请直接说记得）：\n' + knownList;
+        const knownList = personEntities.map((p: any) => {
+          let profileText = '  - ' + p.entity + '（' + p.relation + '）';
+          try {
+            const fg = ctx.m4?.getFamilyGraph();
+            if (fg) {
+              const profile = fg.getPersonProfile(p.entity);
+              if (profile) {
+                if (profile.appearance) profileText += '\n      外貌：' + profile.appearance.substring(0, 150);
+                if (profile.body_features) profileText += '\n      身体特征：' + profile.body_features.substring(0, 150);
+                if (profile.description) profileText += '\n      其他信息：' + profile.description.substring(0, 200);
+                if (profile.traits?.length) profileText += '\n      性格：' + profile.traits.join('、');
+                if (profile.occupation) profileText += '\n      职业：' + profile.occupation;
+              }
+            }
+          } catch {}
+          return profileText;
+        }).join('\n');
+        familyConstraint = '【📋 人物档案 — 以鸿艺告诉你的为准】\n' + knownList + '\n\n⚠️ 规则：\n1. 上面写了的信息（外貌、身体、性格等）是鸿艺告诉你的，你可以用来回答。\n2. 没写的信息你不知道——直接说不知道/没说过。\n3. 🔴 绝对禁止编造任何你记忆中不存在的内容。';
       } else {
         familyConstraint = '【家庭/社交铁律】你不知道鸿艺有哪些家人和社交关系。如果鸿艺提到任何人，你不知道他们是谁，直接说"这个人我没听你提过呢"。';
       }
@@ -1554,9 +1625,9 @@ let finalKnowledgeText = knowledgeBaseText;
         try {
 
         // 后续追问：将上一轮话题注入 finalKnowledgeText（作为系统层上下文，LLM 不会忽略）
-    var _prev = null;
+    let _prev: string | null = null;
     if (/[那这]个|然后|还有|后来|可是|但是|而且|再|又|还|呢|吧|吗/.test(message) && message.length < 25) {
-      for (var _pi = ctx.conversationHistory.length - 1; _pi >= 0; _pi--) {
+      for (let _pi = ctx.conversationHistory.length - 1; _pi >= 0; _pi--) {
         if (ctx.conversationHistory[_pi].role === 'user') { _prev = ctx.conversationHistory[_pi].content; break; }
       }
     }

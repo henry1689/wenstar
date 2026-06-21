@@ -2,7 +2,8 @@
  * EmotionalPulse — 玉瑶的情绪脉搏
  *
  * 液态金属质感的水波纹，带拖尾效果。
- * pleasure 高 → 暖橙；arousal 高 → 振幅大。
+ * pleasure 高 → 暖橙；arousal 高 → 振幅大、速度快。
+ * ❤️ 红心随 arousal 自动跳动：越激动跳得越快越猛。
  */
 import { useRef, useEffect, useState } from 'react';
 
@@ -15,37 +16,33 @@ interface Props {
 const WIDTH = 260;
 const HEIGHT = 64;
 
-// 拖尾轨迹缓存
 const TRAIL_LENGTH = 12;
-const trail: number[][] = [];
 
 export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const heartRef = useRef<HTMLDivElement>(null);
+  const trailRef = useRef<number[][]>([]);
   const [pulseColor, setPulseColor] = useState('#00ffff');
   const targetColorRef = useRef('#00ffff');
   const currentColorRef = useRef('#00ffff');
+  const heartPhaseRef = useRef(0);
 
   // 情绪标签
   const moodLabel = pleasure > 0.6 ? '很开心' : pleasure > 0.3 ? '心情好' : pleasure < -0.4 ? '有点低落' : arousal > 0.6 ? '有点激动' : '平静';
 
   // 动态色温映射：pleasure ∈ [-1,1] → 色相从 180°(cyan) 到 30°(orange) 到 350°(red)
   function pleasureToColor(p: number): string {
-    // normalized 0..1, 0=低愉悦(cyan) 0.5=中性 1=高愉悦(暖橙)
     const n = (p + 1) / 2;
-    const r = Math.round(50 + n * 205);  // 0→暗青, 0.5→白, 1→暖橙
+    const r = Math.round(50 + n * 205);
     const g = Math.round(200 - n * 140);
     const b = Math.round(200 - n * 170);
     return `#${[r,g,b].map(c => Math.min(255,Math.max(0,c)).toString(16).padStart(2,'0')).join('')}`;
   }
 
-  // 平滑色温过渡
   useEffect(() => {
     targetColorRef.current = pleasureToColor(pleasure);
   }, [pleasure]);
 
-  // 动画循环中每帧 lerp 颜色
-
-  // 颜色插值辅助
   function lerpColor(a: string, b: string, t: number): string {
     const ah = parseInt(a.slice(1), 16), ar = ah >> 16, ag = (ah >> 8) & 255, ab = ah & 255;
     const bh = parseInt(b.slice(1), 16), br = bh >> 16, bg = (bh >> 8) & 255, bb = bh & 255;
@@ -66,7 +63,21 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
     let smoothArousal = arousal || 0;
 
     const draw = () => {
-      frame += 0.008;
+      // 🔥 ECG 速度随 arousal：平静慢速(~0.005)，激动快速(~0.035)
+      const rawSpeed = 0.004 + Math.max(0.1, smoothArousal) * 0.035;
+      const speedScale = Math.min(0.05, rawSpeed);
+      frame += speedScale;
+
+      // 心率：同步给 ❤️ 跳动
+      const hr = 0.5 + smoothArousal * 0.8; // 心跳频率
+      heartPhaseRef.current += hr * 0.02;
+      const beat = Math.abs(Math.sin(heartPhaseRef.current));
+      // 收缩曲线：快速收缩 + 缓慢恢复（模拟真实心跳）
+      const beatVal = beat > 0.85 ? 1 : beat > 0.6 ? 0.6 : 0.3;
+      if (heartRef.current) {
+        heartRef.current.style.transform = `scale(${1 + beatVal * Math.max(0.2, smoothArousal) * 0.9})`;
+      }
+
       smoothArousal += ((arousal || 0) - smoothArousal) * ((arousal || 0) > smoothArousal ? 0.08 : 0.007);
       const ea = Math.max(0.15, smoothArousal);
 
@@ -74,7 +85,6 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       const t = 0.04;
       currentColorRef.current = lerpColor(currentColorRef.current, targetColorRef.current, t);
       const color = currentColorRef.current;
-      // 同步到 React state（偶尔，避免频繁渲染）
       if (frame % 5 < 0.03) setPulseColor(color);
 
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
@@ -91,10 +101,10 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
         + Math.sin(lastX * freq + frame) * amplitude
         + Math.sin(lastX * freq * 2 + frame * 1.3) * amplitude * 0.4
         + Math.sin(lastX * freq * 0.5 + frame * 0.7) * amplitude * 0.2;
-      trail.push([lastX, lastY]);
-      if (trail.length > TRAIL_LENGTH) trail.shift();
+      trailRef.current.push([lastX, lastY]);
+      if (trailRef.current.length > TRAIL_LENGTH) trailRef.current.shift();
 
-      // ① arousal 边缘红光：当唤醒度 > 0.7 时叠加
+      // ① arousal 边缘红光
       const intense = ea > 0.4;
       if (intense) {
         ctx.beginPath();
@@ -112,7 +122,7 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
         ctx.stroke();
       }
 
-      // ② 深层光晕（发光能量管的外层辉光）
+      // ② 深层光晕
       ctx.beginPath();
       ctx.moveTo(0, baseY);
       for (let x = 0; x <= WIDTH; x += 1) {
@@ -127,7 +137,7 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       ctx.shadowBlur = intense ? 70 : 30;
       ctx.stroke();
 
-      // ② 主波（核心能量管）
+      // ② 主波
       ctx.beginPath();
       ctx.moveTo(0, baseY);
       for (let x = 0; x <= WIDTH; x += 1) {
@@ -147,7 +157,7 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // ③ 涟漪填充（下方渐变，模拟水波）
+      // ③ 涟漪填充
       ctx.lineTo(WIDTH, HEIGHT);
       ctx.lineTo(0, HEIGHT);
       ctx.closePath();
@@ -159,11 +169,12 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
       ctx.fill();
 
       // ④ 拖尾
-      for (let t = 0; t < trail.length; t++) {
-        const alpha = (t / trail.length) * 0.25;
-        const radius = (t / trail.length) * 3;
+      const _trail = trailRef.current;
+      for (let t = 0; t < _trail.length; t++) {
+        const alpha = (t / _trail.length) * 0.25;
+        const radius = (t / _trail.length) * 3;
         ctx.beginPath();
-        ctx.arc(trail[t][0], trail[t][1], radius, 0, Math.PI * 2);
+        ctx.arc(_trail[t][0], _trail[t][1], radius, 0, Math.PI * 2);
         ctx.fillStyle = color + Math.floor(alpha * 40).toString(16).padStart(2, '0');
         ctx.fill();
       }
@@ -182,13 +193,31 @@ export default function EmotionalPulse({ pleasure, arousal, active }: Props) {
         情绪脉搏
       </div>
       <div className="pulse-wave">
-        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />
+        <div style={{ position: 'relative', width: WIDTH, height: HEIGHT }}>
+          <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />
+          {/* ❤️ 红心 — JS 驱动缩放，跟随 arousal */}
+          <div ref={heartRef} style={{
+            position: 'absolute',
+            right: 6,
+            top: 4,
+            transform: 'scale(1)',
+            transformOrigin: 'center center',
+            fontSize: 22,
+            lineHeight: 1,
+            filter: `drop-shadow(0 0 ${4 + Math.abs(arousal) * 8}px rgba(255,50,80,${0.3 + Math.abs(arousal) * 0.5}))`,
+            transition: 'none',
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}>
+            ❤️
+          </div>
+        </div>
         <div className="pulse-metrics">
           <span style={{ color: pleasure > 0.3 ? '#ff6600' : '#888', fontSize: 10 }}>
             {moodLabel}
           </span>
           <span style={{ color: arousal > 0.6 ? '#ff3366' : '#555', fontSize: 9 }}>
-            {arousal > 0.6 ? '激动' : '平静'}
+            {arousal > 0.6 ? '🔥 兴奋' : arousal > 0.3 ? '激动' : '平静'}
           </span>
         </div>
       </div>

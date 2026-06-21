@@ -10,7 +10,6 @@
  * 不拦截任何正常回复（只打日志不替换内容）。
  * 日志供 P3-b MemorySelfReview 自省模块分析。
  */
-import type { FamilyGraph } from '../../m4/FamilyGraph.js';
 
 /** 一条校验结果 */
 export interface ValidationResult {

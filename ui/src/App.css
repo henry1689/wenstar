@@ -944,6 +944,16 @@ html, body, #root {
   100% { box-shadow: 0 0 0 0 rgba(255, 102, 0, 0); }
 }
 
+/* ❤️ 情绪脉搏红心跳动 — dynamic duration via inline style */
+@keyframes heartBeatPulse {
+  0%   { transform: scale(1); }
+  15%  { transform: scale(calc(0.8 + var(--heart-scale, 1) * 0.3)); }
+  30%  { transform: scale(0.95); }
+  45%  { transform: scale(calc(0.85 + var(--heart-scale, 1) * 0.2)); }
+  60%  { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+
 .chat-toggle-btn.emotional-flash {
   animation: heartBeat 1.2s ease-in-out;
   border-color: #ff6600;

@@ -25,7 +25,7 @@ try {
 } catch (_e) { /* .env not required */ }
 
 import http from 'node:http';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import fs, { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DNAEncoder } from '../m1/DNAEncoder.js';

@@ -10,12 +10,6 @@
  * 依赖 P0-3 HallucinationValidator 的日志输出。
  */
 import type { FusionStorageAdapter } from '../../m2/FusionStorageAdapter.js';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = join(__filename, '..', '..', '..');
 
 export class MemorySelfReview {
   private storage: FusionStorageAdapter;
