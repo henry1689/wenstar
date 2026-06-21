@@ -230,7 +230,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
       ? new Date(params.currentTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
       : new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
-    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${this.persona.buildSystemPrompt(level, params.knowledgeBase)}`;
+    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${this.persona.buildSystemPrompt(level, params.knowledgeBase + '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：\n- 工作/技术/商务 → 用专业秘书语气\n- 分享感受/回忆 → 用当前等级的语气\n- 描述人物 → 以人物档案为准，不编造不添加')}`;
 
     // 构建上下文提示词
     const dimContext = [

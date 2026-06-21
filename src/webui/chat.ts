@@ -348,36 +348,40 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
           // 检测是否为人物描述（含外貌/身体/性格/习惯等特征词）
           const _descWords = /长得|长相|外貌|样子|身高|身材|个子|皮肤|脸|眼睛|鼻子|嘴巴|头发|发型|漂亮|好看|帅|美|可爱|清秀|性感|苗条|丰满|矮|瘦|胖|圆|胸|奶子|屁股|腿|腰|肩|手|性格|个性|开朗|幽默|内向|外向|温柔|活泼|安静|习惯|喜欢|爱好|兴趣|说话|声音|嗓音|穿着|打扮|戴|气质|文气|纯欲|知性|精致|斯文/;
           console.log('[PersonProfile] descWords测试=' + _descWords.test(message));
+          // P0-1: 仅使用M1标准化实体，禁止任何手写人名正则
           if (_descWords.test(message)) {
-            // 找消息中提到的人名
-            let _pNames: string[] = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1).map((g: any) => g.name);
+            const _pNames: string[] = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1).map((g: any) => g.name);
             if (_pNames.length === 0) {
-              // 正则兜底：特征词前面的2-4字中文
-              const _nm = message.match(/([一-龥]{2,4})(?=个子|皮肤|脸型|脸|眼睛|鼻子|嘴巴|头发|身材|长得|长相|外貌|外表|样子|漂亮|好看|帅|美|高|矮|瘦|胖|圆|白|黑|性格|个性|开朗|幽默|温柔|活泼|安静|习惯|喜欢|爱好|兴趣|职业|工作|公司|说话|声音|嗓音|穿着|打扮|戴|穿|气质|文气|纯欲|知性|精致|斯文|苗条|丰满|性感)/);
-              if (_nm) _pNames.push(_nm[1]);
+              console.log('[PersonProfile] M1未提取到人名，跳过（不手写正则兜底）');
             }
             for (const _n of _pNames) {
-              const _updates: any = {};
               const _prof = _fgX.getPersonProfile(_n);
+              if (!_prof) {
+                console.error('[PersonProfile] ERROR: 节点 ' + _n + ' 不存在于FamilyGraph，跳过');
+                continue;
+              }
+              const _updates: any = {};
               const _sents = message.split(/[，,。.！!？?；;\n]/);
-              let _desc = _prof?.description || '';
-              let _app = _prof?.appearance || '';
-              let _body = _prof?.body_features || '';
-              let _inDesc = false; // 遇到人名后标记进入描述状态
+              let _desc = _prof.description || '';
+              let _app = _prof.appearance || '';
+              let _body = _prof.body_features || '';
+              let _inDesc = false;
               for (const _s of _sents) {
                 const _ts = _s.trim();
                 if (!_ts) continue;
                 if (_ts.includes(_n)) { _inDesc = true; }
                 else if (/^(她|他)/.test(_ts)) { _inDesc = true; }
-                // 进入描述状态后，后续所有句子都算该人物的信息
                 if (!_inDesc) continue;
-                // 分类：外貌/身体/性格/其他
+                const _clean = _ts.replace(_n, '').replace(/^[她他的]/, '').trim();
+                if (!_clean) continue;
+                // 分类矫正：外貌/身体/其他
                 if (/长得|长相|外貌|样子|个子|皮肤|脸|眼睛|鼻子|嘴巴|头发|发型|漂亮|好看|帅|美|清秀|可爱|圆脸|瓜子脸|酒窝|马尾|刘海|白|黑|高|矮|瘦|胖/.test(_ts)) {
-                  _app += (_app ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                  const _item = _clean.replace(/身高(\d)\.(\d+)/, '身高$1.$2'); // 数字完整性
+                  if (!_app.includes(_item)) _app += (_app ? '，' : '') + _item;
                 } else if (/身材|胸|奶子|屁股|臀|腿|腰|肩|手|苗条|丰满|性感|翘|细|粗/.test(_ts)) {
-                  _body += (_body ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                  if (!_body.includes(_clean)) _body += (_body ? '，' : '') + _clean;
                 } else {
-                  _desc += (_desc ? '，' : '') + _ts.replace(_n, '').replace(/^[她他]/, '').trim();
+                  if (!_desc.includes(_clean)) _desc += (_desc ? '，' : '') + _clean;
                 }
               }
               if (_app) _updates.appearance = _app;
@@ -697,9 +701,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
           memories = rerank(memories, q);
 
+          // P0-2: 含人物实体时宽松阈值
+          const _hasPerson = dna.entity_genes.some((g: any) => g.type === 'person' && g.name !== '我');
+          const _emoThreshold = _hasPerson ? 0.3 : 0.65;
+          const _compThreshold = _hasPerson ? 0.2 : 0.35;
           const valid = memories.filter((m: any) =>
 
-            (m.scores.emotional > 0.65 || m.composite > 0.35) && m.record.id !== dna.branch_id
+            (m.scores.emotional > _emoThreshold || m.composite > _compThreshold) && m.record.id !== dna.branch_id
 
           );
 
@@ -1433,9 +1441,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 let finalKnowledgeText = knowledgeBaseText;
 
 	if (intimacyFilter) {
-	  finalKnowledgeText = intimacyFilter + "
-
-" + (finalKnowledgeText || "");
+	  finalKnowledgeText = intimacyFilter + '\n\n' + (finalKnowledgeText || '');
 	}
         if (memoryGate.fillerPhrase && (memoryGate.mode === 'memory_recall' || memoryGate.mode === 'vague_recall' || memoryGate.mode === 'knowledge_query')) {
 

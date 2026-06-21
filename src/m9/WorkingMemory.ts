@@ -170,7 +170,7 @@ export class WorkingMemory {
     }
     return results;
   }
-  /** P0: 轻量毕业 — 只存 raw_input + seqPos，不写 24D 感知 */
+  /** P0-3: 轻量毕业 — 写完整24D向量 + scene_tags + entity_ids */
   private async writeLightEntry(entry: WorkingEntry): Promise<WriteResult | null> {
     try {
       const sqlite = typeof (this.storage as any).getSQLite === 'function' ? (this.storage as any).getSQLite() : null;
@@ -178,14 +178,47 @@ export class WorkingMemory {
       const now = new Date().toISOString();
       const entities = entry.dna.entity_genes;
       const entityNames = entities.filter((g: any) => g.type !== 'self').map((g: any) => g.name);
-      // 轻量写入 memories 表（钙质按比例降级）
-      sqlite.writeRaw(
-        'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        'light_' + entry.dna.branch_id, entry.seqPos, now,
-        JSON.stringify(Array(24).fill(0.01)), entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
-        entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
-        entry.dna.raw_input, 0.3, now, '中性'
-      );
+      const sceneTags = entry.dna.scene_tags || [];
+      // P0-3: 使用真实 perception 向量，全零数组兜底
+      const p = entry.perception;
+      const percepVec = p ? JSON.stringify([
+        p.pleasure, p.arousal, p.dominance, p.aggression, p.sincerity, p.humor,
+        p.factual, p.logical, p.certainty, p.abstract, p.temporal_focus, p.self_ref,
+        p.intimacy, p.power_diff, p.dependency, p.moral_judgment, p.etiquette, p.belonging,
+        p.sexual_attraction, p.sensory_craving, p.energy_merge, p.possessiveness, p.ecstasy, p.safety,
+      ]) : JSON.stringify(Array(24).fill(0.01));
+      // P0-3: 自动语义切片
+      const sentences = (entry.dna.raw_input || '').split(/[，,。.！!？?；;\n]/).filter((s: string) => s.trim().length > 2);
+      const narrativeTag = sceneTags.length ? sceneTags[0] : '';
+      if (sentences.length <= 1) {
+        sqlite.writeRaw(
+          'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion, narrative_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'light_' + entry.dna.branch_id, entry.seqPos, now,
+          percepVec, entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
+          entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
+          entry.dna.raw_input, 0.3, now, entry.primaryEmotion || '中性', narrativeTag
+        );
+      } else {
+        for (let si = 0; si < sentences.length; si++) {
+          sqlite.writeRaw(
+            'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion, narrative_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'light_' + entry.dna.branch_id + '_s' + si, entry.seqPos + si, now,
+            percepVec, entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
+            entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
+            sentences[si].trim(), 0.3, now, entry.primaryEmotion || '中性', narrativeTag
+          );
+        }
+      }
+      // 实体关联写入 memory_entities
+      for (const en of entityNames) {
+        try {
+          const eid = sqlite.queryAll('SELECT id FROM entities WHERE name = ? LIMIT 1', [en]);
+          if (eid.length > 0) {
+            sqlite.writeRaw('INSERT OR IGNORE INTO memory_entities (memory_id, entity_id) VALUES (?, ?)',
+              'light_' + entry.dna.branch_id, eid[0].id);
+          }
+        } catch {}
+      }
       sqlite.insertConversation('user', entry.dna.raw_input, {
         seqPos: entry.seqPos, entityNames,
         calciumScore: entry.calciumScore,

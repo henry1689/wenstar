@@ -575,7 +575,7 @@ async function srch(){
     if(d.total===0){m4c.innerHTML=`<div class="emp">无 "${h(q)}" 的结果</div>`;m4b.textContent='0 命中';return}
     let hh=`<div style="font-size:8px;color:var(--tm);margin-bottom:3px">🔍 ${h(q)} → ${d.total} 条</div>`;
     for(const t of d.results.slice().reverse()){
-      const lb=t.role==='user'?'鸿鸣':'玉瑶';
+      const lb=t.role==='user'?'鸿艺':'玉瑶';
       hh+=`<div class="mi mh"><span class="mr ${t.role}">${lb}</span><span class="ms">${h(t.content.substring(0,80))}${t.content.length>80?'…':''}</span></div>`;
     }
     m4c.innerHTML=hh;m4b.textContent=d.total+' 命中';
@@ -680,7 +680,7 @@ function addMsg(role,content){
   const ty=document.getElementById('_ty');if(ty)ty.remove();
   const d=document.createElement('div');d.className='msg '+role;
   const i=document.createElement('div');i.style.cssText='display:flex;flex-direction:column';
-  const l=document.createElement('div');l.className='ml';l.textContent=role==='u'?'鸿鸣':getPersonaLabel();
+  const l=document.createElement('div');l.className='ml';l.textContent=role==='u'?'鸿艺':getPersonaLabel();
   i.appendChild(l);
   const b=document.createElement('div');b.className='bb';b.textContent=content;
   i.appendChild(b);d.appendChild(i);chat.appendChild(d);

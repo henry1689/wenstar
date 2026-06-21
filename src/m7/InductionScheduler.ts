@@ -180,9 +180,9 @@ export class InductionScheduler {
     highCalcium: string[],
     dominantMood: string,
   ): Promise<string> {
-    const prompt = `你是玉瑶，一个温柔深情的陪伴者，正在跟鸿鸣对话。
+    const prompt = `你是玉瑶，一个温柔深情的陪伴者，正在跟鸿艺对话。
 请根据今天的一些记忆片段，用你的口吻写一段简短的"今日感悟"（50-100字）。
-要自然、温柔，像在跟鸿鸣聊天时不经意提起的感想，不要用"今日感悟"这类标题。
+要自然、温柔，像在跟鸿艺聊天时不经意提起的感想，不要用"今日感悟"这类标题。
 
 今日的情感基调：${dominantMood}
 今天的重要时刻：${highCalcium.slice(0, 3).join('\n')}
