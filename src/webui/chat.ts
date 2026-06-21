@@ -1307,7 +1307,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     let dailyGuard = '';
     let intimacyFilter = '';
 
-    if (/工作|项目|客户|会议|方案|报告|公司|合同|预算|数据|分析|策略/.test(message)) {
+    if (/工作|项目|客户|会议|方案|报告|公司|合同|预算|数据|分析|策略|设计|电机|采购|成本|温升|版本|产品|技术|报价|订单|生产|测试|样品|图纸|规格|性能|参数|方案|工程|研发|工艺|质量|供应商/.test(message)) {
       const recentHistory = ctx.conversationHistory.filter(t => t.role === 'user').slice(-3).map(t => t.content).join('');
       const isWorkContext = /工作|项目|客户|会议|方案|报告|公司/.test(recentHistory + message);
       if (isWorkContext) {
@@ -1379,7 +1379,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[Classify] 分类反问失败:', err); }
 
-    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard, classificationGuard].filter(Boolean).join('\n');
+    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard, classificationGuard, intimacyFilter].filter(Boolean).join('\n');
 
     let reply: string;
 
@@ -1432,6 +1432,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                 let memoryText = memoryFragments.length > 0 ? memoryFragments.slice(0, 2).join('\n') : '';
 let finalKnowledgeText = knowledgeBaseText;
 
+	if (intimacyFilter) {
+	  finalKnowledgeText = intimacyFilter + "
+
+" + (finalKnowledgeText || "");
+	}
         if (memoryGate.fillerPhrase && (memoryGate.mode === 'memory_recall' || memoryGate.mode === 'vague_recall' || memoryGate.mode === 'knowledge_query')) {
 
           const innerThought = '【内心独白】' + memoryGate.fillerPhrase.replace(/[。！？]/g, '…') + '…';
