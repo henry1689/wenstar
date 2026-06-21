@@ -416,12 +416,68 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                   if (!_desc.includes(_clean)) _desc += (_desc ? '，' : '') + _clean;
                 }
               }
+              // P1-4: 冲突检测——新旧描述矛盾时标记
+              if (_prof.appearance && _app && _app !== _prof.appearance) {
+                const _oldParts = new Set(_prof.appearance.split(/[，,]/).map((s: string) => s.trim()).filter(Boolean));
+                const _newParts = _app.split(/[，,]/).map((s: string) => s.trim()).filter(Boolean);
+                for (const _np of _newParts) {
+                  // 检测冲突：新描述中说"高"但旧描述说"矮"或反之
+                  if (/高/.test(_np) && [..._oldParts].some((o: string) => /矮/.test(o))) {
+                    console.warn('[PersonProfile] CONFLICT: ' + _n + ' 身高冲突（高 vs 矮）');
+                  }
+                  if (/矮/.test(_np) && [..._oldParts].some((o: string) => /高/.test(o))) {
+                    console.warn('[PersonProfile] CONFLICT: ' + _n + ' 身高冲突（矮 vs 高）');
+                  }
+                  if (/胖/.test(_np) && [..._oldParts].some((o: string) => /瘦/.test(o))) {
+                    console.warn('[PersonProfile] CONFLICT: ' + _n + ' 体型冲突（胖 vs 瘦）');
+                  }
+                  if (/瘦/.test(_np) && [..._oldParts].some((o: string) => /胖/.test(o))) {
+                    console.warn('[PersonProfile] CONFLICT: ' + _n + ' 体型冲突（瘦 vs 胖）');
+                  }
+                }
+              }
               if (_app) _updates.appearance = _app;
               if (_body) _updates.body_features = _body;
               if (_desc) _updates.description = _desc;
               if (Object.keys(_updates).length > 0) {
                 _fgX.updatePersonProfile(_n, _updates as any);
                 console.log('[PersonProfile] 已更新 ' + _n + ' 的档案');
+              }
+              // P1-2: 外貌特征提取为附属实体（支持反向检索）
+              if (_app || _body) {
+                const _allFeatures = (_app + '，' + _body).split(/[，,]/).filter(Boolean);
+                const _featureKey = /个子|高|矮|瘦|胖|脸|眼睛|鼻|嘴|牙|头发|发|眼镜|皮肤|白|黑|圆|瓜子|酒窝|马尾|刘海|眉|睫毛|胸|臀|腿|腰|肩|手|苗条|丰满|性感|翘|细|粗|长发|短发|卷发|直发/;
+                for (const _f of _allFeatures) {
+                  const _trimmed = _f.trim();
+                  if (_trimmed.length > 1 && _featureKey.test(_trimmed)) {
+                    try {
+                      const _sqlite = ctx.storage.getSQLite();
+                      // 清洗特征名为标准格式
+                      const _featName = _trimmed.replace(/^(很|比较|非常|有点)+/, '').substring(0, 20);
+                      // 确保entities表存在
+                      const _exist = _sqlite.queryAll("SELECT id FROM entities WHERE name = ? AND type = 'object'", [_featName]);
+                      let _featId: number;
+                      if (_exist.length > 0) {
+                        _featId = _exist[0].id;
+                      } else {
+                        _sqlite.writeRaw("INSERT INTO entities (name, type) VALUES (?, 'object')", [_featName]);
+                        const _newRows = _sqlite.queryAll("SELECT id FROM entities WHERE name = ? AND type = 'object'", [_featName]);
+                        _featId = _newRows[0]?.id;
+                      }
+                      if (_featId) {
+                        // 关联人物特征
+                        const _personEntity = _sqlite.queryAll("SELECT id FROM entities WHERE name = ? AND type = 'person'", [_n]);
+                        if (_personEntity.length > 0) {
+                          _sqlite.writeRaw(
+                            "INSERT OR IGNORE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, 'has_feature', 0.5, ?)",
+                            [_personEntity[0].id, _featId, new Date().toISOString()]
+                          );
+                        }
+                      }
+                    } catch {}
+                  }
+                }
+                console.log('[PersonProfile] 已提取 ' + _n + ' 的外貌特征（反向检索可用）');
               }
             }
           }

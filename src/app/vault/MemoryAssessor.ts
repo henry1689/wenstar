@@ -83,7 +83,10 @@ for (const conv of recentConvs) {
         const matches = text.match(emotionWords);
         const emotionDensity = matches ? matches.length / text.length : 0;
 
-        if (emotionDensity > 0.05 || text.length > 80) {
+        // P1-5: 人物结构化描述自动晋升
+        const _personDescWords = /个子|身高|皮肤|脸|眼睛|鼻子|嘴巴|头发|发型|漂亮|好看|帅|美|可爱|清秀|苗条|丰满|身材|胸|臀|腿|腰|性格|个性|气质|文气|长相|外貌/;
+
+        if (emotionDensity > 0.05 || text.length > 80 || (_personDescWords.test(text) && text.length > 15)) {
           // 写入金库（memories 表）
           const memoryId = `sand_gold_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
           try {

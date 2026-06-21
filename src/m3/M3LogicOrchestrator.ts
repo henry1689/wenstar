@@ -68,8 +68,8 @@ export class M3LogicOrchestrator {
     // Phase 2: 上下文注入（时间词修正 C5，地点词修正 S6）
     this.analyzer.injectContext(enhanced, context);
 
-    // Phase 3: 钙质重算（含场景配置偏移）
-    const calcium = PerceptionAnalyzer.recalculateCalcium(enhanced.perception, enhanced.calcium_config);
+    // Phase 3: 钙质重算（含场景配置偏移 + P1-1结构化人物信息加权）
+    const calcium = PerceptionAnalyzer.recalculateCalcium(enhanced.perception, enhanced.calcium_config, dna.entity_genes);
     enhanced.calcium_score = calcium.score;
     enhanced.calcium_level = calcium.level;
 

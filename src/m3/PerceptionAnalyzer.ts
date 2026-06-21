@@ -377,7 +377,7 @@ export interface CalciumConfig {
   scoreBonus?: number;
 }
 
-function calculateCalcium(p: Perception24D, config?: CalciumConfig): CalciumResult {
+function calculateCalcium(p: Perception24D, config?: CalciumConfig, entityGenes?: Array<{ name: string; type: string }>): CalciumResult {
   // ① NaN/undefined 安全钳：所有维度值先经过 safeVal
   const pleasure = safeVal(p.pleasure);
   const arousal = safeVal(p.arousal);
@@ -419,6 +419,15 @@ function calculateCalcium(p: Perception24D, config?: CalciumConfig): CalciumResu
   // P1: 可配置的分数加成
   if (config?.scoreBonus) {
     score = clamp(score + config.scoreBonus, 0, 1);
+  }
+
+  // P1-1: 结构化人物信息自动加权
+  if (entityGenes && entityGenes.some(g => g.type === 'person' && g.name !== '我' && g.name.length > 1)) {
+    const structuredBoost = 0.8 - score;
+    if (structuredBoost > 0) {
+      score = clamp(score + structuredBoost, 0, 1);
+      console.log('[M3Calcium] 人物结构化信息加权: ' + score.toFixed(2));
+    }
   }
 
   // ③ 自检校准：发现系统性偏差时微调分数
@@ -826,7 +835,7 @@ export class PerceptionAnalyzer {
   }
 
   /** 根据感知向量重新计算钙质强度（在 injectContext 后调用） */
-  static recalculateCalcium(perception: Perception24D, config?: CalciumConfig): CalciumResult {
-    return calculateCalcium(perception, config);
+  static recalculateCalcium(perception: Perception24D, config?: CalciumConfig, entityGenes?: Array<{ name: string; type: string }>): CalciumResult {
+    return calculateCalcium(perception, config, entityGenes);
   }
 }

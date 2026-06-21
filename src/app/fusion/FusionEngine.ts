@@ -230,6 +230,13 @@ export function fuseSources(input: FusionInput): FusionResult {
       parts.push(`【我想起的】\n${memoryBlock}`);
       decisions.push(`记忆权重↑ (${isIntimate ? '亲密' : '低落'})`);
     }
+  } else if (isNeutral && familyContext && familyContext.length > 0) {
+    // P1-3: 中性模式下有人物档案时仍注入记忆
+    const recentMemories = memorySummary.timeline.slice(0, 1);
+    if (recentMemories.length > 0) {
+      parts.push(`【我想起的】\n📖 ${recentMemories[0].summary}`);
+      decisions.push('人物记忆权重↑');
+    }
   }
 
   // 家族上下文注入
@@ -237,6 +244,11 @@ export function fuseSources(input: FusionInput): FusionResult {
     const familyBlock = familyContext.map(f => `👤 ${f.entity}（你的${f.relation}）`).join('\n');
     parts.push(`【家人】\n${familyBlock}`);
     decisions.push('家族权重↑');
+  } else if (isNeutral && familyContext && familyContext.length > 0) {
+    // P1-3: 中性模式下保持人物档案可见
+    const familyBlock = familyContext.map(f => `👤 ${f.entity}（${f.relation}）`).join('\n');
+    parts.push(`【人物】\n${familyBlock}`);
+    decisions.push('人物档案注入(中性)');
   }
 
   // 最终总长裁剪
