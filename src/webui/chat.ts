@@ -287,6 +287,38 @@ function isDirectedEmotion(message: string): boolean {
 
 }
 
+
+export const FALLBACK_REPLIES = [
+  "嗯～我在呢。你说，我听着。","嗯，我在听。你说。","唔…好呀，你说吧。",
+  "嗯～好呀。你说。","好嘞～你说吧，我听着呢。","诶～你说，我在听。",
+];
+
+const LEVEL_NAMES = ["粉末","液体","固体","晶体"];
+
+const topicAskCount = new Map<string, number>();
+
+function getTopicRepeatCount(message: string): number {
+  const words = message.match(/[一-龥]{4,}/g);
+  if (!words) return 0;
+  for (const w of words) {
+    const cnt = (topicAskCount.get(w) ?? 0) + 1;
+    topicAskCount.set(w, cnt);
+    return cnt;
+  }
+  return 0;
+}
+
+const PERC_LABELS: Record<string,{q:number;label:string}> = {
+  pleasure:{q:1,label:"E1愉悦度"}, arousal:{q:1,label:"E2唤醒度"}, dominance:{q:1,label:"E3支配感"},
+  aggression:{q:1,label:"E4攻击性"}, sincerity:{q:1,label:"E5真诚度"}, humor:{q:1,label:"E6幽默感"},
+  factual:{q:2,label:"C1事实性"}, logical:{q:2,label:"C2逻辑性"}, certainty:{q:2,label:"C3确定性"},
+  abstract:{q:2,label:"C4抽象度"}, temporal_focus:{q:2,label:"C5时间焦点"}, self_ref:{q:2,label:"C6自我参照"},
+  intimacy:{q:3,label:"S1亲密度"}, power_diff:{q:3,label:"S2权力差"}, dependency:{q:3,label:"S3依赖度"},
+  moral_judgment:{q:3,label:"S4道德审判"}, etiquette:{q:3,label:"S5社交礼仪"}, belonging:{q:3,label:"S6群体归属"},
+  sexual_attraction:{q:4,label:"I1性吸引力"}, sensory_craving:{q:4,label:"I2感官渴望"}, energy_merge:{q:4,label:"I3能量交融"},
+  possessiveness:{q:4,label:"I4占有欲"}, ecstasy:{q:4,label:"I5愉悦/高潮"}, safety:{q:4,label:"I6安全感"},
+};
+
 export async function processChat(message: string, ctx: ChatContext): Promise<ChatResponse> {
 
   try {
