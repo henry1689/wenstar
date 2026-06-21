@@ -568,7 +568,7 @@ export class MockLLMProvider implements LLMProvider {
 
     // 用户本轮输入的亲密程度（以文本为准）
     const userIntimateKeywords = /高潮|进入|接吻|拥抱|亲吻|抚摸|胸口|赤裸|白衬衫|锁骨|当晚|那一夜|交融|颤抖|事后|相拥|腿软|身体|做爱|湿漉漉|呼吸急促|皮肤|指尖|体温|柔软|想你了|想要|抱抱|亲|爱|要你|你的|想.*你|难受|想.*抱|进.*来|吻/.test(txt);
-    const userTechKeywords = /架构|设计|代码|逻辑|模块|功能|API|端口|调试|配置|同步|系统|软件|开发|项目|技术|原理|怎么用|能不能|是否|如何|方案|问题/.test(txt);
+    const userTechKeywords = /架构|设计|代码|逻辑|模块|功能|API|端口|调试|配置|同步|系统|软件|开发|项目|技术|原理|怎么用|能不能|是否|如何|方案|问题|电机|温升|客版|采购|供应商|报价|订单|生产|工艺|规格|性能|参数|版本|样品|图纸|成本|合同|预算/.test(txt);
 
     const maxInt = Math.max(s.sexual_attraction, s.sensory_craving, s.energy_merge, s.ecstasy);
     const e2 = s.arousal;

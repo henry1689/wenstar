@@ -1518,9 +1518,16 @@ let finalKnowledgeText = knowledgeBaseText;
 
         // 后续追问：将上一轮话题注入 finalKnowledgeText（作为系统层上下文，LLM 不会忽略）
     let _prev: string | null = null;
-    if (/[那这]个|然后|还有|后来|可是|但是|而且|再|又|还|呢|吧|吗/.test(message) && message.length < 25) {
+    if (/[那这]个|然后|还有|后来|可是|但是|而且|再|又|还|呢|吧|吗/.test(message) && message.length < 30) {
       for (let _pi = ctx.conversationHistory.length - 1; _pi >= 0; _pi--) {
         if (ctx.conversationHistory[_pi].role === 'user') { _prev = ctx.conversationHistory[_pi].content; break; }
+    // FIX-5: 话题切换时也获取上下文（工作消息不命中跟进正则时）
+    if (!_prev && ctx.conversationHistory.length > 2) {
+      const _lastUser = [...ctx.conversationHistory].reverse().find((t: any) => t.role === 'user');
+      if (_lastUser && /工作|项目|客户|会议|方案|报告|公司|合同|预算|数据|分析|策略|设计|电机|采购|成本|温升|版本|产品|技术/.test(message + _lastUser.content)) {
+        _prev = _lastUser.content;
+      }
+    }
       }
     }
     if (_prev && _prev.length > 4) {

@@ -101,6 +101,13 @@ export function calcLevel(
   const signed = pol === 'p' ? lv : pol === 'n' ? -lv : 0;
   const clamped = Math.max(-2, Math.min(2, signed)) as -2|-1|0|1|2;
 
+  // FIX-1: 话题切换检测 — clamped=0 且之前等级>=1 时直接重置（防止亲密对话后技术消息获亲密等级）
+  if (clamped === 0 && _prevLevel >= 1) {
+    _prevLevel = 0;
+    console.log('[TierVocabMap] 话题切换，等级重置: ' + _prevLevel + '→0');
+    return { level: 0, tier: TIER_MAP[0], raw };
+  }
+
   // P4: 情感等级平滑 — 突变阈值1.5
   const _jump = Math.abs(clamped - _prevLevel);
   const _allowedJump = _jump > 1.5 ? 1.5 : 1.0;

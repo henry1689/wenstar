@@ -25,7 +25,12 @@ if (!API_KEY) {
 
 const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
 const BASE_URL = 'https://api.deepseek.com/v1';
-const MAX_HISTORY_TURNS = 200; // 保留最近 100 轮完整对话
+const MAX_HISTORY_TURNS = 200;
+// FIX-3: 工作消息时缩减历史（防止亲密历史污染工作上下文）
+function getHistoryLimit(txt: string): number {
+  if (/工作|项目|客户|会议|方案|报告|公司|合同|预算|数据|分析|策略|设计|电机|采购|成本|温升|版本|产品|技术|报价|订单|生产|测试|样品|图纸|规格|性能|参数|工程|研发|工艺|质量|供应商/.test(txt)) return 10;
+  return MAX_HISTORY_TURNS;
+}
 
 /** P3: 分级超时 — 日常10s / 冲突15s / 亲密20s */
 function getTieredTimeout(level: number): number {
@@ -333,7 +338,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
     if (hasSelfProfile && isSelfIntroQuery) {
       // 跳过历史，只保留system指令 + 档案 + 当前消息
     } else {
-      const recentTurns = history.slice(-MAX_HISTORY_TURNS);
+      const recentTurns = history.slice(-getHistoryLimit(rawInput));
       for (const turn of recentTurns) {
         messages.push({ role: turn.role, content: turn.content });
       }
