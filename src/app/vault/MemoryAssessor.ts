@@ -122,17 +122,32 @@ export class MemoryAssessor {
   private async runDecay(): Promise<void> {
     try {
       const sqlite = this.storage.getSQLite();
-      // 砂金库权重衰减：所有 effective_strength *= 0.95
+      // P0-3: 场景差异化衰减
+      // ① 闲聊类（默认）：effective_strength × 0.95
       sqlite.writeRaw(
         `UPDATE memories SET effective_strength = ROUND(effective_strength * 0.95, 4)
          WHERE effective_strength > 0.1 AND calcium_level < 2`,
+      );
+      // ② 工作/功能性记忆：衰减降低50%（×0.975 替代 ×0.95）
+      sqlite.writeRaw(
+        `UPDATE memories SET effective_strength = ROUND(effective_strength * 0.975, 4)
+         WHERE effective_strength > 0.1 AND calcium_level < 2
+         AND (COALESCE(narrative_tag, '') LIKE '%工作%' OR COALESCE(narrative_tag, '') LIKE '%项目%'
+              OR COALESCE(narrative_tag, '') LIKE '%公司%' OR COALESCE(narrative_tag, '') LIKE '%会议%')`,
       );
       // 金库中性记忆衰减：钙化 < 1 的，乘以 0.98
       sqlite.writeRaw(
         `UPDATE memories SET effective_strength = ROUND(effective_strength * 0.98, 4)
          WHERE effective_strength > 0.2 AND calcium_level = 1`,
       );
-      console.log('[MemoryAssessor] 权重衰减: 完成');
+      // 工作类金库中性记忆：衰减更慢（0.99 替代 0.98）
+      sqlite.writeRaw(
+        `UPDATE memories SET effective_strength = ROUND(effective_strength * 0.99, 4)
+         WHERE effective_strength > 0.2 AND calcium_level = 1
+         AND (COALESCE(narrative_tag, '') LIKE '%工作%' OR COALESCE(narrative_tag, '') LIKE '%项目%'
+              OR COALESCE(narrative_tag, '') LIKE '%公司%' OR COALESCE(narrative_tag, '') LIKE '%会议%')`,
+      );
+      console.log('[MemoryAssessor] 衰减差异化: 工作类记忆衰减降低50%');
     } catch (err) {
       console.warn('[MemoryAssessor] 权重衰减失败:', err);
     }

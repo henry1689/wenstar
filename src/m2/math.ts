@@ -80,11 +80,30 @@ export function emotionalSimilarity(
   a: Perception24D,
   b: Perception24D,
   mode: SimilarityMode = 'balanced',
+  currentPerception?: Perception24D,
 ): number {
   const va = toNormalizedVector(a);
   const vb = toNormalizedVector(b);
 
   const quadWeights = allocateQuadrantWeights(mode);
+  // P1-1: 当前感知动态权重修正
+  const dynamicWeights = [...quadWeights];
+  if (currentPerception) {
+    if (currentPerception.intimacy > 0.4) {
+      dynamicWeights[2] = Math.min(0.7, dynamicWeights[2] + 0.2);
+      for (let q = 0; q < 4; q++) { if (q !== 2) dynamicWeights[q] = Math.max(0.05, dynamicWeights[q] - 0.07); }
+    }
+    if (currentPerception.pleasure > 0.5) {
+      dynamicWeights[0] = Math.min(0.7, dynamicWeights[0] + 0.15);
+      for (let q = 1; q < 4; q++) { dynamicWeights[q] = Math.max(0.05, dynamicWeights[q] - 0.05); }
+    }
+    if (currentPerception.sexual_attraction > 0.4) {
+      dynamicWeights[3] = Math.min(0.7, dynamicWeights[3] + 0.2);
+      for (let q = 0; q < 3; q++) { dynamicWeights[q] = Math.max(0.05, dynamicWeights[q] - 0.07); }
+    }
+    const total = dynamicWeights.reduce((s, w) => s + w, 0);
+    if (total > 0) for (let q = 0; q < 4; q++) dynamicWeights[q] /= total;
+  }
 
   // 逐维度权重
   const dimWeights = new Float64Array(24);
@@ -103,7 +122,7 @@ export function emotionalSimilarity(
     }
   } else {
     for (let q = 0; q < 4; q++) {
-      const w = quadWeights[q] / 6;
+      const w = dynamicWeights[q] / 6;
       for (let d = q * 6; d < (q + 1) * 6; d++) dimWeights[d] = w;
     }
   }

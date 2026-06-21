@@ -467,6 +467,7 @@ export class SQLiteAdapter {
       query.current_perception,
       record.perception,
       query.similarity_mode,
+      query.current_perception, // P1-1: 当前感知驱动动态权重
     );
 
     const topic = query.locus_path
@@ -869,7 +870,7 @@ export class SQLiteAdapter {
    * P1-3: 多跳实体关联检索（支持 1-3 度扩展）
    * 保护机制：单实体最多返回 8 条，超限截断。
    */
-  findRelatedEntitiesN(entityNames: string[], maxHops: 1|2|3 = 1, minStrength = 0.3): Array<{
+  findRelatedEntitiesN(entityNames: string[], maxHops: 1|2|3 = 1, minStrength = 0.3, maxAgeDays?: number): Array<{
     name: string;
     relation: string;
     strength: number;
@@ -877,6 +878,10 @@ export class SQLiteAdapter {
   }> {
     this.ensureReady();
     if (entityNames.length === 0 || maxHops < 1) return [];
+    // P0-4: 默认过滤超过2年的弱关联
+    const cutoffDate = maxAgeDays !== undefined
+      ? new Date(Date.now() - maxAgeDays * 86400000).toISOString()
+      : new Date(Date.now() - 730 * 86400000).toISOString();
     const seen = new Set<string>();
     const results: Array<{ name: string; relation: string; strength: number; hop: number }> = [];
     let currentLayer = [...entityNames];
@@ -889,15 +894,17 @@ export class SQLiteAdapter {
          JOIN entities e ON e.id = er.entity_b_id
          WHERE er.entity_a_id IN (SELECT id FROM entities WHERE name IN (${placeholders}))
            AND er.strength >= ?
+           AND (er.updated_at IS NULL OR er.updated_at >= ?)
          UNION
          SELECT e.name, er.relation, er.strength
          FROM entity_relations er
          JOIN entities e ON e.id = er.entity_a_id
          WHERE er.entity_b_id IN (SELECT id FROM entities WHERE name IN (${placeholders}))
            AND er.strength >= ?
+           AND (er.updated_at IS NULL OR er.updated_at >= ?)
          ORDER BY strength DESC
          LIMIT 15`,
-        [...currentLayer, minStrength, ...currentLayer, minStrength],
+        [...currentLayer, minStrength, cutoffDate, ...currentLayer, minStrength, cutoffDate],
       );
       if (rows.length === 0 || !rows[0].values) break;
       const columns = rows[0].columns;

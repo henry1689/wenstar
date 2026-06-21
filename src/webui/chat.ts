@@ -772,8 +772,12 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
             entities: currentEntityNames, limit: 3,
           });
           limMemories = rerank(limMemories, message);
+          // P0-2: 情感阈值过滤——低钙化(effective_strength<0.2或calcium<1)的闲聊碎片不进入熔铸
           emotionalMemories = limMemories.filter((m: any) =>
-            (m.scores.emotional > 0.65 || m.composite > 0.35) && m.record.id !== dna.branch_id
+            (m.scores.emotional > 0.65 || m.composite > 0.35)
+            && m.record.id !== dna.branch_id
+            && (m.record.effective_strength || 0) >= 0.2
+            && (m.record.calcium_level || 0) >= 1
           ).slice(0, 2);
           // 定向检索也输出用户曾提到
           if (emotionalMemories.length > 0) {
@@ -1108,7 +1112,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
           const catLabels: Record<string, string> = { 'EX_': '极乐','FL_': '挑逗','IN_': '依恋','DO_': '掌控','TE_': '张力','AF_': '温存' };
 
-          scoreText = '\n【情感曲谱库】以下是你掌握的亲密表达知识（供参考）：\n';
+          // P1-2: 军师/事务模式不注入亲密曲谱
+          const _isWorkMode = /工作|项目|客户|方案|会议|报告|分析|策略|建议|数据|文件|文档|合同|预算/.test(message) || (p.factual > 0.4 && p.intimacy < 0.3);
+          scoreText = _isWorkMode
+            ? '\n【知识曲谱库】以下是你掌握的知识参考：\n'
+            : '\n【情感曲谱库】以下是你掌握的亲密表达知识（供参考）：\n';
 
           const byCat: Record<string, typeof entries> = {};
 
@@ -1426,9 +1434,20 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     }
 
-    // 日常问询幻觉防护：用户问"在忙啥/在干嘛"时，不知道具体工作内容就不要编
+    // P2-3: 工作对话强制亲密过滤——检测到工作话题时自动禁止亲密表达
 
     let dailyGuard = '';
+    let intimacyFilter = '';
+
+    if (/工作|项目|客户|会议|方案|报告|公司|合同|预算|数据|分析|策略/.test(message)) {
+      const recentHistory = ctx.conversationHistory.filter(t => t.role === 'user').slice(-3).map(t => t.content).join('');
+      const isWorkContext = /工作|项目|客户|会议|方案|报告|公司/.test(recentHistory + message);
+      if (isWorkContext) {
+        intimacyFilter = '【⚠️ 工作模式激活】当前是工作/事务对话。🚫 禁止使用任何亲密/伴侣/挑逗语气。✅ 使用专业、清晰、高效的秘书语气回复。';
+      }
+    }
+
+    // 日常问询幻觉防护：用户问"在忙啥/在干嘛"时，不知道具体工作内容就不要编
 
     if (/在忙啥|在干嘛|最近.*忙|在做什么|忙什么/.test(message) && !feelingGuard) {
 

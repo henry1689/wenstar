@@ -11,6 +11,7 @@ import { HumanisticCalibrator } from './HumanisticCalibrator.js';
 import { buildContextPrompt, updateAfterReply, resetContext } from './ContextMemory.js';
 import { extractAnchor, buildAnchorConstraint, validateAgainstAnchor, resetAnchor } from './SceneAnchor.js';
 import { resetMockSession } from './MockLLMProvider.js';
+import { getBufferPhrase, type BufferContext } from './BufferPhrases.js';
 
 export class M5Orchestrator {
   private assembler: CognitionAssembler;
@@ -51,6 +52,9 @@ export class M5Orchestrator {
       knowledgeBase || '',
     ].filter(Boolean).join('\n');
 
+    // P1-3: 记录开始时间，用于判断是否需要过渡话术
+    const _startTime = Date.now();
+
     // Step 3: LLM 受控生成（唯一LLM调用点）
     let draft: string;
     let usedMockFallback = false;
@@ -90,6 +94,23 @@ export class M5Orchestrator {
     } catch (err) {
       console.warn('[M5] 后处理失败，使用LLM原始输出:', err);
       final = draft || '';
+    }
+
+    // P1-3: 长耗时自动插入过渡话术
+    const _elapsed = Date.now() - _startTime;
+    if (_elapsed > 500 && final && final.length > 2) {
+      const _bufCtx: BufferContext = {
+        mode: (cognition.current.emotion_summary?.includes('知识') || final.length > 300) ? 'knowledge_query'
+          : cognition.current.perception_snapshot.intimacy > 0.4 ? 'intimate'
+          : cognition.current.action?.some((a: string) => a === 'comfort') ? 'vague_recall'
+          : 'memory_recall',
+        elapsedMs: _elapsed,
+      };
+      const _buffer = getBufferPhrase(_bufCtx);
+      if (_buffer) {
+        final = _buffer + '\n\n' + final;
+        console.log('[M5Buffer] 过渡话术(' + _elapsed + 'ms): ' + _buffer.substring(0, 20));
+      }
     }
 
     // Step 5: 更新场景记忆（供下一轮使用）
