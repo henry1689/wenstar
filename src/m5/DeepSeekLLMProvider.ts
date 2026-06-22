@@ -184,7 +184,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
         message: rawInput, perception: _p,
         entities: _e.map((n: string) => ({ name: n, type: 'person' })),
         previousRole: DeepSeekLLMProvider._currentRole,
-        consecutiveIntimateCount: 0,
+        consecutiveIntimateCount: DeepSeekLLMProvider._transitionState.consecutiveIntimate,
       });
       const _t = evaluateTransition(DeepSeekLLMProvider._transitionState, _d, rawInput);
       DeepSeekLLMProvider._transitionState = _t.state;

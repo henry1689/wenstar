@@ -34,7 +34,7 @@ const WORK_KEYWORDS = /工作|项目|客户|会议|方案|报告|公司|合同|�
 const INTIMATE_KEYWORDS = /想你了|抱我|吻我|亲我|摸我|操我|干我|要你|想要|好想要|想你|抱抱|亲亲|回来|睡不着|怀里|怀里|搂|贴|蹭|吻|亲|抱|摸|爱|你/;
 
 // ─── 人物查询关键词 ───
-const RECALL_KEYWORDS = /记得.*吗|还记得|你记不记得|是不是.*那个|那个.*叫什么|是什么人|长什么样|还记.*吗|有印象吗/;
+const RECALL_KEYWORDS = /记得.*吗|还记得|你记不记得|是不是.*那个|那个.*叫什么|是什么人|长什么样|还记.*吗|有印象吗|联系方式|怎么联系|知道.*吗|见过.*吗/;
 
 // ─── 商业分析关键词 ───
 const STRATEGY_KEYWORDS = /分析|建议|方案|策略|评估|对比|趋势|风险|成本|收益|ROI|市场|竞争力|优势|劣势|SWOT|数据|报告|总结|归纳|梳理|盘点/;
@@ -69,21 +69,32 @@ export function classify(input: RoleClassifierInput): RoleDecision {
     return { role: 'secretary', confidence: 0.85, rule: 'work_keywords' };
   }
 
-  // ④ 亲密检测
+  // ④ 混合话题检测（工作+情绪：情绪维度高于工作维度）
+  const isMixed = (isWork || WORK_KEYWORDS.test(message)) && INTIMATE_KEYWORDS.test(message);
+  if (isMixed) {
+    return { role: previousRole === 'lover' ? 'lover' : 'counselor', confidence: 0.6, rule: 'mixed_topic_emotional_first' };
+  }
+
+  // ⑤ 亲密检测
   const isIntimate = p.intimacy > 0.3 || p.sexual_attraction > 0.2 || INTIMATE_KEYWORDS.test(message);
   if (isIntimate) {
-    // 工作→亲密：需连续 2 条才切换（防误判）
-    if (previousRole === 'secretary' || previousRole === 'strategist') {
+    // 从非lover角色→lover：需连续 2 条才切换（防误判）
+    if (previousRole && previousRole !== 'lover') {
       if (consecutiveIntimateCount < 2) {
-        return { role: previousRole || 'secretary', confidence: 0.5, rule: 'intimate_pending_2nd' };
+        return { role: 'lover', confidence: 0.3, rule: 'intimate_pending_2nd' };
       }
     }
     return { role: 'lover', confidence: 0.9, rule: 'intimate_detected' };
   }
 
-  // ⑤ 情绪检测
+  // ⑥ 情绪检测
   if (p.pleasure < -0.2 && p.intimacy < 0.3) {
     return { role: 'counselor', confidence: 0.75, rule: 'emotional_distress' };
+  }
+
+  // ⑦ 未存档信息查询
+  if (/联系方式|怎么联系|电话.*多少|在.*工作|住.*哪里/.test(message)) {
+    return { role: 'recaller', confidence: 0.7, rule: 'unknown_info_query' };
   }
 
   // ⑥ 商业分析（无工作词但有分析意图）
