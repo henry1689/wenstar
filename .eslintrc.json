@@ -1,0 +1,18 @@
+{
+  "root": true,
+  "rules": {
+    "no-restricted-globals": ["error", {
+      "name": "鸿鸣",
+      "message": "请使用\"鸿艺\"替代\"鸿鸣\""
+    }]
+  },
+  "overrides": [{
+    "files": ["*.ts", "*.tsx", "*.js", "*.jsx", "*.html"],
+    "rules": {
+      "no-restricted-syntax": ["error", {
+        "selector": "Literal[value=/鸿鸣/]",
+        "message": "禁止使用\"鸿鸣\"，请使用\"鸿艺\""
+      }]
+    }
+  }]
+}

@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# P0-5: 禁止提交含"鸿鸣"的代码
+if grep -rn "鸿鸣" src/ --include="*.ts" --include="*.json" --include="*.html" 2>/dev/null | grep -v node_modules; then
+  echo "❌ 错误: 代码中包含\"鸿鸣\"，请替换为\"鸿艺\""
+  exit 1
+fi
+
+echo "✅ 鸿鸣检查通过"

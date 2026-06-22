@@ -547,6 +547,12 @@ function broadcastEvent(event: string, data: any): void {
   }
 }
 
+/** P2-2: 推送聊天阶段事件 */
+function pushChatStage(stage: string, status: string): void {
+  broadcastEvent("chat-stage", { stage, status, time: new Date().toISOString() });
+}
+
+
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
