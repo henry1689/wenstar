@@ -33,6 +33,9 @@ interface WorkingEntry {
 }
 
 export class WorkingMemory {
+  /** R6: 当前对话角色标签（用于记忆定向过滤） */
+  static currentTag: string | null = null;
+
   private buffer: WorkingEntry[] = [];
   private maxSize: number;
   private storage: FusionStorageAdapter;
@@ -178,7 +181,11 @@ export class WorkingMemory {
       const now = new Date().toISOString();
       const entities = entry.dna.entity_genes;
       const entityNames = entities.filter((g: any) => g.type !== 'self').map((g: any) => g.name);
-      const sceneTags = entry.dna.scene_tags || [];
+      const sceneTags = [...(entry.dna.scene_tags || [])];
+      // R6: 追加角色标签（用于记忆定向过滤）
+      if (WorkingMemory.currentTag && !sceneTags.includes(WorkingMemory.currentTag)) {
+        sceneTags.push(WorkingMemory.currentTag);
+      }
       // P0-3: 使用真实 perception 向量，全零数组兜底
       const p = entry.perception;
       const percepVec = p ? JSON.stringify([

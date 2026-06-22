@@ -2,17 +2,19 @@
 """
 TTS Server — 玉瑶语音合成服务
 
-支持双引擎：
+支持三引擎：
   • Edge-TTS （默认）— 微软云端，音质佳，需联网
   • ChatTTS（本地） — 开源本地模型，完全离线
+  • MOSS-TTS（轻量）— 0.1B参数CPU离线模型，支持20种语言
 
 用法:
   python tts_server.py [port]
 
 环境变量:
-  TTS_ENGINE=edge|chattts   # 默认引擎
-  TTS_VOICE=...              # 默认声音
-  CHATTTS_MODEL_PATH         # ChatTTS 模型路径（自动检测）
+  TTS_ENGINE=edge|chattts|moss   # 默认引擎
+  TTS_VOICE=...                   # 默认声音
+  MOSS_TTS_URL=http://127.0.0.1:8000  # MOSS-TTS 服务地址
+  CHATTTS_MODEL_PATH              # ChatTTS 模型路径（自动检测）
 """
 import json
 import os
@@ -21,6 +23,7 @@ import uuid
 import argparse
 import asyncio
 import threading
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from functools import partial
@@ -42,6 +45,9 @@ CHATTTS_PATH = os.environ.get(
     str(Path(SCRIPT_DIR, "..", "..", "voxcpm2", "models", "chattts").resolve())
 )
 _CHAT_MODEL = None  # 懒加载
+
+# MOSS-TTS 服务地址
+MOSS_TTS_URL = os.environ.get("MOSS_TTS_URL", "http://127.0.0.1:8000")
 
 # ── 声音列表 ──
 EDGE_VOICES = [
@@ -65,7 +71,24 @@ CHATTTS_VOICES = [
     {"id": "chattts_default", "name": "ChatTTS 默认", "gender": "女", "locale": "普通话（本地模型）", "engine": "chattts"},
 ]
 
-ALL_VOICES = EDGE_VOICES + CHATTTS_VOICES
+MOSS_VOICES = [
+    # ── 中文女声 ──
+    {"id": "moss_xiaobei", "name": "小北（温柔晚安）", "gender": "女", "locale": "普通话·温柔知性", "engine": "moss"},
+    {"id": "moss_yuewen", "name": "悦文（台湾腔）", "gender": "女", "locale": "普通话·台湾腔", "engine": "moss"},
+    {"id": "moss_lingyu", "name": "灵雨（深夜晚安）", "gender": "女", "locale": "普通话·轻柔治愈", "engine": "moss"},
+    {"id": "moss_yangmi", "name": "杨幂（与自己同行）", "gender": "女", "locale": "普通话·知性清醒", "engine": "moss"},
+    # ── 中文男声 ──
+    {"id": "moss_junhao", "name": "骏豪（京味闲聊）", "gender": "男", "locale": "普通话·北京味儿", "engine": "moss"},
+    {"id": "mosh_zhiming", "name": "志明（时间观念）", "gender": "男", "locale": "普通话·纪录片腔", "engine": "moss"},
+    # ── 英文 ──
+    {"id": "moss_ava", "name": "Ava（English）", "gender": "女", "locale": "English·Academic", "engine": "moss"},
+    {"id": "moss_adam", "name": "Adam（English）", "gender": "男", "locale": "English·News", "engine": "moss"},
+    {"id": "moss_taylor", "name": "Taylor Swift", "gender": "女", "locale": "English·Warm", "engine": "moss"},
+    # ── 日语 ──
+    {"id": "moss_yui", "name": "Yui（日本語）", "gender": "女", "locale": "日本語·ニュース", "engine": "moss"},
+]
+
+ALL_VOICES = EDGE_VOICES + CHATTTS_VOICES + MOSS_VOICES
 
 
 def _load_chattts():
@@ -120,6 +143,98 @@ def generate_chattts(text: str) -> dict:
     }
 
 
+def _moss_voice_name(voice_id: str) -> str:
+    """将 MOSS 声音ID映射为 infer_onnx.py 需要的 voice 名"""
+    return "Xiaobei" if "xiaobei" in voice_id else "Junhao"
+
+
+def _moss_demo_id(voice_id: str) -> str:
+    """将 MOSS 声音ID映射为 WebUI 的 demo_id（不同 demo 有不同的参考音色）
+    demo.jsonl 映射:
+      demo-1 zh_1.wav   默认女声   | demo-2  zh_6.wav  温柔治愈女声
+      demo-3 zh_4.wav   台湾腔女声 | demo-4  zh_3.wav  京味儿男声
+      demo-5 zh_10.wav  纪录片男声 | demo-6  zh_11.wav 杨幂女声
+      demo-7 en_6.wav   英文女声   | demo-8  en_2.wav  英文女声B
+      demo-9 en_4.wav   英文男声   | demo-11 en_7.wav  Taylor Swift
+      demo-13 jp_2.wav  日语女声
+    """
+    mapping = {
+        "xiaobei": "demo-1",   # zh_1.wav 默认女声
+        "yuewen":  "demo-3",   # zh_4.wav 台湾腔
+        "lingyu":  "demo-2",   # zh_6.wav 温柔治愈
+        "yangmi":  "demo-6",   # zh_11.wav 杨幂
+        "junhao":  "demo-4",   # zh_3.wav 京味儿闲聊
+        "zhiming": "demo-5",   # zh_10.wav 纪录片
+        "ava":     "demo-8",   # en_2.wav English academic
+        "adam":    "demo-9",   # en_4.wav English news
+        "taylor":  "demo-11",  # en_7.wav Taylor Swift
+        "yui":     "demo-13",  # jp_2.wav Japanese
+    }
+    for key, demo in mapping.items():
+        if key in voice_id:
+            return demo
+    return "demo-1"
+
+
+def _moss_health_check() -> bool:
+    """检查 MOSS-TTS 服务是否在线（超时2秒）"""
+    try:
+        resp = requests.get(f"{MOSS_TTS_URL}/health", timeout=2)
+        return resp.ok
+    except Exception:
+        return False
+
+
+def generate_moss_tts(text: str, voice_id: str = "moss_junhao") -> dict:
+    """MOSS-TTS 本地轻量合成（纯CPU·0.1B参数·ONNX）"""
+    import base64
+    voice = _moss_voice_name(voice_id)
+    demo_id = _moss_demo_id(voice_id)
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+    # MOSS WebUI 采用 Form-encoded 参数
+    data = {
+        "text": text,
+        "demo_id": demo_id,
+        "max_new_frames": "375",
+        "audio_temperature": "0.8",
+        "audio_top_p": "0.95",
+        "audio_top_k": "25",
+        "text_temperature": "1.0",
+        "text_top_p": "1.0",
+        "text_top_k": "50",
+        "audio_repetition_penalty": "1.2",
+        "seed": "0",
+        "do_sample": "1",
+        "enable_text_normalization": "0",
+        "enable_normalize_tts_text": "1",
+    }
+
+    resp = requests.post(
+        f"{MOSS_TTS_URL}/api/generate",
+        data=data,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+
+    # MOSS 返回 base64 WAV 音频
+    wav_bytes = base64.b64decode(body["audio_base64"])
+    sample_rate = int(body.get("sample_rate", 48000))
+
+    filename = f"tts_{uuid.uuid4().hex[:12]}.wav"
+    filepath = AUDIO_DIR / filename
+    with open(filepath, "wb") as f:
+        f.write(wav_bytes)
+
+    size = filepath.stat().st_size
+    duration_sec = round(size / (sample_rate * 4), 1)  # 16bit stereo = 4 bytes/frame
+    return {
+        "url": f"/audio/{filename}", "filename": filename,
+        "duration_sec": duration_sec, "size_bytes": size,
+    }
+
+
 class TTSHandler(BaseHTTPRequestHandler):
     engine = TTS_ENGINE  # class-level default
 
@@ -144,6 +259,7 @@ class TTSHandler(BaseHTTPRequestHandler):
                 "engine": self.engine,
                 "voice": TTS_VOICE,
                 "chattts_loaded": _CHAT_MODEL is not None,
+                "moss_available": _moss_health_check(),
             })
         elif self.path == "/voices":
             self._send_json({"voices": ALL_VOICES, "current": TTS_VOICE, "engine": self.engine})
@@ -158,12 +274,13 @@ code{{background:#0d0812;padding:2px 6px;border-radius:4px;font-size:11px}}
 .tag{{display:inline-block;padding:1px 6px;border-radius:4px;font-size:9px;margin-left:4px}}
 .tag-edge{{background:rgba(96,165,250,0.15);color:#60a5fa}}
 .tag-local{{background:rgba(74,222,128,0.15);color:#4ade80}}
+.tag-moss{{background:rgba(251,191,36,0.15);color:#fbbf24}}
 </style></head><body><div class="card">
 <h1>YuYao TTS Service</h1>
 <div class="status">Running</div>
 <div class="info">
 Engine: <code>{self.engine}</code>
-<span class="tag {"tag-local" if self.engine=="chattts" else "tag-edge"}">{self.engine}</span><br>
+<span class="tag {"tag-moss" if self.engine=="moss" else "tag-local" if self.engine=="chattts" else "tag-edge"}">{self.engine}</span><br>
 Voice: <code>{TTS_VOICE}</code><br>
 POST <code>/tts</code> generate speech<br>
 GET <code>/health</code> health | <code>/voices</code> list
@@ -192,7 +309,7 @@ GET <code>/health</code> health | <code>/voices</code> list
             try:
                 body = _decode_body(raw)
                 engine = body.get("engine", "").strip()
-                if engine not in ("edge", "chattts"):
+                if engine not in ("edge", "chattts", "moss"):
                     self._send_json({"error": f"不支持的引擎: {engine}"}, 400)
                     return
                 TTSHandler.engine = engine
@@ -234,6 +351,8 @@ GET <code>/health</code> health | <code>/voices</code> list
 
                 if self.engine == "chattts":
                     result = generate_chattts(text)
+                elif self.engine == "moss":
+                    result = generate_moss_tts(text, TTS_VOICE)
                 else:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
@@ -260,14 +379,16 @@ def main():
     args = parser.parse_args()
 
     server = HTTPServer(("0.0.0.0", args.port), TTSHandler)
-    print(f"[TTS] 玉瑶语音合成服务启动: http://localhost:{args.port}")
-    print(f"[TTS]   引擎: {TTSHandler.engine} | 声音: {TTS_VOICE}")
-    print(f"[TTS]   POST /tts     生成语音 (JSON: {{'text':'...'}})")
-    print(f"[TTS]   POST /voice   切换声音")
-    print(f"[TTS]   POST /engine  切换引擎 (edge|chattts)")
-    print(f"[TTS]   GET  /voices  声音列表")
-    print(f"[TTS]   GET  /health  健康检查")
-    print(f"[TTS] 音频输出目录: {AUDIO_DIR}")
+    moss_ok = _moss_health_check()
+    print(f"[TTS] YuYao TTS Service: http://localhost:{args.port}")
+    print(f"[TTS]   engine: {TTSHandler.engine} | voice: {TTS_VOICE}")
+    print(f"[TTS]   POST /tts     generate speech (JSON: {{'text':'...'}})")
+    print(f"[TTS]   POST /voice   switch voice")
+    print(f"[TTS]   POST /engine  switch engine (edge|chattts|moss)")
+    print(f"[TTS]   GET  /voices  list voices")
+    print(f"[TTS]   GET  /health  health check")
+    print(f"[TTS]   MOSS-TTS: {'[OK]' if moss_ok else '[OFF]'} ({MOSS_TTS_URL})")
+    print(f"[TTS]   audio dir: {AUDIO_DIR}")
 
     try:
         server.serve_forever()

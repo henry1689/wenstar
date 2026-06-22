@@ -71,13 +71,30 @@ export default function SettingsDock() {
   const handleEngineChange = async (engine: string) => {
     setTtsEngine(engine);
     setTtsStatus('切换引擎...');
+    // 切引擎时自动选中并同步该引擎的第一个声音
+    const defaultVoice = ttsVoices.find(v => v.engine === engine);
+    if (defaultVoice) {
+      setTtsVoice(defaultVoice.id);
+      // 同时同步到服务端
+      try {
+        await fetch('http://localhost:8765/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voice: defaultVoice.id }),
+        });
+      } catch {}
+    }
     try {
       const res = await fetch('http://localhost:8765/engine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ engine }),
       });
-      if (res.ok) setTtsStatus(engine === 'chattts' ? '本地模型已就绪' : '云端已就绪');
+      if (res.ok) {
+        if (engine === 'chattts') setTtsStatus('本地模型已就绪');
+        else if (engine === 'moss') setTtsStatus('轻量模型已就绪');
+        else setTtsStatus('云端已就绪');
+      }
       else setTtsStatus('切换失败');
     } catch { setTtsStatus('切换失败'); }
     setTimeout(() => setTtsStatus('在线'), 2000);
@@ -312,6 +329,16 @@ export default function SettingsDock() {
                     fontSize: 9, fontFamily: 'inherit', transition: 'all 0.15s',
                   }}
                 >🖥️ ChatTTS 本地</button>
+                <button
+                  onClick={() => handleEngineChange('moss')}
+                  style={{
+                    flex: 1, padding: '4px 0', borderRadius: 6, cursor: 'pointer',
+                    border: ttsEngine === 'moss' ? '1px solid rgba(251,191,36,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                    background: ttsEngine === 'moss' ? 'rgba(251,191,36,0.1)' : 'transparent',
+                    color: ttsEngine === 'moss' ? '#fbbf24' : 'rgba(255,255,255,0.3)',
+                    fontSize: 9, fontFamily: 'inherit', transition: 'all 0.15s',
+                  }}
+                >🌱 MOSS 轻量</button>
               </div>
               <div style={{ fontSize: 9, color: 'rgba(180,195,210,0.5)', marginBottom: 6 }}>
                 🎤 声音
@@ -327,7 +354,11 @@ export default function SettingsDock() {
                 }}
               >
                 {ttsVoices
-                  .filter(v => ttsEngine === 'chattts' ? v.engine === 'chattts' : v.engine !== 'chattts')
+                  .filter(v =>
+                    ttsEngine === 'chattts' ? v.engine === 'chattts' :
+                    ttsEngine === 'moss' ? v.engine === 'moss' :
+                    v.engine === 'edge'
+                  )
                   .map(v => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.gender} · {v.locale})

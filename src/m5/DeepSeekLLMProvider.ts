@@ -16,6 +16,10 @@ import { renderIntimateResponse } from './expression/IntimateRenderer.js';
 import type { IntimateSceneType } from './expression/IntimateRenderer.js';
 import type { IPersona } from '../app/persona/types.js';
 import { getKeyValue } from '../app/shared/ApiKeyStorage.js';
+import { classify, type RoleType, type RoleDecision } from '../app/role/RoleClassifier.js';
+import { buildRoleSystemPrompt } from '../app/role/RoleProfiles.js';
+import { evaluateTransition, createInitialState, type TransitionState } from '../app/role/TransitionManager.js';
+import { validateRoleOutput, getFallbackRole } from '../app/role/RoleGuard.js';
 
 const API_KEY = process.env['DEEPSEEK_API_KEY'];
 
@@ -62,6 +66,9 @@ export function isAvailable(): boolean {
 }
 
 export class DeepSeekLLMProvider implements LLMProvider {
+  private static _transitionState: TransitionState = createInitialState();
+  private static _currentRole: RoleType = 'secretary';
+
   private model: string;
   private persona: IPersona;
 
@@ -169,6 +176,24 @@ export class DeepSeekLLMProvider implements LLMProvider {
     const history = params.conversationHistory ?? [];
     const kb = params.knowledgeBase ?? '';
 
+    // R4: 角色路由
+    try {
+      const _p = params.cognition.current.perception_snapshot;
+      const _e = params.cognition.current.key_entities || [];
+      const _d = classify({
+        message: rawInput, perception: _p,
+        entities: _e.map((n: string) => ({ name: n, type: 'person' })),
+        previousRole: DeepSeekLLMProvider._currentRole,
+        consecutiveIntimateCount: 0,
+      });
+      const _t = evaluateTransition(DeepSeekLLMProvider._transitionState, _d, rawInput);
+      DeepSeekLLMProvider._transitionState = _t.state;
+      DeepSeekLLMProvider._currentRole = _t.newRole;
+      console.log('[RoleRouter] ' + DeepSeekLLMProvider._currentRole + ' (' + _d.rule + ')');
+      // R6: 记忆角色标签
+      try { const { WorkingMemory } = await import('../m9/WorkingMemory.js'); WorkingMemory.currentTag = DeepSeekLLMProvider._currentRole; } catch {}
+    } catch (_re) { /* 路由失败不阻塞 */ }
+
     // 🔥 角色扮演：完全隔离路径
     if (kb.startsWith('【角色扮演】')) {
       const rpContent = kb.replace('【角色扮演】', '').trim();
@@ -230,7 +255,9 @@ export class DeepSeekLLMProvider implements LLMProvider {
       ? new Date(params.currentTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
       : new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
-    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${this.persona.buildSystemPrompt(level, params.knowledgeBase + '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：\n- 工作/技术/商务 → 用专业秘书语气\n- 分享感受/回忆 → 用当前等级的语气\n- 描述人物 → 以人物档案为准，不编造不添加')}`;
+        const _role = DeepSeekLLMProvider._currentRole;
+    const _replyInstruction = '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：如果他在谈工作→秘书语气；分享感受→当前等级语气；描述人物→以档案为准不编造';
+    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_role, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}`;
 
     // 构建上下文提示词
     const dimContext = [

@@ -574,6 +574,21 @@ export class MockLLMProvider implements LLMProvider {
     const e2 = s.arousal;
     const i1 = s.sexual_attraction;
 
+    // R7: MockLLM 角色路由——工作/技术类消息走中性回复，不进入亲密判断
+    if (userTechKeywords && !userIntimateKeywords) {
+      const secReplies = ['好的，我知道了。', '嗯，我记下了。', '收到，你先忙。', '好，你说，我记着。', '嗯，明白了。'];
+      const idx = Math.floor(Math.random() * secReplies.length);
+      return { text: secReplies[idx] };
+    }
+
+    // R7: 人物查询——走记忆助手回复
+    const recallKeywords = /记得.*吗|还记得|是什么人|长什么样|你记不记得/;
+    if (recallKeywords.test(txt)) {
+      const recallReplies = ['嗯…你跟我说过的我记得。不过我也只知道你告诉我的那些。', '我记得你提过这个人，但具体细节你没跟我说太多。', '你之前跟我说过一些，但我不确定我记全了。你说说看？'];
+      const idx = Math.floor(Math.random() * recallReplies.length);
+      return { text: recallReplies[idx] };
+    }
+
     const intimateRecall = rh && /高潮|进入|接吻|拥抱|亲吻|抚摸|胸口|赤裸|白衬衫|锁骨|当晚|那一夜|交融|颤抖|事后|相拥|腿软|身体|做爱|湿漉漉|呼吸急促|皮肤|指尖|体温|柔软/.test(txt);
     const isClimax = /高潮|丢了|到了|去了|射/.test(txt) || s.ecstasy > 0.2;
 
