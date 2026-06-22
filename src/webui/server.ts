@@ -130,8 +130,9 @@ let conversationHistory: ConversationTurn[] = [];
 const MAX_SAVED_TURNS = 500;
 function loadConversationHistory(): void {
   try {
-    if (storage) {
-      const recent = storage.getSQLite().getRecentConversations(500);
+    if (storage && storage.getSQLite) {
+      // 只加载最近 20 轮（防止旧会话历史污染新会话上下文）
+      const recent = storage.getSQLite().getRecentConversations(20);
       conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
     }
     console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
