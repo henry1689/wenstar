@@ -73,6 +73,11 @@ export function calcLevel(
   ecstasy: number, arousal: number, aggression: number, sincerity: number,
   dominance: number, rawText: string,
 ): { level: -2|-1|0|1|2; tier: TierConfig; raw: number } {
+  // FIX-1: 第三人外貌描述场景→强制 level 0（防止描述徐诗雨时触发亲密语气）
+  if (!/你|我/.test(rawText) && /个子|身高|皮肤|脸|眼睛|鼻子|嘴巴|头发|长发|短发|发型|漂亮|好看|帅|美|清秀|可爱|苗条|丰满|文气|瓜子脸|圆脸|酒窝|马尾|刘海|白|黑|瘦|胖|高|矮/.test(rawText) && rawText.length > 10) {
+    return { level: 0, tier: TIER_MAP[0], raw: 0 };
+  }
+
   const pos = [Math.max(pleasure,0), intimacy, sexual_attraction, sensory_craving, energy_merge, possessiveness, ecstasy, arousal].sort((a,b)=>b-a);
   const neg = [Math.abs(Math.min(pleasure,0)), aggression, Math.abs(Math.min(dominance,0))].sort((a,b)=>b-a);
   const pc = pos[0] > 0.3 ? pos[0]*0.6 + pos[1]*0.4 : pos[0];

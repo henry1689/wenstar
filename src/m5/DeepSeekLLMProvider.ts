@@ -344,10 +344,15 @@ export class DeepSeekLLMProvider implements LLMProvider {
       }
     }
 
-    // 🚨 反编造铁律——紧贴用户消息注入，独立系统消息不会被历史淹没
+    // 🚨 反编造铁律 + FIX-3: 人物档案独立注入（紧贴用户消息，不被 system prompt 淹没）
     if (kb.includes("人物档案") || kb.includes("以鸿艺告诉你的为准")) {
       const antiFabText = '【⚠️ 强制规则 - 必须遵守】\n你不知道鸿艺提到的那些人长什么样，你从没见过他们。\n🚫 用户问长相/身高/身材/声音/穿着/表情：你只能说"我没见过她，不知道她长什么样"或"你没跟我说过这个，我形容不出来"。\n🚫 禁止编造任何你不确定的内容。宁可说不知道，绝对不能自己编。\n✅ 你可以回答名字和关系，但具体外表细节你不知道。';
       messages.push({ role: 'system', content: antiFabText });
+      // FIX-3: 从 kb 中提取人物档案单独注入（避免被淹没）
+      const _profileMatch = kb.match(/【📋 人物档案[\s\S]*?】(?=\n\n【|$)/);
+      if (_profileMatch && _profileMatch[0].length < 2000) {
+        messages.push({ role: 'system', content: _profileMatch[0] });
+      }
     }
 
     // 🚨 玉瑶本人档案——紧贴用户消息注入，防止被历史对话淹没
