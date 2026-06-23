@@ -98,10 +98,13 @@ export class M5Orchestrator {
 
     // P1-3: 长耗时自动插入过渡话术
     const _elapsed = Date.now() - _startTime;
-    if (_elapsed > 500 && final && final.length > 2) {
+    // 亲密场景不插入过渡话术（破坏氛围）
+    const _isIntimateCtx = cognition.current.perception_snapshot.intimacy > 0.3
+      || cognition.current.perception_snapshot.sexual_attraction > 0.2
+      || /高潮|操|干|插|顶|射|丢|舔|吸|咬|揉|捏|屌|阴道|屄|鸡巴|肉棒|湿了|硬了|想要|好想要|要你|进去|死了/.test(userMessage || '');
+    if (_elapsed > 500 && final && final.length > 2 && !_isIntimateCtx) {
       const _bufCtx: BufferContext = {
         mode: (cognition.current.emotion_summary?.includes('知识') || final.length > 300) ? 'knowledge_query'
-          : cognition.current.perception_snapshot.intimacy > 0.4 ? 'intimate'
           : cognition.current.action?.some((a: string) => a === 'comfort') ? 'vague_recall'
           : 'memory_recall',
         elapsedMs: _elapsed,

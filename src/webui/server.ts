@@ -612,7 +612,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: reply }),
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(120000),
           });
           if (ttsRes.ok) {
             const ttsData = await ttsRes.json();
