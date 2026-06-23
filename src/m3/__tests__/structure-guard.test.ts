@@ -179,7 +179,7 @@ describe('[M3守卫] 运行时不变性', () => {
   });
 
   it('describeLevel 4 种钙质都有中文描述', () => {
-    const descriptions = [0, 1, 2, 3].map(PerceptionAnalyzer.describeLevel);
+    const descriptions = [0, 1, 2, 3].map(l => PerceptionAnalyzer.describeLevel(l as CalciumLevel));
     expect(descriptions[0]).toContain('粉末');
     expect(descriptions[1]).toContain('液体');
     expect(descriptions[2]).toContain('固体');

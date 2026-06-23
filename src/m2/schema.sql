@@ -162,6 +162,16 @@ CREATE TABLE IF NOT EXISTS black_diamond (
 CREATE INDEX IF NOT EXISTS idx_black_diamond_emotion ON black_diamond(emotion_tag);
 CREATE INDEX IF NOT EXISTS idx_black_diamond_created ON black_diamond(created_at DESC);
 
+-- S3-3: 黑钻倒排索引（替代 FTS5——sql.js 不内建 FTS5）
+CREATE TABLE IF NOT EXISTS black_diamond_terms (
+    term TEXT NOT NULL,
+    bd_id TEXT NOT NULL,
+    position INTEGER DEFAULT 0,
+    PRIMARY KEY (term, bd_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bd_terms_term ON black_diamond_terms(term);
+CREATE INDEX IF NOT EXISTS idx_bd_terms_bd_id ON black_diamond_terms(bd_id);
+
 -- AQC质检表（砂金质检员 / 金库质检员 — 独立标记，不阻塞现有流程）
 CREATE TABLE IF NOT EXISTS aqc_records (
     id TEXT PRIMARY KEY,

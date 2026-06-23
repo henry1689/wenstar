@@ -35,6 +35,7 @@ import { M4Orchestrator } from '../m4/M4Orchestrator.js';
 import { M5Orchestrator } from '../m5/M5Orchestrator.js';
 import { DeepSeekLLMProvider, isAvailable as deepseekAvailable } from '../m5/DeepSeekLLMProvider.js';
 import { MockLLMProvider } from '../m5/MockLLMProvider.js';
+import type { LLMProvider } from '../m5/types/index.js';
 import { FamilyGraph } from '../m4/FamilyGraph.js';
 import { MaintenanceService } from './maintenance.js';
 import { InductionScheduler } from '../m7/InductionScheduler.js';
@@ -73,7 +74,7 @@ import type { SimilarityMode, ScoredMemory } from '../m2/types/index.js';
 import type { SelfModelV1 } from '../m1/types/dna.js';
 import type { ConversationTurn } from '../m5/types/index.js';
 import type { M3Decision } from '../m3/types/perception.js';
-import { processChat as processChatNew } from './chat.js';
+import { processChat as processChatNew, resetVadStatus } from './chat.js';
 import type { ChatContext } from './chat.js';
 
 // ── 路径 ──
@@ -87,14 +88,14 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const TTS_URL = process.env.TTS_URL || 'http://localhost:8765';
 
 /** 统一错误输出 */
-function writeErr(res, code, msg) {
+function writeErr(res: http.ServerResponse, code: number, msg: string) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify({ error: msg }));
 }
 
 /** 定时器统一管理 */
-const _timers = [];
-function addTimer(t) { _timers.push(t); return t; }
+const _timers: Array<NodeJS.Timeout> = [];
+function addTimer(t: NodeJS.Timeout) { _timers.push(t); return t; }
 function clearAllTimers() { for (const t of _timers) { try { clearInterval(t); clearTimeout(t); } catch {} } _timers.length = 0; }
 
 // M6 自我模型（延迟初始化，在 initPipeline 中赋值）
@@ -175,7 +176,7 @@ maintenance.injectDeps({
 // ── 管道 ──
 let encoder: DNAEncoder;
 let storage: FusionStorageAdapter;
-let conversationDB: import("../m2/ConversationDB.js").ConversationDB;
+let conversationDB: import("../m2/ConversationDB.js").ConversationDB | undefined;
 let m3: M3LogicOrchestrator;
 let familyGraph: FamilyGraph;
 let m4: M4Orchestrator;
@@ -189,7 +190,7 @@ let workingMemory: WorkingMemory;
 let knowledgeBase: KnowledgeBase;
 let masterProfile: MasterProfileService;
 let clueTracker: ClueTracker;
-let llmProvider: DeepSeekLLMProvider;
+let llmProvider: LLMProvider;
 let clueAssistant: M5ClueAssistant;
 let topicTracker: TopicTracker;
 let m8: M8FusionAdapter;
@@ -224,7 +225,7 @@ async function initPipeline(): Promise<void> {
   PersonaRegistry.register(customPersona);
   PersonaRegistry.setActive('yuyao');
   const activePersona = PersonaRegistry.getActive();
-  if (activePersona) llmProvider.setPersona(activePersona);
+  if (activePersona && llmProvider instanceof DeepSeekLLMProvider) llmProvider.setPersona(activePersona);
   m5 = new M5Orchestrator(llmProvider);
   loadConversationHistory();
   maintenance.start(); // 启动维护引擎
@@ -370,7 +371,7 @@ async function initPipeline(): Promise<void> {
 
       // 尝试同步到仿生智脑金库（7200，可选，不影响启动）
       try {
-        const { bionic } = await import('./adapter/bionic-adapter.js');
+        const { bionic } = await import('../adapter/bionic-adapter.js');
         (async () => {
           try {
             const ok = await bionic.health();
@@ -762,6 +763,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       flushConversationHistory();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    // ── SP1-1: VAD 健康缓存手动重置 ──
+    if (req.method === 'POST' && url.pathname === '/api/admin/reset-vad') {
+      resetVadStatus();
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'ok', message: 'VAD 状态已重置，下次对话将重新检测' }));
       return;
     }
 
@@ -1286,7 +1295,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         const ok = PersonaRegistry.setActive(body.persona);
         if (ok) {
           const p = PersonaRegistry.getActive();
-          if (p) llmProvider.setPersona(p);
+          if (p) llmProvider.setPersona?.(p);
           console.log(`[Persona] 切换到: ${body.persona}`);
           // 切换角色时清空对话历史，避免遗留上下文
           resetConversationHistory();
@@ -1465,10 +1474,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         const entry = await knowledgeBase.add({
           title: body.title, content: body.content,
           source_type: body.source_type ?? 'text', source_name: body.source_name ?? null,
-          file_size: body.file_size ?? 0, tags: body.tags ?? [], interaction_type: body.interaction_type, scene_tags: body.scene_tags, classification: body.classification, interaction_type: body.interaction_type, scene_tags: body.scene_tags, classification: body.classification,
-	          interaction_type: body.interaction_type,
-	          scene_tags: body.scene_tags,
-	          classification: body.classification,
+          file_size: body.file_size ?? 0, tags: body.tags ?? [], interaction_type: body.interaction_type, scene_tags: body.scene_tags, classification: body.classification,
+
+
+
         });
         res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(entry));

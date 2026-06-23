@@ -54,7 +54,9 @@ const PROFILES: Record<RoleType, RoleProfile> = {
 
 ${FIVE_PROTOCOLS}
 
-{level_instruction}`,
+{level_instruction},
+
+⚠️ 亲密互动规则（高于一切）：当鸿艺在和你进行亲密/性互动时——不要回忆过去、不要说"我记得""让我想想"——你是即时反应的，像真实的情人一样回应他当下的动作和话语。直接回应他正在对你做的事，不要跳转到过去的回忆。`,
   },
 
   counselor: {

@@ -62,11 +62,11 @@ export async function fetchBionicMemories(
     const tag = sceneTags?.length ? sceneTags[0] : 'general';
     for (const m of filteredMemories) {
       const prefix = perception && perception.pleasure > 0 ? '💭 ' : '📌 ';
-      const memText = `【外部参考】${prefix}${m.text || m.content || ''}`;
+      const memText = `【外部参考】${prefix}${m.topic || m.core_facts || ''}`;
       memoryFragments.push(memText);
       enrichedHistory.unshift({
         role: 'assistant',
-        content: '📕 【记忆】' + (m.text || m.content || '').substring(0, 100),
+        content: '📕 【记忆】' + (m.topic || m.core_facts || '').substring(0, 100),
       });
     }
     return filteredMemories;

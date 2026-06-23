@@ -139,6 +139,13 @@ export class SQLiteAdapter {
     // P1-1: 黑钻库 emotion_vector 列迁移
     try { this.db.run("ALTER TABLE black_diamond ADD COLUMN emotion_vector TEXT DEFAULT NULL"); } catch { /* 列已存在 */ }
 
+    // SP3-3: 黑钻库 FTS5 全文索引（加速检索）
+    try {
+      this.db.run("CREATE VIRTUAL TABLE IF NOT EXISTS black_diamond_fts USING fts5(summary, tags, content='black_diamond', content_rowid='rowid')");
+      // 同步已有数据到 FTS5 索引（首次运行时）
+      this.db.run("INSERT OR IGNORE INTO black_diamond_fts(rowid, summary, tags) SELECT rowid, summary, tags FROM black_diamond");
+    } catch (e) { console.warn('[SQLite] FTS5 索引初始化失败:', e); }
+
     this.ready = true;
     console.log(`[SQLiteAdapter] 初始化完成: ${this.dbPath}`);
   }

@@ -141,7 +141,7 @@ export class MasterProfileService {
             'INSERT INTO master_profile (id, category, subcategory, content, source, confidence, calcium_score, mention_count, first_seen, last_seen, tags) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)',
             id, String(item.category || 'unknown'), item.subcategory || '', String(item.content), 'auto_extract', 0.5, now, now, JSON.stringify(['auto_extract'])
           );
-        } catch(e) { console.warn('[Mirror] store failed:', String(item.category), String(item.content).substring(0,20), String(e.message)); }
+        } catch(e) { console.warn('[Mirror] store failed:', String(item.category), String(item.content).substring(0,20), e instanceof Error ? e.message : String(e)); }
       }
     }
 

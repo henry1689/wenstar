@@ -140,6 +140,16 @@ export const config = {
   tts: {
     apiUrl: 'http://localhost:8765',
   },
+
+  /** ── T1: 太虚图书馆（旗舰版）── */
+  library: {
+    enabled: process.env["TAIXU_LIBRARY_ENABLED"] === "true",
+    port: parseInt(process.env["TAIXU_LIBRARY_PORT"] ?? "3737", 10),
+    dataDir: "lib/taixu-library/data",
+    watchDir: "lib/taixu-library/data/watch",
+    syncInterval: 300_000,
+    autoInit: true,
+  },
 } as const;
 
 export type Config = typeof config;

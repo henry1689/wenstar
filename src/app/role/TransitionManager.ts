@@ -19,11 +19,15 @@ export interface TransitionState {
   consecutiveIntimate: number;
   /** 混合话题标记 */
   isMixedTopic: boolean;
+  /** SP3-4: 上次切换时间戳（用于衰减） */
+  lastSwitchTime: number;
 }
 
 const MAX_SWITCHES_PER_SESSION = 3;
 const LOCK_DURATION_TURNS = 5;
 const INTIMATE_THRESHOLD = 2; // 连续 2 条亲密才切换
+const DECAY_INTERVAL_MS = 30 * 60 * 1000; // 30 分钟无切换自动衰减
+const DECAY_THRESHOLD_SWITCHES = 3;
 
 export function createInitialState(): TransitionState {
   return {
@@ -34,6 +38,7 @@ export function createInitialState(): TransitionState {
     lockRemainingTurns: 0,
     consecutiveIntimate: 0,
     isMixedTopic: false,
+    lastSwitchTime: Date.now(),
   };
 }
 
@@ -48,11 +53,24 @@ export function evaluateTransition(
   const newState = { ...state };
   const targetRole = decision.role;
 
+  // SP3-4: 30分钟无切换自动衰减 switchCount
+  const now = Date.now();
+  if (newState.switchCount > 0 && (now - newState.lastSwitchTime) > DECAY_INTERVAL_MS) {
+    const halfDecayed = Math.floor(newState.switchCount / 2);
+    if (halfDecayed !== newState.switchCount) {
+      newState.switchCount = halfDecayed;
+      console.log('[RoleRouter] 切换计数衰减: ' + state.switchCount + ' → ' + halfDecayed);
+    }
+  }
+
   // 锁定期：递减并维持锁定角色
   if (newState.lockedRole) {
     newState.lockRemainingTurns--;
     if (newState.lockRemainingTurns <= 0) {
       newState.lockedRole = null;
+      // SP3-4: 熔断解除时重置切换计数
+      newState.switchCount = 0;
+      console.log('[RoleRouter] 熔断解除，切换计数已重置');
     } else {
       return { newRole: newState.lockedRole, state: newState, switched: false };
     }
@@ -67,6 +85,7 @@ export function evaluateTransition(
   if (targetRole === 'secretary' || targetRole === 'strategist') {
     newState.consecutiveIntimate = 0;
     newState.switchCount++;
+    newState.lastSwitchTime = now;
     newState.previousRole = newState.currentRole;
     newState.currentRole = targetRole;
     if (newState.switchCount >= MAX_SWITCHES_PER_SESSION) {
@@ -86,6 +105,7 @@ export function evaluateTransition(
       return { newRole: newState.currentRole, state: newState, switched: false };
     }
     newState.switchCount++;
+    newState.lastSwitchTime = now;
     newState.previousRole = newState.currentRole;
     newState.currentRole = targetRole;
     console.log(`[RoleRouter] ${state.currentRole}→${targetRole} (${decision.rule})`);
@@ -94,6 +114,7 @@ export function evaluateTransition(
 
   // 其他切换（counselor/recaller 等）
   newState.switchCount++;
+  newState.lastSwitchTime = now;
   newState.previousRole = newState.currentRole;
   newState.currentRole = targetRole;
   if (newState.switchCount >= MAX_SWITCHES_PER_SESSION) {

@@ -73,4 +73,7 @@ export interface LLMProvider {
     /** 用户本轮原始输入（未经过 M1-M4 管线处理，用于精确关键词匹配） */
     userMessage?: string;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }>;
+
+  /** 切换角色 (可选实现) */
+  setPersona?(persona: import('../../app/persona/types.js').IPersona): void;
 }

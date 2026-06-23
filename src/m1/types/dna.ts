@@ -68,6 +68,12 @@ export interface DNA {
 
   /** M1 Phase1: 编码阶段告警/降级记录（如 ['L1_failed', 'L3_failed']） */
   warnings?: string[];
+
+  /**
+   * SP2-1: DNA 物料根码 — 格式 DNA-{YYYYMMDD}-{HHmm}-{4位流水号}
+   * 一个对话一个根码，全链路数据绑定此码
+   */
+  dna_root_id?: string;
 }
 
 /**

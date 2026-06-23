@@ -316,6 +316,51 @@ export function autoPromoteCandidates(sqlite: SQLiteAdapter, limit = 5): BlackDi
   return results;
 }
 
+/**
+ * S2-2: 金库→黑钻晋升（新规格）
+ * 条件: calcium_score >= 4.5 或 recall_count >= 5
+ */
+export function autoPromoteCandidatesV2(sqlite: SQLiteAdapter, limit = 5): BlackDiamondEntry[] {
+  const alreadyPromoted = new Set(
+    (sqlite.queryAll('SELECT source_id FROM black_diamond WHERE source_id IS NOT NULL') as any[])
+      .map((r: any) => r.source_id as string)
+      .filter(Boolean),
+  );
+
+  const candidates = sqlite.queryAll(
+    `SELECT id, raw_input, calcium_score, recall_count, narrative_tag, dna_root_id
+     FROM memories
+     WHERE (calcium_score >= 4.5 OR recall_count >= 5) AND is_promoted = 0
+     ORDER BY calcium_score DESC, recall_count DESC
+     LIMIT ?`,
+    [limit],
+  ) as any[];
+
+  const results: BlackDiamondEntry[] = [];
+  for (const mem of candidates) {
+    if (alreadyPromoted.has(mem.id as string)) continue;
+    const entry = promoteToBlackDiamond(sqlite, mem.id as string);
+    if (entry) {
+      sqlite.writeRaw('UPDATE memories SET is_promoted = 1 WHERE id = ?', [mem.id]);
+      results.push(entry);
+    }
+  }
+  return results;
+}
+
+/**
+ * S2-2: 召回钙化分增长（每次 +0.2，上限 10）
+ */
+export function applyRecallIncrement(sqlite: SQLiteAdapter, memoryId: string): void {
+  sqlite.writeRaw(
+    `UPDATE memories SET calcium_score = ROUND(MIN(10, COALESCE(calcium_score, 0) + 0.2), 1),
+     recall_count = COALESCE(recall_count, 0) + 1,
+     last_recalled_at = datetime('now','localtime')
+     WHERE id = ?`,
+    [memoryId]
+  );
+}
+
 // ─── P2: 批量操作 + 导出 ───
 
 /** 批量删除黑钻（核心安全防护：core_safety > 0.7 需二次确认） */

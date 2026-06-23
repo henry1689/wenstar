@@ -69,6 +69,12 @@ export class DeepSeekLLMProvider implements LLMProvider {
   private static _transitionState: TransitionState = createInitialState();
   private static _currentRole: RoleType = 'secretary';
 
+  /** SP1-3: 暴露当前角色供RoleGuard使用 */
+
+  /** SP1-3: 暴露当前角色供RoleGuard使用 */
+  static getCurrentRole(): RoleType {
+    return DeepSeekLLMProvider._currentRole;
+  }
   private model: string;
   private persona: IPersona;
 
@@ -181,8 +187,15 @@ export class DeepSeekLLMProvider implements LLMProvider {
       const _p = params.cognition.current.perception_snapshot;
       const _e = params.cognition.current.key_entities || [];
       const _d = classify({
-        message: rawInput, perception: _p,
-        entities: _e.map((n: string) => ({ name: n, type: 'person' })),
+        message: rawInput,
+        perception: {
+          ..._p,
+          humor: 0, factual: 0, logical: 0, certainty: 0,
+          abstract: 0, temporal_focus: 0, self_ref: 0,
+          power_diff: 0, dependency: 0, moral_judgment: 0,
+          etiquette: 0, belonging: 0,
+        },
+        entities: _e.map((n: string) => ({ name: n, type: 'person' as const, allele: n, phenotype: 'neutral' as const, knowledge_type: 'private' as const })),
         previousRole: DeepSeekLLMProvider._currentRole,
         consecutiveIntimateCount: DeepSeekLLMProvider._transitionState.consecutiveIntimate,
       });
@@ -276,17 +289,17 @@ export class DeepSeekLLMProvider implements LLMProvider {
       contextBlock += `\n[提到: ${entities.join(', ')}]`;
     }
 
-    // 表达规格约束
+    // 表达规格约束（SP4-3: 非亲密场景跳过身体/感官冗余指令）
     if (spec.forbiddenPatterns.length > 0) {
       contextBlock += `\n[避免] "${spec.forbiddenPatterns.join('", "')}" 这类回应`;
     }
-    if (spec.requireEmbodiedResponse) {
+    if (spec.requireEmbodiedResponse && level >= 2) {
       contextBlock += `\n[要求] 包含身体反应描写（体温/呼吸/心跳）`;
     }
-    if (spec.requireSensoryDetail) {
+    if (spec.requireSensoryDetail && level >= 2) {
       contextBlock += `\n[要求] 包含感官细节（触觉/嗅觉/听觉）`;
     }
-    if (spec.recommendedPhrases.length > 0) {
+    if (spec.recommendedPhrases.length > 0 && level >= 2) {
       contextBlock += `\n[推荐维度] ${spec.recommendedPhrases.join(', ')}`;
     }
 

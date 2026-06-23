@@ -2,6 +2,7 @@
 // Ref: ARCH.md §3.2 无DNA不写入 — 未经编码器的碎片禁止进入存储区
 // Ref: 架构决策备忘录 v1.3 — 叶子节点存储粒度为"最小语义单位"
 
+import { createHash } from 'node:crypto';
 import { routeL0, loadTaxonomy } from './L0Router.js';
 import { L1Sequencer } from './L1Sequencer.js';
 import { L2ContentExtractor } from './L2ContentExtractor.js';
@@ -58,6 +59,55 @@ export class DNAEncoder {
   private buffer: BufferEntry[] = [];
   /** M1 运行时统计 */
   private stats = { encodeCount: 0, failCount: 0, stageFailures: { l0: 0, l1: 0, l2: 0, l3: 0 } };
+
+  /** SP2-1: 当日流水号计数器（每日重置） */
+  private static _dailySeq = 0;
+  private static _lastDate = '';
+
+  /**
+   * SP2-1: 生成 DNA 物料根码
+   * 完整格式: DNA-YYYYMMDD-HHmm-NNNN-X
+   * X = HY瑶印码（1位hex，SHA256取末位，同一日期一致）
+   */
+  static generateRootId(userId?: string): string {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${y}${m}${d}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+
+    if (DNAEncoder._lastDate !== dateStr) {
+      DNAEncoder._dailySeq = 0;
+      DNAEncoder._lastDate = dateStr;
+    }
+    DNAEncoder._dailySeq++;
+    const seq = String(DNAEncoder._dailySeq).padStart(4, '0');
+
+    // HY 瑶印码: SHA256( HY + 日期 ) → 末位 hex 字符
+    const hyStamp = DNAEncoder.generateHYStamp(dateStr);
+    return `DNA-${dateStr}-${timeStr}-${seq}-${hyStamp}`;
+  }
+
+  /**
+   * SP2-1: 生成环节特征码
+   * 格式: {根码}.{模块代码}.{流水号}
+   * 模块代码: M1/M3/MEM/BD/GRAPH
+   */
+  static generateSubId(rootId: string, moduleCode: string, seqNo: number = 1): string {
+    return `${rootId}.${moduleCode}.${String(seqNo).padStart(3, '0')}`;
+  }
+
+  /**
+   * HY 瑶印码生成 — SHA256 末位 hex 字符
+   * 拼接固定前缀 "HY" + 8位日期 → SHA256 → 取末位 hex
+   * 同一日期产出始终一致，外人无法反推 HY 含义
+   */
+  static generateHYStamp(dateStr: string): string {
+    const input = `HY${dateStr}`;
+    const hash = createHash('sha256').update(input, 'utf8').digest('hex');
+    return hash.charAt(hash.length - 1).toUpperCase();
+  }
 
   constructor(selfModel: SelfModelV1) {
     this.selfModel = selfModel;
@@ -212,6 +262,7 @@ export class DNAEncoder {
       raw_input: '',
       created_at: new Date().toISOString(),
       scene_tags: [],
+      dna_root_id: DNAEncoder.generateRootId(),
       warnings: ['empty_input'],
     };
   }
@@ -344,6 +395,9 @@ export class DNAEncoder {
     // ── 从 L0 结果 + L3 基因派生语义标签 ──
     const sceneTags = this.deriveSceneTags(l0Result!.locus_path, l3Result!.entity_genes);
 
+    // ── SP2-1: 生成物料根码（一个对话一个根码） ──
+    const dna_root_id = DNAEncoder.generateRootId();
+
     // ── 组装 DNA ──
     const dna: DNA = {
       locus_path: l0Result.locus_path,
@@ -358,6 +412,7 @@ export class DNAEncoder {
       scene_tags: sceneTags,
       ambiguity_score: l0Result!.ambiguity_score,
       warnings: warnings.length > 0 ? warnings : undefined,
+      dna_root_id,
     };
 
     return dna;

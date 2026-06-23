@@ -91,6 +91,9 @@ const KINSHIP_MAP: Record<string, string> = {
   '姐姐': 'sibling_of', '妹妹': 'sibling_of',
   '爷爷': 'grandfather_of', '奶奶': 'grandmother_of',
   '外公': 'grandfather_of', '外婆': 'grandmother_of',
+  // FIX-2: 补充缺失的亲属称谓
+  '儿子': 'child_of', '女儿': 'child_of', '孩子': 'child_of', '子女': 'child_of',
+  '孙子': 'grandchild_of', '孙女': 'grandchild_of',
 };
 
 // ─── 社交关系 → 关系映射（与 KINSHIP_MAP 互补——同一人可同时拥有家族边和社交边）───
@@ -713,6 +716,88 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   /**
+   * 🔗 FIX-4: 添加两个第三方人物之间的直接关系边（非"我"相关的 person→person 边）
+   * 例如: 熊梓铭 -child_of-> 熊勇, 王全芬 -spouse_of-> 熊勇
+   *
+   * @param srcName 源人物名
+   * @param relation 关系类型（child_of / spouse_of / sibling_of 等）
+   * @param tgtName 目标人物名
+   * @param context 上下文（可选，存到节点 properties）
+   */
+  async addPersonRelation(srcName: string, relation: string, tgtName: string, context?: string): Promise<void> {
+    // 查找或创建源节点
+    const srcNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [srcName, 'person']);
+    let srcId: string;
+    if (srcNodes.length === 0) {
+      srcId = uid();
+      await this.addNode({ id: srcId, type: 'person', name: srcName });
+      await this.updatePersonProfile(srcName, {} as any);
+      console.log(`[PersonRelation] 创建节点: ${srcName}`);
+    } else {
+      srcId = srcNodes[0].id;
+    }
+
+    // 查找或创建目标节点
+    const tgtNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [tgtName, 'person']);
+    let tgtId: string;
+    if (tgtNodes.length === 0) {
+      tgtId = uid();
+      await this.addNode({ id: tgtId, type: 'person', name: tgtName });
+      await this.updatePersonProfile(tgtName, {} as any);
+      console.log(`[PersonRelation] 创建节点: ${tgtName}`);
+    } else {
+      tgtId = tgtNodes[0].id;
+    }
+
+    // 检查正向边是否已存在
+    const existingEdge = this.query(
+      'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+      [srcId, tgtId, relation]
+    );
+    if (existingEdge.length > 0) {
+      console.log(`[PersonRelation] 边已存在: ${srcName} --${relation}--> ${tgtName}`);
+      return;
+    }
+
+    // 创建正向边
+    await this.addEdge({ id: uid(), source_id: srcId, target_id: tgtId, relation });
+    console.log(`[PersonRelation] 创建边: ${srcName} --${relation}--> ${tgtName}`);
+
+    // 自动创建反向边
+    const reverseRel = REVERSE_RELATION[relation];
+    if (reverseRel && reverseRel !== relation) {
+      const revEdge = this.query(
+        'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+        [tgtId, srcId, reverseRel]
+      );
+      if (revEdge.length === 0) {
+        await this.addEdge({ id: uid(), source_id: tgtId, target_id: srcId, relation: reverseRel });
+        console.log(`[PersonRelation] 创建反向边: ${tgtName} --${reverseRel}--> ${srcName}`);
+      }
+    }
+
+    // 更新人物画像中的 relation_to_user
+    switch (relation) {
+      case 'child_of':
+        await this.updatePersonProfile(srcName, { relation_to_user: `${tgtName}的孩子` } as any);
+        await this.updatePersonProfile(tgtName, { relation_to_user: `${srcName}的家长` } as any);
+        break;
+      case 'parent_of':
+        await this.updatePersonProfile(srcName, { relation_to_user: `${tgtName}的家长` } as any);
+        await this.updatePersonProfile(tgtName, { relation_to_user: `${srcName}的孩子` } as any);
+        break;
+      case 'spouse_of':
+        await this.updatePersonProfile(srcName, { relation_to_user: `${tgtName}的配偶` } as any);
+        await this.updatePersonProfile(tgtName, { relation_to_user: `${srcName}的配偶` } as any);
+        break;
+      case 'sibling_of':
+        await this.updatePersonProfile(srcName, { relation_to_user: `${tgtName}的兄弟姐妹` } as any);
+        await this.updatePersonProfile(tgtName, { relation_to_user: `${srcName}的兄弟姐妹` } as any);
+        break;
+    }
+  }
+
+  /**
    * 获取社交关系摘要（与 getFamilySummary 互补，只返回非家庭关系）
    * 同一人若同时有家族边和社交边，在两个摘要中都会出现。
    */
@@ -889,7 +974,18 @@ export class FamilyGraph implements FamilyGraphInterface {
   }
 
   /**
+   * SP2-3: 反义词冲突检测对
+   */
+  private static CONFLICT_PAIRS: Array<[RegExp, RegExp]> = [
+    [/高(?!中)/, /矮/], [/瘦/, /胖/], [/长发/, /短发/], [/大胸|丰满/, /平胸|飞机场|贫乳/],
+    [/白/, /黑/], [/大眼睛/, /小眼睛/], [/瓜子脸|圆脸/, /方脸|长脸/], [/双眼皮/, /单眼皮/],
+    [/长发/, /短发/], [/卷发/, /直发/], [/戴眼镜/, /不戴眼镜/],
+  ];
+
+  /**
    * 更新或创建人物画像
+   *
+   * SP2-3: 新增冲突检测 — 检测到关键字段矛盾时保留双版本+标记冲突
    */
   async updatePersonProfile(personName: string, updates: Partial<PersonProfile>): Promise<void> {
     const nodes = this.query('SELECT id, properties, aliases FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
@@ -905,6 +1001,27 @@ export class FamilyGraph implements FamilyGraphInterface {
       ...updates,
     };
     merged.mention_count = (existing.mention_count || 0) + 1;
+
+    // SP2-3: 冲突检测 — 检查关键描述字段矛盾
+    const _conflictFields = ['appearance', 'body_features', 'description'];
+    const _existingConflicts: Array<{ field: string; oldValue: string; newValue: string; timestamp: string }> = (existing as any).conflicts || [];
+    for (const field of _conflictFields) {
+      const oldVal = (existing as any)[field] || '';
+      const newVal = (updates as any)[field] || '';
+      if (oldVal && newVal && oldVal !== newVal) {
+        // 检测反义词
+        const hasConflict = FamilyGraph.CONFLICT_PAIRS.some(([a, b]) => a.test(oldVal) && b.test(newVal));
+        if (hasConflict) {
+          _existingConflicts.push({ field, oldValue: oldVal, newValue: newVal, timestamp: new Date().toISOString() });
+          // 保持旧值，新值存入 conflicts
+          (merged as any)[field] = oldVal;
+          (merged as any).conflicts = _existingConflicts;
+          (merged as any).conflict = true;
+          console.log('[FamilyGraph] 冲突检测: ' + personName + ' ' + field + ' (' + oldVal + ' vs ' + newVal + ')');
+        }
+      }
+    }
+
     merged.completeness = this.calcProfileCompleteness(merged);
     this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(merged), new Date().toISOString(), nodes[0].id]);
@@ -946,6 +1063,107 @@ export class FamilyGraph implements FamilyGraphInterface {
   getAllPersonNames(): string[] {
     const rows = this.query('SELECT name FROM nodes WHERE type = ?', ['person']);
     return (rows as any[]).map(r => r.name as string).filter(Boolean);
+  }
+
+  /**
+   * S2-3: 清洗关系词脏节点
+   * 删除「老公/老婆/爸爸/妈妈/同事/朋友」等关系词被误作为人名创建的节点
+   */
+  async cleanDirtyNodes(): Promise<number> {
+    const dirtyWords = ['老公','老婆','爸爸','妈妈','爷爷','奶奶','外公','外婆',
+      '哥哥','弟弟','姐姐','妹妹','儿子','女儿','同事','同学','朋友','室友',
+      '老板','上司','领导','客户','老师','医生','邻居','合伙人'];
+    let cleaned = 0;
+
+    for (const word of dirtyWords) {
+      const nodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [word, 'person']);
+      for (const node of nodes) {
+        const profile = this.getPersonProfile(word);
+        // 仅当该节点没有有效的人物画像信息时删除（仅关系词，无其他属性）
+        if (profile && !profile.appearance && !profile.body_features && !profile.occupation
+            && !profile.traits?.length && !profile.description && !profile.interests?.length) {
+          // 删除关联边
+          this.run('DELETE FROM edges WHERE source_id = ? OR target_id = ?', [node.id, node.id]);
+          this.run('DELETE FROM nodes WHERE id = ?', [node.id]);
+          cleaned++;
+        }
+      }
+    }
+    if (cleaned > 0) {
+      console.log(`[FamilyGraph] 清洗 ${cleaned} 个脏节点`);
+      this.markDirty(true);
+    }
+    return cleaned;
+  }
+
+  /**
+   * S2-3: 检索人物时联动返回档案 + 关联记忆
+   * 返回人物画像 + 关联的 edges 列表（供 chat.ts 构建检索）
+   */
+  searchPersonWithMemories(personName: string): {
+    profile: PersonProfile | null;
+    relations: Array<{ name: string; relation: string }>;
+  } {
+    const profile = this.getPersonProfile(personName);
+    const relations: Array<{ name: string; relation: string }> = [];
+
+    if (profile) {
+      const nodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+      if (nodes.length > 0) {
+        const nodeId = nodes[0].id;
+        // 出边
+        const outgoing = this.query(
+          `SELECT n.name, e.relation FROM edges e JOIN nodes n ON e.target_id = n.id WHERE e.source_id = ?`,
+          [nodeId]
+        );
+        for (const e of outgoing) {
+          relations.push({ name: e.name, relation: e.relation });
+        }
+        // 入边
+        const incoming = this.query(
+          `SELECT n.name, e.relation FROM edges e JOIN nodes n ON e.source_id = n.id WHERE e.target_id = ?`,
+          [nodeId]
+        );
+        for (const e of incoming) {
+          relations.push({ name: e.name, relation: e.relation });
+        }
+      }
+    }
+
+    return { profile, relations };
+  }
+
+  /**
+   * S2-3: 特征独立建边
+   * 为人物外貌/身体特征创建独立的 object 节点并关联
+   */
+  async addFeatureEdge(personName: string, featureName: string, featureType: 'appearance' | 'body' | 'style' | 'trait'): Promise<void> {
+    const personNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (personNodes.length === 0) return;
+    const personId = personNodes[0].id;
+
+    // 查找或创建特征节点
+    const featureNodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [featureName, 'object']);
+    let featureId: string;
+    if (featureNodes.length > 0) {
+      featureId = featureNodes[0].id;
+    } else {
+      featureId = uid();
+      await this.addNode({ id: featureId, type: 'object', name: featureName });
+    }
+
+    // 建边
+    const relation = featureType === 'appearance' ? 'has_appearance' :
+      featureType === 'body' ? 'has_body_feature' :
+      featureType === 'style' ? 'has_style' : 'has_trait';
+    const existing = this.query(
+      'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+      [personId, featureId, relation]
+    );
+    if (existing.length === 0) {
+      await this.addEdge({ id: uid(), source_id: personId, target_id: featureId, relation });
+      console.log(`[FamilyGraph] 特征建边: ${personName} -${relation}-> ${featureName}`);
+    }
   }
 
   private rowToNode(row: any): GraphNode {

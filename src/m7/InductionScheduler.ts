@@ -20,7 +20,7 @@ const DEEPSEEK_API_KEY = process.env['DEEPSEEK_API_KEY'];
 const DEEPSEEK_MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
 
 interface InductionRecord {
-  period_type: 'hourly';
+  period_type: 'hourly' | 'daily' | 'weekly' | 'monthly';
   period_start: string;
   period_end: string;
   /** 规则摘要（始终有） */
@@ -40,6 +40,7 @@ export class InductionScheduler {
   private dreamQueue: DreamQueue | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inductionPath: string;
+  private lastInductionTime: number = 0;
 
   constructor(storage: FusionStorageAdapter, dreamQueue?: DreamQueue) {
     this.storage = storage;
@@ -114,7 +115,7 @@ export class InductionScheduler {
       }
 
       const record: InductionRecord = {
-        period_type: 'hourly',
+        period_type: 'daily',
         period_start: oneHourAgo.toISOString(),
         period_end: now.toISOString(),
         summary,
@@ -127,26 +128,33 @@ export class InductionScheduler {
         created_at: now.toISOString(),
       };
 
+      // 修正 period_type：根据实际时间间隔选择
+      const hoursSinceLast = this.lastInductionTime
+        ? (now.getTime() - this.lastInductionTime) / (60 * 60 * 1000)
+        : 1;
+      let periodType: string;
+      if (hoursSinceLast >= 24 * 7) periodType = 'monthly';
+      else if (hoursSinceLast >= 24) periodType = 'daily';
+      else periodType = 'hourly';
+      this.lastInductionTime = now.getTime();
+
       const filePath = join(this.inductionPath, `induction_${now.toISOString().slice(0, 13).replace('T', '_')}.json`);
       writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf-8');
 
-      // 写入 SQLite inductions 表（蓝图设计的 daily/weekly/monthly 三层归纳）
-      const validPeriods = ['hourly', 'daily', 'weekly', 'monthly'];
-      if (validPeriods.includes('hourly')) {
-        try {
-          const sqlite = this.storage.getSQLite();
-          if (sqlite && typeof sqlite.writeRaw === 'function') {
-            sqlite.writeRaw(
-              `INSERT INTO inductions (period_type, period_start, period_end, summary_text,
-               source_record_count, dominant_mood, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              'hourly', oneHourAgo.toISOString(), now.toISOString(),
-              summary, recent.length, mood, now.toISOString(),
-            );
-          }
-        } catch (err) {
-          console.warn('[Induction] SQLite 写入失败:', err);
+      // 写入 SQLite inductions 表
+      try {
+        const sqlite = this.storage.getSQLite();
+        if (sqlite && typeof sqlite.writeRaw === 'function') {
+          sqlite.writeRaw(
+            `INSERT INTO inductions (period_type, period_start, period_end, summary_text,
+             source_record_count, dominant_mood, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            periodType, oneHourAgo.toISOString(), now.toISOString(),
+            summary, recent.length, mood, now.toISOString(),
+          );
         }
+      } catch (err) {
+        console.warn('[Induction] SQLite 写入失败（非阻塞）:', err);
       }
 
       console.log(`[Induction] ✅ ${recent.length}条 · ${reflection ? 'LLM感悟' : '规则摘要'} · ${summary.substring(0, 40)}...`);
@@ -226,8 +234,17 @@ export class InductionScheduler {
   }
 
   private detectDominantMood(records: any[]): string {
-    const avgP = records.reduce((s, r) => s + r.perception.pleasure, 0) / records.length;
-    const avgI = records.reduce((s, r) => s + r.perception.intimacy, 0) / records.length;
+    let totalP = 0, totalI = 0, count = 0;
+    for (const r of records) {
+      if (r.perception && typeof r.perception.pleasure === 'number') {
+        totalP += r.perception.pleasure;
+        totalI += r.perception.intimacy ?? 0;
+        count++;
+      }
+    }
+    if (count === 0) return '平静中性';
+    const avgP = totalP / count;
+    const avgI = totalI / count;
     if (avgP > 0.3 && avgI > 0.3) return '温馨亲密';
     if (avgP > 0.3) return '积极愉快';
     if (avgP < -0.3) return '低落消极';
@@ -277,7 +294,15 @@ export class InductionScheduler {
         const relation = avgCalcium > 0.4 ? 'strongly_related_to' : 'related_to';
         const strength = Math.min(1, data.count / 10 + avgCalcium);
         try {
+          // S3-4: 先确保实体存在，避免 NOT NULL 约束违规
+          sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, \'object\')', [entityA]);
+          sqlite.writeRaw('INSERT OR IGNORE INTO entities (name, type) VALUES (?, \'object\')', [entityB]);
           sqlite.writeRaw(
+            `INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (
+               (SELECT id FROM entities WHERE name=? LIMIT 1),
+               (SELECT id FROM entities WHERE name=? LIMIT 1),
+               ?, ?, ?
+             ) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at`,
             `INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (
                (SELECT id FROM entities WHERE name=? LIMIT 1),
                (SELECT id FROM entities WHERE name=? LIMIT 1),

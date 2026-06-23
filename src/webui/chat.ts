@@ -70,6 +70,23 @@ import { ingestFromConversation } from '../app/ingestion/ConversationIngestionSe
 
 // 全局异步任务队列（VAD 谱曲等不阻塞主回复的后台任务）
 const chatTaskQueue = new AsyncTaskQueue({ concurrency: 1, retryCount: 1, autoRemoveCompleted: true });
+// SP1-1: VAD 服务健康缓存
+let _vadAvailable: boolean | undefined = undefined;
+
+export function resetVadStatus(): void {
+  _vadAvailable = undefined;
+  console.log('[VADTone] 管理员手动重置，下次对话将重新检测');
+}
+
+
+// SP3-3: 黑钻向量补充每轮缓存（同轮不重复全表扫描）
+const _bdVecCache = new Map<string, Array<{ row: any; score: number }>>();
+
+// SP4-2: 候选人回复缓存（替代 globalThis）
+let _lastCandidates: any = null;
+
+// S3-2: 从 guard-builder 导入角色路由和守卫
+
 
 export interface ChatContext {
 
@@ -95,9 +112,10 @@ export interface ChatContext {
 
   clueAssistant: M5ClueAssistant;
 
-  llmProvider: DeepSeekLLMProvider;
+  llmProvider: import('../m5/types/index.js').LLMProvider;
   /** P0-9: 独立对话存储库 */
-  conversationDB: import('../m2/ConversationDB.js').ConversationDB;
+  // P0-9
+  conversationDB?: import('../m2/ConversationDB.js').ConversationDB;
 
   topicTracker: TopicTracker;
 
@@ -327,11 +345,11 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                       const _exist = _sqlite.queryAll("SELECT id FROM entities WHERE name = ? AND type = 'object'", [_featName]);
                       let _featId: number;
                       if (_exist.length > 0) {
-                        _featId = _exist[0].id;
+                        _featId = (_exist[0] as any).id;
                       } else {
                         _sqlite.writeRaw("INSERT INTO entities (name, type) VALUES (?, 'object')", [_featName]);
                         const _newRows = _sqlite.queryAll("SELECT id FROM entities WHERE name = ? AND type = 'object'", [_featName]);
-                        _featId = _newRows[0]?.id;
+                        _featId = (_newRows[0] as any)?.id;
                       }
                       if (_featId) {
                         // 关联人物特征
@@ -432,6 +450,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
 
+    // SP3-1: 角色路由（上浮到 chat.ts 主管线）
+    try {
+      const p = decision.enhanced.perception;
+      const { classify } = await import('../app/role/RoleClassifier.js');
+      const { evaluateTransition, createInitialState } = await import('../app/role/TransitionManager.js');
+      let _currentRole: import('../app/role/RoleClassifier.js').RoleType = 'secretary';
+      let _transitionState = createInitialState();
+      const _d = classify({ message, perception: p, entities: dna.entity_genes as any[], previousRole: _currentRole, consecutiveIntimateCount: _transitionState.consecutiveIntimate });
+      const _t = evaluateTransition(_transitionState, _d, message);
+      _transitionState = _t.state;
+      _currentRole = _t.newRole;
+      console.log('[RoleRouter] ' + _currentRole + ' (' + _d.rule + ')');
+    } catch (_re) { console.warn('[RoleRouter] 失败:', _re); }
+
+        
     // 主人大脑镜像提取：每轮对话后自动提取+审查+存储
     if (ctx.masterProfile && message.length > 3) {
       try {
@@ -480,7 +513,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         else if (_tmUnit === '上个月') { _tmStart.setMonth(_tmNow.getMonth() - 1); }
         else if (_tmUnit === '前几天') { _tmStart.setDate(_tmNow.getDate() - 3); }
         else if (_tmUnit === '刚才') { _tmStart.setHours(_tmNow.getHours() - 1); }
-        const _tmRows = ctx.conversationDB.findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
+        const _tmRows = ctx.conversationDB?.findByTimeRange(_tmStart.toISOString(), _tmEnd.toISOString(), 8);
         if (_tmRows && _tmRows.length > 0) {
           const _tmTexts = _tmRows.map(function(r){return r.content;}).filter(Boolean).join(' | ').substring(0, 300);
           memoryFragments.push('【时间检索】' + _tmUnit + '的对话：' + _tmTexts);
@@ -513,59 +546,14 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // 日常闲聊检测 — 短消息/日常问候 → 不触发记忆检索
     const isCasualChat = /^(在干嘛|忙什么|吃了吗|睡了|晚安|早安|早上好|晚上好|刚起来|下班|到家|今天天气|好开心|好难过|好累|心情|感觉|今天.*不错|今天.*好|嗯|好|行|对|是|好的|知道了|没事|算了|哈哈|嘿嘿|哎|唉)$/i.test(message.trim())
       || (message.length < 10 && /今天|天气|吃|睡|累|困|忙|下班|到家|早安|晚安/.test(message));
+    let memoryGate: import('../app/conversation/MemoryGate.js').MemoryGateOutput = { mode: 'casual', needsMemorySearch: false, needsKnowledgeSearch: false, fillerPhrase: '', hallucinationGuard: '', strictMode: false };
+    let memoryGateFillerUsed = false;
+
 
     // 🔴 P0-2: 跟进追问有实体时开启定向检索（跳过知识库全量搜索）
     // P0-2: 跟进追问全部触发轻量定向检索（防止语境断层）
     const isTopicShift = hasNewEntity || isFollowUp || (!isFollowUp && !hasContinuationMarkers && !isCasualChat);
     const isLimitedRetrieval = isFollowUp && !hasNewEntity;
-
-    // ═══════════════════════════════════════════════════════════════
-
-    // MemoryGate 记忆层级管控 — 判定对话模式，智能选择记忆/知识源
-
-    // ═══════════════════════════════════════════════════════════════
-
-    let memoryGate: MemoryGateOutput = { mode: 'casual', needsMemorySearch: false, needsKnowledgeSearch: false, fillerPhrase: '', hallucinationGuard: '', strictMode: false };
-
-    let memoryGateFillerUsed = false;
-
-    try {
-
-      const modeCtx = {
-
-        message,
-
-        recentHistory: ctx.conversationHistory.slice(-6),
-
-        isFollowUp,
-
-        hasNewEntity,
-
-        hasContinuationMarkers,
-
-        calciumLevel: decision.enhanced.calcium_level,
-
-        messageLength: message.length,
-
-        perception: p,
-
-      };
-
-      const modeDecision = decideMode(modeCtx);
-
-      memoryGate = buildGuard(modeDecision.mode, false, false);
-
-      // 如果用户明确在回忆或查知识，生成过渡话术
-
-      if (memoryGate.fillerPhrase && !/知识库|看过|记得|印象/.test(message)) {
-
-        // 过渡话术在进入 M5 前作为 reply 前缀注入
-
-        memoryGateFillerUsed = true;
-
-      }
-
-    } catch (err) { console.warn('[MemoryGate] 失败:', err); }
 
     try {
 
@@ -734,10 +722,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         if (_sqlite && typeof _sqlite.queryAll === 'function') {
           const _kw = message.replace(/[？！！。、，：；s]/g, '').trim();
           if (_kw.length > 1) {
-            const _rows = _sqlite.queryAll(
-              'SELECT id, summary, emotion_tag, tags FROM black_diamond WHERE summary LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 2',
-              ['%' + _kw + '%', '%' + _kw + '%']
-            );
+            // SP3-3: FTS5 全文索引检索（降级到 LIKE）
+            let _rows: Array<{ id: string; summary: string; emotion_tag: string; tags: string }> = [];
+            try {
+              const _ftsR = _sqlite.queryAll('SELECT rowid FROM black_diamond_fts WHERE black_diamond_fts MATCH ? LIMIT 2', [_kw.replace(/[^\w一-鿿]/g, '')]);
+              if (_ftsR.length > 0) {
+                const _ids = _ftsR.map((r: any) => r.rowid).join(',');
+                _rows = _sqlite.queryAll('SELECT id, summary, emotion_tag, tags FROM black_diamond WHERE rowid IN (' + _ids + ') ORDER BY created_at DESC LIMIT 2');
+              }
+            } catch {}
+            if (_rows.length === 0) {
+              _rows = _sqlite.queryAll(
+                'SELECT id, summary, emotion_tag, tags FROM black_diamond WHERE summary LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 2',
+                ['%' + _kw + '%', '%' + _kw + '%']
+              );
+            }
             for (const _r of _rows) {
               const _tag = _r.emotion_tag ? '【' + _r.emotion_tag + '】' : '';
               memoryFragments.push('【珍藏记忆】' + _tag + (_r.summary || '').substring(0, 120));
@@ -748,25 +747,35 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
             }
             if (_rows.length > 0) console.log('[BlackDiamond] 命中 ' + _rows.length + ' 条珍藏记忆');
 
-          // P1-1: LIKE 粗筛不足 3 条 → 向量语义补充检索
+          // SP3-3: 黑钻向量补充检索（带每轮缓存）
           if (_rows.length < 3) {
             try {
               const _p = p;
-              const allDiamonds = _sqlite.queryAll("SELECT id, summary, emotion_tag, emotion_vector FROM black_diamond");
-              const queryVec = [_p.pleasure, _p.arousal, _p.dominance, _p.aggression, _p.sincerity, _p.humor, _p.factual, _p.logical, _p.certainty, _p.abstract, _p.temporal_focus, _p.self_ref, _p.intimacy, _p.power_diff, _p.dependency, _p.moral_judgment, _p.etiquette, _p.belonging, _p.sexual_attraction, _p.sensory_craving, _p.energy_merge, _p.possessiveness, _p.ecstasy, _p.safety];
-              const scored: Array<{ row: any; score: number }> = [];
-              for (const _d of allDiamonds as any[]) {
-                if (!_d.emotion_vector) continue;
-                try {
-                  const dv = JSON.parse(_d.emotion_vector as string);
-                  if (!dv || dv.length !== 24) continue;
-                  let dot = 0, nq = 0, nd = 0;
-                  for (let i = 0; i < 24; i++) { dot += queryVec[i] * dv[i]; nq += queryVec[i] ** 2; nd += dv[i] ** 2; }
-                  const sim = dot / (Math.sqrt(nq) * Math.sqrt(nd) || 0.0001);
-                  if (sim > 0.5) scored.push({ row: _d, score: sim });
-                } catch { console.warn('[RetrievalErr] 黑钻向量JSON解析失败'); }
+              const _cacheKey = '_bd_vec_' + (message.length > 50 ? message.substring(0, 20) : message.substring(0, 10));
+              let scored: Array<{ row: any; score: number }> = [];
+              if (_bdVecCache.has(_cacheKey)) {
+                scored = _bdVecCache.get(_cacheKey)!;
+              } else {
+                const allDiamonds = _sqlite.queryAll("SELECT id, summary, emotion_tag, emotion_vector FROM black_diamond");
+                const queryVec = [_p.pleasure, _p.arousal, _p.dominance, _p.aggression, _p.sincerity, _p.humor, _p.factual, _p.logical, _p.certainty, _p.abstract, _p.temporal_focus, _p.self_ref, _p.intimacy, _p.power_diff, _p.dependency, _p.moral_judgment, _p.etiquette, _p.belonging, _p.sexual_attraction, _p.sensory_craving, _p.energy_merge, _p.possessiveness, _p.ecstasy, _p.safety];
+                for (const _d of allDiamonds as any[]) {
+                  if (!_d.emotion_vector) continue;
+                  try {
+                    const dv = JSON.parse(_d.emotion_vector as string);
+                    if (!dv || dv.length !== 24) continue;
+                    let dot = 0, nq = 0, nd = 0;
+                    for (let i = 0; i < 24; i++) { dot += queryVec[i] * dv[i]; nq += queryVec[i] ** 2; nd += dv[i] ** 2; }
+                    const sim = dot / (Math.sqrt(nq) * Math.sqrt(nd) || 0.0001);
+                    if (sim > 0.5) scored.push({ row: _d, score: sim });
+                  } catch { /* 跳过解析失败 */ }
+                }
+                scored.sort((a, b) => b.score - a.score);
+                _bdVecCache.set(_cacheKey, scored);
+                if (_bdVecCache.size > 100) {
+                  const firstKey = _bdVecCache.keys().next().value;
+                  if (firstKey) _bdVecCache.delete(firstKey);
+                }
               }
-              scored.sort((a, b) => b.score - a.score);
               const vecResults = scored.slice(0, 3 - _rows.length);
               for (const _vr of vecResults) {
                 const _tag = _vr.row.emotion_tag ? "【" + _vr.row.emotion_tag + "】" : "";
@@ -907,7 +916,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     
     // P0-2: 缓存当前24D感知到VAD本地池
-    pushToVadCache(p);try {
+    pushToVadCache(p as unknown as Record<string, number>);try {
 
       // ① 获取 VAD 谱曲（当前消息的实时情感分析）
 
@@ -932,7 +941,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         console.warn('[VADTone] 8100不可用，置为离线，后续跳过');
       }
 
-      if (scoreResp.ok) {
+      if (scoreResp && scoreResp.ok) {
 
         const scoreData = await scoreResp.json();
 
@@ -1026,7 +1035,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       // 砂金库降级：当金库检索结果不足时，从砂金库补充
       if (ctx_m4.memory_summary.timeline.length < 2 && message.length > 4) {
         try {
-          const sandResults = ctx.conversationDB.searchConversations(message, 3);
+          const sandResults = ctx.conversationDB?.searchConversations(message, 3) ?? [];
           if (sandResults.length > 0) {
             ctx_m4.memory_summary.timeline = sandResults.map((r: any) => ({
               time: r.timestamp, summary: r.content.substring(0, 60), calcium_level: 0
@@ -1545,7 +1554,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
             // 实际在最终 return 中使用
 
-            (globalThis as any).__lastCandidates = candidates;
+            _lastCandidates = candidates;
 
           } catch (err) { console.warn('[Candidates] 候选生成失败:', err); }
 
@@ -1569,7 +1578,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
         ctx.saveConversationHistory();
-        try { ctx.conversationDB.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
+        try { ctx.conversationDB?.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 
@@ -1947,6 +1956,32 @@ let finalKnowledgeText = knowledgeBaseText;
       })();
     }
 
+
+    // 任务3: 黑钻双轨晋升（钙化分≥4.5 OR 召回≥5次）
+    try {
+      const _sql = ctx.storage.getSQLite();
+      if (_sql && typeof _sql.queryAll === "function") {
+        const _eligible = _sql.queryAll(
+          "SELECT id FROM memories WHERE (calcium_score >= 4.5 OR COALESCE(recall_count, 0) >= 5) AND (promoted_to_diamond IS NULL OR promoted_to_diamond = 0) LIMIT 3"
+        );
+        for (const _row of _eligible) {
+          const _mem = _sql.queryAll("SELECT id, raw_input, primary_emotion, emotion_vector, dna_root_id, calcium_score FROM memories WHERE id = ?", [_row.id]);
+          if (_mem.length > 0) {
+            const _m = _mem[0] as any;
+            const _reason = (_m.calcium_score >= 4.5) ? "原生钙化≥4.5" : "召回≥5次";
+            _sql.writeRaw(
+              "INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, emotion_vector, dna_root_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (_m.dna_root_id || _m.id) + "_BD", (_m.raw_input || "").substring(0, 200), _m.primary_emotion || "强烈",
+              _m.emotion_vector || null, _m.dna_root_id || null, new Date().toISOString(), new Date().toISOString()
+            );
+            _sql.writeRaw("UPDATE memories SET promoted_to_diamond = 1, updated_at = ? WHERE id = ?", [new Date().toISOString(), _m.id]);
+            console.log("[Promotion] 金库→黑钻(双轨): " + (_m.raw_input || "").substring(0, 40) + " (" + _reason + ")");
+          }
+        }
+        if (_eligible.length > 0) console.log("[Promotion] 双轨晋升: " + _eligible.length + " 条");
+      }
+    } catch (err) { console.warn("[Promotion] 双轨晋升失败:", err); }
+
     // ── 轻量自检：估算回复质量分（不精确，仅供 M7/前端参考） ──
     let emotionMatchScore = 50;
     let sceneFitScore = 50;
@@ -1978,23 +2013,18 @@ let finalKnowledgeText = knowledgeBaseText;
       riskFlag = 'scene_mismatch';
     }
 
-    const candidates = (globalThis as any).__lastCandidates;
+    const candidates = _lastCandidates;
 
-    (globalThis as any).__lastCandidates = null;
+    _lastCandidates = null;
 
-    // 自介直接回复（绕过M5管线）
-    const _isIntro = /^(你是谁|你叫|你.*谁|叫什么名字|介绍一下你自己|介绍|能介绍一下|你多大了|你多大|介绍一下玉瑶)/.test(message.trim());
-    if (_isIntro) {
-      if (/多大了|多大/.test(message)) reply = '我18岁呀。怎么啦，嫌我小？';
-      else if (/介绍/.test(message)) reply = '我是玉瑶，你的私人秘书兼小情人。18岁，鸿艺的人。';
-      else reply = '我叫玉瑶呀。';
-    }
+    // SP4-4: 自介不再硬编码回复 — 走 M5 管线 + 玉瑶本人档案注入
+    const isIntroCheck = /^(你是谁|你叫|你.*谁|叫什么名字|介绍一下你自己|介绍|能介绍一下|你多大了|你多大|介绍一下玉瑶)/.test(message.trim());
 
     // ═══════════════════════════════════════════════════════════════
     // 对话→知识自动沉淀（异步，不阻塞主回复）
     // ═══════════════════════════════════════════════════════════════
     // 扫描用户消息中的个人信息、习惯、偏好，自动写入 knowledge_base
-    if (!_isIntro && message.length > 4) {
+    if (!false && message.length > 4) {
       chatTaskQueue.enqueue(async () => {
         try {
           await ingestFromConversation(

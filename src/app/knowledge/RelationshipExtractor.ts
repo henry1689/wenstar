@@ -29,6 +29,8 @@ export interface DetectedRelationship {
   relation: string;      // 认识的人 | 父亲 | 配偶 | ...
   rawRelation: string;   // 原文中的关系词
   context: string;       // 上下文（用于备注）
+  /** FIX-3: 关联的另一个人物（"X是Y的Z"中的Y） */
+  relatedTo?: string;
 }
 
 /** 常见姓氏前300 */
@@ -270,6 +272,35 @@ export function extractRelations(text: string): DetectedRelationship[] {
     }
   }
 
+  // ── 10. FIX-3: "X是Y的Z" 三元组模式 ──
+  //    "熊梓铭是熊勇的儿子" → {subject:熊梓铭, relation:child_of, object:熊勇}
+  //    "王全芬是熊勇的老婆" → {subject:王全芬, relation:spouse_of, object:熊勇}
+  //    "熊梓铭和熊梓玥是熊勇的孩子" → 拆为两组
+  // 先拆 "A和B是C的D" 为两个子句
+  const ternaryParts = text.match(/^([一-龥]{2,3})和([一-龥]{2,3})是([一-龥]{2,3})的([一-龥]{2,4})$/);
+  if (ternaryParts) {
+    const subjectA = ternaryParts[1], subjectB = ternaryParts[2];
+    const object = ternaryParts[3], relWord = ternaryParts[4];
+    const mappedRel = FAMILY_MAP[relWord] || '';
+    if (mappedRel && isName(subjectA) && isName(subjectB) && isName(object)) {
+      if (!seen.has(subjectA)) { seen.add(subjectA);
+        results.push({ personName: subjectA, relation: mappedRel, rawRelation: relWord, context: text, relatedTo: object }); }
+      if (!seen.has(subjectB)) { seen.add(subjectB);
+        results.push({ personName: subjectB, relation: mappedRel, rawRelation: relWord, context: text, relatedTo: object }); }
+    }
+  } else {
+    // 单条 "X是Y的Z"
+    const singleTernary = text.match(/([一-龥]{2,3})是([一-龥]{2,3})的([一-龥]{2,4})/);
+    if (singleTernary) {
+      const subject = singleTernary[1], object = singleTernary[2], relWord = singleTernary[3];
+      const mappedRel = FAMILY_MAP[relWord] || '';
+      if (mappedRel && isName(subject) && isName(object) && !seen.has(subject)) {
+        seen.add(subject);
+        results.push({ personName: subject, relation: mappedRel, rawRelation: relWord, context: text, relatedTo: object });
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 过滤：排除所有长词误匹配（如"车载空气净化器"中的"车载空"）
   // ═══════════════════════════════════════════════════════════════
@@ -282,6 +313,23 @@ export function storeRelations(sqlite: any, relations: DetectedRelationship[], s
 
   for (const rel of relations) {
     try {
+      // ── FIX-4: 如果包含 relatedTo，先写入 person→person 关系 ──
+      if (rel.relatedTo) {
+        // 保证 relatedTo 实体存在
+        sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, rel.relatedTo, 'person');
+        // 创建 person→person 的 entity_relations 边
+        const srcRows = sqlite.queryAll(`SELECT id FROM entities WHERE name = ? AND type = ?`, [rel.personName, 'person']);
+        const tgtRows = sqlite.queryAll(`SELECT id FROM entities WHERE name = ? AND type = ?`, [rel.relatedTo, 'person']);
+        if (srcRows.length > 0 && tgtRows.length > 0) {
+          sqlite.writeRaw(
+            `INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at`,
+            srcRows[0].id, tgtRows[0].id, rel.relation, 0.9, now
+          );
+        }
+        stored++;
+        continue; // 跳过下方的"我"边——relatedTo 优先为人物之间建立关系
+      }
+
       // 保证实体存在
       sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, rel.personName, 'person');
       sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, '我', 'self');

@@ -22,10 +22,23 @@ import type { DNA } from '../m1/types/dna.js';
 import { loadSet } from '../m1/LexiconLoader.js';
 /** 词级命中统计（用于调试 24D 感知分析 — 记录每个词在真实输入中命中了多少次） */
 const wordHitCounters = new Map<string, number>();
+const MAX_HIT_COUNTERS = 500;
+
 export function getHitReport(): Record<string, number> {
   const report = Object.fromEntries(wordHitCounters);
   wordHitCounters.clear(); // 读取后清零，方便观测增量
   return report;
+}
+
+/** SP4-1: 超出上限时自动清理低频条目 */
+function maybeCleanHitCounters(): void {
+  if (wordHitCounters.size < MAX_HIT_COUNTERS) return;
+  // 保留前 100 个高频词，删除其余
+  const sorted = [...wordHitCounters.entries()].sort((a, b) => b[1] - a[1]);
+  wordHitCounters.clear();
+  for (const [word, count] of sorted.slice(0, 100)) {
+    wordHitCounters.set(word, count);
+  }
 }
 import type {
   Perception24D,
@@ -108,6 +121,7 @@ function countHits(text: string, wordSet: Set<string>): number {
       wordHitCounters.set(word, (wordHitCounters.get(word) ?? 0) + 1);
     }
   }
+  maybeCleanHitCounters();
   return hits;
 }
 

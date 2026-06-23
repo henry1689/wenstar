@@ -3,7 +3,7 @@
 
 import type { EntityGene } from '../../m1/types/dna.js';
 
-export type NodeType = 'person' | 'place' | 'thing' | 'concept';
+export type NodeType = 'person' | 'place' | 'thing' | 'concept' | 'object' | 'feature';
 
 export interface GraphNode {
   id: string;
