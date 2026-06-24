@@ -41,4 +41,9 @@ export interface KnowledgeItem {
   interaction_type?: InteractionType | string;
   /** P0: 关联的情感曲谱（24D 感知向量的 JSON 数组，存储关键维度） */
   emotion_vector?: string;
+
+  /** S2-6: 玉瑶对这条知识的印象值(0~1)，越高越优先引用 */
+  impression_score?: number;
+  /** S2-6: 最后一次被召回的时间 */
+  last_recalled_at?: string;
 }

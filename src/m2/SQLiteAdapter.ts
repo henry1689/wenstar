@@ -139,6 +139,10 @@ export class SQLiteAdapter {
     // P1-1: 黑钻库 emotion_vector 列迁移
     try { this.db.run("ALTER TABLE black_diamond ADD COLUMN emotion_vector TEXT DEFAULT NULL"); } catch { /* 列已存在 */ }
 
+    // S2-6: 知识库印象值 + 最近召回时间
+    try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN last_recalled_at TEXT"); } catch { /* 列已存在 */ }
+
     // SP3-3: 黑钻库 FTS5 全文索引（加速检索）
     try {
       this.db.run("CREATE VIRTUAL TABLE IF NOT EXISTS black_diamond_fts USING fts5(summary, tags, content='black_diamond', content_rowid='rowid')");

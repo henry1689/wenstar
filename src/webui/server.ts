@@ -300,6 +300,27 @@ async function initPipeline(): Promise<void> {
   }, 10 * 60 * 1000);
   console.log('  家族图谱备份已启动 ✓');
 
+  // S2-6: 知识库备份（fusion_memory.db）
+  const _kbTimer = 30 * 60 * 1000;
+  setInterval(() => {
+    try {
+      const { copyFileSync, existsSync, mkdirSync } = require("fs");
+      const path = require("path");
+      const backupDir = path.join(PROJECT_ROOT, "data", "backups");
+      if (!existsSync(backupDir)) mkdirSync(backupDir, { recursive: true });
+      const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
+      copyFileSync(
+        path.join(DATA_DIR, "fusion_memory.db"),
+        path.join(backupDir, "knowledge_" + dateStr + ".db")
+      );
+      console.log("[KnowledgeBackup] ✅ 知识库已备份");
+    } catch (err) {
+      console.warn("[KnowledgeBackup] ❌ 备份失败:", err.message);
+    }
+  }, _kbTimer);
+  console.log('  知识库备份已启动 ✓');
+
+
   workingMemory = new WorkingMemory(storage, 50);
   workingMemory.startFlushTimer();
   console.log('  工作记忆已启动 ✓');

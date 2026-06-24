@@ -559,19 +559,31 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     // 按 40/30/30 公式计算总分（已分类正常，未分类打折）
     let results = scored.map(({ item, scene, emotion, text, pending }) => ({
       ...item,
-      matchScore: Math.round((scene * 0.4 + emotion * 0.3 + text * 0.3) * (pending ? 0.7 : 1.0) * 1000) / 1000,
+      matchScore: Math.round((scene * 0.35 + emotion * 0.25 + text * 0.2 + (item.impression_score || 0.5) * 0.2) * (pending ? 0.7 : 1.0) * 1000) / 1000,
       breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
     }));
 
     // 按 matchScore 降序
-    results.sort((a, b) => b.matchScore - a.matchScore);
+        results.sort((a, b) => b.matchScore - a.matchScore);
+
+    // S2-6: 记录召回印象值（最高分条目的impression+0.05，上限1.0）
+    if (results.length > 0 && results[0].id) {
+      try {
+        const now = new Date().toISOString();
+        sqlite.writeRaw(
+          "UPDATE knowledge_base SET impression_score = MIN(1.0, COALESCE(impression_score, 0.5) + 0.05), last_recalled_at = ? WHERE id = ?",
+          [now, results[0].id]
+        );
+      } catch (_ir) { /* 印象值更新不阻塞 */ }
+    }
+
 
     // 情感相似场景知识迁移：如果最佳结果的 sceneScore < 0.1，按 emotionScore 降维再搜一轮
     if (results.length > 0 && results[0].breakdown.scene < 0.1 && perception) {
       // 降低场景权重，提升情感权重：重新排序
       const fallback = scored.map(({ item, scene, emotion, text, pending }) => ({
         ...item,
-        matchScore: Math.round((emotion * 0.6 + text * 0.3 + scene * 0.1) * (pending ? 0.7 : 1.0) * 1000) / 1000,
+        matchScore: Math.round((emotion * 0.5 + text * 0.2 + scene * 0.1 + (item.impression_score || 0.5) * 0.2) * (pending ? 0.7 : 1.0) * 1000) / 1000,
         breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
       }));
       fallback.sort((a, b) => b.matchScore - a.matchScore);
