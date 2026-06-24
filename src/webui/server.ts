@@ -288,6 +288,18 @@ async function initPipeline(): Promise<void> {
   setTimeout(() => { try { memoryVault?.backup(); } catch {} }, 5 * 60 * 1000);
   console.log('  记忆仓已启动 ✓');
 
+  // 家族图谱每日备份 + 自检（启动后10分钟首次执行）
+  setTimeout(() => {
+    try {
+      const { execSync } = require('child_process');
+      const result = execSync('node scripts/family-graph-backup.cjs 2>&1', { encoding: 'utf8', timeout: 10000 });
+      console.log('[FamilyGraph] 自动备份完成\n' + result.split('\n').slice(-5).join('\n'));
+    } catch (err) {
+      console.warn('[FamilyGraph] 自动备份失败:', err.message);
+    }
+  }, 10 * 60 * 1000);
+  console.log('  家族图谱备份已启动 ✓');
+
   workingMemory = new WorkingMemory(storage, 50);
   workingMemory.startFlushTimer();
   console.log('  工作记忆已启动 ✓');
@@ -584,6 +596,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 知识库文件列表 ──
+    if (req.method === 'GET' && (url.pathname === '/knowledge' || url.pathname === '/knowledge.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(fs.readFileSync(path.join(__dirname, 'knowledge.html'), 'utf-8'));
+      return;
+    }
+
     // ── 全系统拓扑监控台 ──
     if (req.method === 'GET' && (url.pathname === '/dashboard' || url.pathname === '/dashboard.html')) {
       const dashPath = path.join(PROJECT_ROOT, 'bionic-cognitive-engine', 'dashboard.html');
@@ -738,6 +757,34 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           entities: m8st.totalEntities,
         },
       }));
+      return;
+    }
+
+    // ── 家族图谱自检 ──
+    if (req.method === 'GET' && url.pathname === '/api/family/self-check') {
+      try {
+        const { execSync } = require('child_process');
+        const result = execSync('node scripts/family-graph-backup.cjs --check 2>&1', { encoding: 'utf8', timeout: 10000 });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', report: result }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: err.message }));
+      }
+      return;
+    }
+
+    // ── 家族图谱手动备份 ──
+    if (req.method === 'POST' && url.pathname === '/api/family/backup') {
+      try {
+        const { execSync } = require('child_process');
+        const result = execSync('node scripts/family-graph-backup.cjs 2>&1', { encoding: 'utf8', timeout: 10000 });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', report: result }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: err.message }));
+      }
       return;
     }
 

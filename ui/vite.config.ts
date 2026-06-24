@@ -6,7 +6,7 @@ export default defineConfig({
 
   server: {
     port: 5174,
-    strictPort: true,
+    strictPort: false,
     allowedHosts: true, // 允许任意Host（Cloudflare隧道需要）
     proxy: {
       '/api': { target: 'http://localhost:3000', changeOrigin: true },

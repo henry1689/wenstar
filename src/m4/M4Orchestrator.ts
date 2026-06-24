@@ -49,16 +49,32 @@ export class M4Orchestrator {
     const familySummary = await this.familyGraph.getFamilySummary();
     const socialSummary = await this.familyGraph.getSocialSummary();
 
-    // 4. 构建家族上下文 + 社交上下文
+    // 4. 构建家族上下文 + 社交上下文（含完整人物档案）
+    const enrichProfile = (name: string) => {
+      const profile = this.familyGraph.getPersonProfile(name);
+      return {
+        appearance: profile?.appearance,
+        body_features: profile?.body_features,
+        traits: profile?.traits,
+        occupation: profile?.occupation,
+        description: profile?.description,
+        style: (profile as any)?.style,
+        personality: profile?.personality,
+        interests: profile?.interests,
+      };
+    };
+
     const familyContext = familySummary.members.map((m) => ({
       entity: m.name,
       relation: m.relation_to_user,
       related_entity: '我',
+      ...enrichProfile(m.name),
     }));
     const socialContext = socialSummary.connections.map((c) => ({
       entity: c.name,
       relation: c.relation_to_user,
       related_entity: '我',
+      ...enrichProfile(c.name),
     }));
 
     // 5. 注入情感检索结果（按时间排序后合并到 timeline 头部）

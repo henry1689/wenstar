@@ -245,16 +245,23 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
     }
 
-    // 主写入：所有person实体统一写入 FamilyGraph（家族图谱是人的唯一真实来源）
+        // 家族图谱兜底：M1+LLM没提到时直接从图谱匹配
     try {
-      const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
-      if (_pg.length > 0 && ctx.m4) {
+      const _hp = dna.entity_genes.some((g) => g.type === "person" && g.name !== "我" && g.name.length > 1);
+      if (!_hp && ctx.m4) {
         const _fg = ctx.m4.getFamilyGraph();
-        for (const _p of _pg) {
-          _fg.integrateSocialRelation(_p.name, 'acquaintance_of', message).catch(function() {});
+        if (_fg) {
+          for (const _n of _fg.getAllPersonNames()) {
+            if (_n !== "我" && _n.length > 1 && message.includes(_n)) {
+              dna.entity_genes.push({ name: _n, type: "person", allele: _n, phenotype: "neutral", knowledge_type: "private" });
+              console.log("[FamilyGraph] 图谱匹配: " + _n);
+            }
+          }
         }
       }
-    } catch (_pe) {}
+    } catch (_fe) { console.warn("[FamilyGraph] 图谱匹配失败:", _fe); }
+
+// FIX-1: 推迟主写入到 M4 orchestrate 之后（防止覆盖家庭推理结果）
 
     // 📸 人物全方位档案提取
     console.log('[PersonProfile] 检查开始, ctx.m4=' + (!!ctx.m4) + ' m4类型=' + (typeof ctx.m4));
@@ -1032,6 +1039,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const ctx_m4 = await ctx.m4.orchestrate(decision, emotionalMemories);
 
+    // FIX-1: M4 完成后写入尚未建立家庭关系的 person 实体
+    try {
+      const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
+      if (_pg.length > 0 && ctx.m4) {
+        const _fg = ctx.m4.getFamilyGraph();
+        for (const _p of _pg) {
+          const _profile = _fg.getPersonProfile(_p.name);
+          if (_profile && !_profile.relation_to_user) {
+            _fg.integrateSocialRelation(_p.name, 'acquaintance_of', message).catch(function() {});
+          }
+        }
+      }
+    } catch (_pe) {}
+
+
       // 砂金库降级：当金库检索结果不足时，从砂金库补充
       if (ctx_m4.memory_summary.timeline.length < 2 && message.length > 4) {
         try {
@@ -1176,23 +1198,22 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // ── 家族/社交关系铁律 + 人物全方位档案 — LLM 绝对不得编造，以 FamilyGraph 记录为准 ──
     let familyConstraint = '';
     try {
-      const personEntities = ctx_m4.family_context || ctx_m4.social_context || [];
-      if (personEntities.length > 0) {
-        const knownList = personEntities.map((p: any) => {
+      // 合并家族+社交上下文（后者可能因前者有数据而被skipping，需要合并）
+      const allEntities = [
+        ...(ctx_m4.family_context || []),
+        ...(ctx_m4.social_context || []),
+      ].filter((p: any, i: number, arr: any[]) =>
+        p && p.entity && arr.findIndex((x: any) => x.entity === p.entity) === i
+      );
+      if (allEntities.length > 0) {
+        const knownList = allEntities.map((p: any) => {
           let profileText = '  - ' + p.entity + '（' + p.relation + '）';
-          try {
-            const fg = ctx.m4?.getFamilyGraph();
-            if (fg) {
-              const profile = fg.getPersonProfile(p.entity);
-              if (profile) {
-                if (profile.appearance) profileText += '\n      外貌：' + profile.appearance.substring(0, 150);
-                if (profile.body_features) profileText += '\n      身体特征：' + profile.body_features.substring(0, 150);
-                if (profile.description) profileText += '\n      其他信息：' + profile.description.substring(0, 200);
-                if (profile.traits?.length) profileText += '\n      性格：' + profile.traits.join('、');
-                if (profile.occupation) profileText += '\n      职业：' + profile.occupation;
-              }
-            }
-          } catch {}
+          // 优先使用 M4 返回的档案数据（比二次查询更快）
+          if (p.appearance) profileText += '\n      外貌：' + String(p.appearance).substring(0, 150);
+          if (p.body_features) profileText += '\n      身体特征：' + String(p.body_features).substring(0, 150);
+          if (p.description) profileText += '\n      其他信息：' + String(p.description).substring(0, 200);
+          if (p.traits?.length) profileText += '\n      性格：' + p.traits.join('、');
+          if (p.occupation) profileText += '\n      职业：' + p.occupation;
           return profileText;
         }).join('\n');
         familyConstraint = '【📋 人物档案 — 以鸿艺告诉你的为准】\n' + knownList + '\n\n⚠️ 规则：\n1. 上面写了的信息（外貌、身体、性格等）是鸿艺告诉你的，你可以用来回答。\n2. 没写的信息你不知道——直接说不知道/没说过。\n3. 🔴 绝对禁止编造任何你记忆中不存在的内容。';
@@ -1203,7 +1224,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     // 清除冲突：hallucinationGuard说"不知道"但家族图谱说"记得"时，以家族图谱为准
     if (hallucinationGuard && hallucinationGuard.includes('第一次向你介绍') && introMatch) {
-      const _knownPeople = (ctx_m4.family_context || ctx_m4.social_context || []).map((p: any) => p.entity);
+      const _knownPeople = [...new Set([...(ctx_m4.family_context||[]).map((p:any)=>p.entity), ...(ctx_m4.social_context||[]).map((p:any)=>p.entity)].filter(Boolean))];
       if (_knownPeople.includes(introMatch[1])) {
         hallucinationGuard = '';
         console.log('[FamilyGuard] 清除冲突: ' + introMatch[1] + ' 已在家族图谱中');
@@ -1353,7 +1374,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
       }
     } catch (err) { console.warn('[Classify] 分类反问失败:', err); }
 
-    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard, classificationGuard, intimacyFilter].filter(Boolean).join('\n');
+    const _appearanceGuard = '【强制规则·人物外貌】如果有人问你"长什么样""什么样子"，你只能回答上面【人物档案】中写明的外貌和身体特征。身高厘米数、脸型、眼镜、发型、肤色等没写的细节你一概不知道，直接说"这个你没跟我说过"。绝对禁止编造。';
+    const allGuardMsgs = [hallucinationGuard, repeatHint, feelingGuard, dailyGuard, timeGuard, classificationGuard, intimacyFilter, _appearanceGuard].filter(Boolean).join('\n');
 
     let reply: string;
 
@@ -1459,6 +1481,7 @@ let finalKnowledgeText = knowledgeBaseText;
         // 家族/社交铁律注入
         if (familyConstraint) {
           finalKnowledgeText = familyConstraint + '\n\n' + finalKnowledgeText;
+          finalKnowledgeText += '【强制】未在档案中的外貌特征(身高/脸型/眼镜/发型等)你不知道，绝对不能编造。';
         }
         // 主人大脑镜像注入
         if (ctx.masterProfile) {

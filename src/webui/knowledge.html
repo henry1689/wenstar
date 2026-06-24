@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>太虚境·知识库</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a0e; color:#c0c0c0; font-family:'JetBrains Mono','Consolas',monospace; padding:24px; }
+h1 { color:#f5d76e; font-size:20px; margin-bottom:20px; letter-spacing:2px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:12px; }
+.card { background:rgba(0,255,255,0.03); border:1px solid rgba(0,255,255,0.08); border-radius:8px; padding:14px; transition:border-color .3s; }
+.card:hover { border-color:rgba(0,255,255,0.2); }
+.card-title { font-size:14px; font-weight:600; color:#00ffff; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.card-preview { font-size:12px; color:#888; line-height:1.5; max-height:60px; overflow:hidden; }
+.card-meta { display:flex; gap:8px; margin-top:8px; font-size:10px; color:#555; }
+.card-tag { background:rgba(0,255,255,0.08); color:#00cccc; padding:2px 6px; border-radius:4px; }
+.empty { text-align:center; color:#555; margin-top:60px; font-size:14px; }
+.search-bar { display:flex; gap:10px; margin-bottom:16px; }
+.search-input { flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(0,255,255,0.08); border-radius:8px; padding:10px 14px; font-size:13px; color:#ccc; font-family:inherit; outline:none; }
+.search-input:focus { border-color:rgba(0,255,255,0.3); }
+.count { font-size:12px; color:#555; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<h1>📚 太虚境·知识库</h1>
+<div class="search-bar">
+  <input class="search-input" id="search" placeholder="搜索知识库..." oninput="load()" />
+  <span style="color:#555;font-size:12px;display:flex;align-items:center" id="count"></span>
+</div>
+<div class="cards" id="list"></div>
+<script>
+async function load() {
+  const q = document.getElementById('search').value;
+  const url = q ? '/api/knowledge?search=' + encodeURIComponent(q) : '/api/knowledge';
+  const r = await fetch(url);
+  const d = await r.json();
+  const items = d.items || [];
+  document.getElementById('count').textContent = '共 ' + items.length + ' 条';
+  const list = document.getElementById('list');
+  if (!items.length) { list.innerHTML = '<div class="empty">📭 知识库还没有内容</div>'; return; }
+  list.innerHTML = items.map(item => '<div class="card"><div class="card-title">' + esc(item.title||'无标题') + '</div><div class="card-preview">' + esc((item.content||'').substring(0,150)) + '</div><div class="card-meta">' +
+    (item.tags?item.tags.map(t=>'<span class="card-tag">'+esc(t)+'</span>').join(''):'') +
+    (item.created_at?'<span>'+new Date(item.created_at).toLocaleDateString()+'</span>':'') +
+    (item.source_type?'<span>'+esc(item.source_type)+'</span>':'') +
+  '</div></div>').join('');
+}
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+load();
+</script>
+</body>
+</html>
