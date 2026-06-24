@@ -835,8 +835,17 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     // ── 对话历史 ──
     if (req.method === 'GET' && url.pathname === '/api/conversation') {
+      let turns = conversationHistory.slice(-100);
+      if (turns.length === 0 && conversationDB) {
+        try {
+          const sand = conversationDB.getRecentConversations(100);
+          if (sand.length > 0) {
+            turns = sand.map(r => ({ role: r.role as "user" | "assistant", content: r.content, timestamp: r.timestamp }));
+          }
+        } catch {}
+      }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ turns: conversationHistory.slice(-100) }));
+      res.end(JSON.stringify({ turns }));
       return;
     }
 
