@@ -8,6 +8,7 @@
  *     职业、特点、在哪认识的、当时说了什么——统统记为模糊备注。
  *   - 后续对话提到同一个人时，不断追加补充。
  */
+import { FAMILY_GRAPH_MIGRATION } from '../../config/family-graph-migration.js';
 import type { SQLiteAdapter } from '../../m2/SQLiteAdapter.js';
 
 /** 家庭关系词（精确映射）— 非家庭的统统归为"认识的人" */
@@ -307,7 +308,7 @@ export function extractRelations(text: string): DetectedRelationship[] {
   return results.filter(r => !isCompoundWordPart(r.personName, text));
 }
 
-export function storeRelations(sqlite: any, relations: DetectedRelationship[], sourceMessage: string): number {
+export function storeRelations(sqlite: any, relations: DetectedRelationship[], sourceMessage: string, familyGraph?: any): number {
   let stored = 0;
   const now = new Date().toISOString();
 
@@ -331,7 +332,11 @@ export function storeRelations(sqlite: any, relations: DetectedRelationship[], s
       }
 
       // 保证实体存在
-      sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, rel.personName, 'person');
+              // (FG-迁移) 双写主库
+        if (familyGraph && FAMILY_GRAPH_MIGRATION.writeMode !== 'shadow') {
+          try { familyGraph.integrateSocialRelation(rel.personName, rel.relation, sourceMessage).catch(() => {}); } catch {}
+        }
+        sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, rel.personName, 'person');
       sqlite.writeRaw(`INSERT OR IGNORE INTO entities (name, type) VALUES (?, ?)`, '我', 'self');
 
       // 实体关系

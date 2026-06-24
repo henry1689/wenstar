@@ -144,7 +144,13 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE memories ADD COLUMN round_count INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE memories ADD COLUMN topic_label TEXT"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE memories ADD COLUMN anchor_score REAL"); } catch { /* 列已存在 */ }
-    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_dialog_group ON memories(dialog_group_id)"); } catch { /* 索引已存在 */ }
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_dialog_group ON memories(dialog_group_id)");
+    // 家族图谱别名表（模糊去重）
+    try {
+      this.db.run("CREATE TABLE IF NOT EXISTS person_aliases (name TEXT, alias TEXT, PRIMARY KEY(name, alias))");
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_person_aliases_alias ON person_aliases(alias)");
+    } catch (e) { console.warn('[SQLite] person_aliases 表创建失败:', e); }
+ } catch { /* 索引已存在 */ }
 
     // S2-6: 知识库印象值 + 最近召回时间
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }

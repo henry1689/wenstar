@@ -1774,7 +1774,7 @@ let finalKnowledgeText = knowledgeBaseText;
 
         const sqlite = ctx.storage.getSQLite();
 
-        const stored = storeRelations(sqlite, relations, message);
+        const stored = storeRelations(sqlite, relations, message, ctx.m4?.getFamilyGraph());
 
         if (stored > 0 && !FALLBACK_REPLIES.includes(reply)) {
 
