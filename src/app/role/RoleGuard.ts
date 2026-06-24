@@ -92,6 +92,40 @@ export function validateRoleOutput(
 /**
  * 获取降级后的安全角色
  */
+
+/**
+ * (P2) 对话组一致性校验：检查回复是否与同话题历史矛盾
+ * @param reply 生成回复
+ * @param historyText 同话题历史对话组文本
+ * @returns 是否通过校验
+ */
+export function checkConsistency(reply: string, historyText?: string): { passed: boolean; reason?: string } {
+  if (!historyText || historyText.length < 10) return { passed: true };
+
+  // 提取回复中明确表态的内容
+  const assertions: string[] = [];
+  const patterns = [/我[不]?(喜欢|讨厌|爱|恨|觉得|认为|记得|不记得|知道|不知道|想|不想|要|不要|会|不会|可以|不可以|应该|不应该)/gi];
+  for (const p of patterns) {
+    const m = reply.match(p);
+    if (m) assertions.push(m[0].toLowerCase());
+  }
+
+  if (assertions.length === 0) return { passed: true };
+
+  // 检查历史中是否有矛盾的断言
+  const history = historyText.toLowerCase();
+  for (const a of assertions) {
+    // 如果现在说"喜欢"但历史说"不喜欢"等
+    if (a.includes('不') && history.includes(a.replace('不', ''))) {
+      return { passed: false, reason: '与历史观点矛盾: ' + a };
+    }
+    if (!a.includes('不') && history.includes(a.slice(0, a.indexOf('不') + 1) + '不')) {
+      return { passed: false, reason: '与历史观点矛盾: ' + a };
+    }
+  }
+  return { passed: true };
+}
+
 export function getFallbackRole(originalRole: RoleType): RoleType {
   return 'secretary';
 }

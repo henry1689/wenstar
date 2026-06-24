@@ -849,6 +849,28 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // (P2) 对话组统计
+    if (req.method === 'GET' && url.pathname === '/api/dialog-group/stats') {
+      try {
+        const sql = storage.getSQLite();
+        const totalGroups = (sql.queryAll("SELECT COUNT(DISTINCT dialog_group_id) as c FROM memories WHERE dialog_group_id IS NOT NULL") as any[])?.[0]?.c || 0;
+        const withAnchor = (sql.queryAll("SELECT COUNT(*) as c FROM memories WHERE anchor_score IS NOT NULL") as any[])?.[0]?.c || 0;
+        const totalRounds = (sql.queryAll("SELECT SUM(round_count) as c FROM (SELECT DISTINCT dialog_group_id, round_count FROM memories WHERE dialog_group_id IS NOT NULL)") as any[])?.[0]?.c || 0;
+        const sharedMemories = (sql.queryAll("SELECT COUNT(*) as c FROM black_diamond WHERE emotion_tag = 'shared_memory'") as any[])?.[0]?.c || 0;
+        const avgRounds = totalGroups > 0 ? (totalRounds / totalGroups).toFixed(1) : 0;
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          totalGroups, withAnchor, sharedMemories,
+          avgRounds: Number(avgRounds),
+          anchorRatio: totalGroups > 0 ? Math.round(withAnchor / totalGroups * 100) : 0,
+        }));
+      } catch (err) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: (err as Error).message }));
+      }
+      return;
+    }
+
     // ── 清除聊天记录（轻量版，仅清对话不关服务） ──
     if (req.method === 'POST' && url.pathname === '/api/chat/clear') {
       conversationHistory = [];
