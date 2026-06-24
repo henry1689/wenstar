@@ -828,11 +828,12 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     let knowledgeBaseText = '';
 
-    if (memoryGate.needsKnowledgeSearch || /知识库|看过|知道.*吗|有没有|是否|曾经/.test(message)) {
+    // S2-5: 每次对话都检索知识库，用 matchScore 过滤
+    const _kbf = /知识库|看过|知道.*吗|有没有|是否|曾经/.test(message);
 
     try {
 
-      const searchMsg = /知识库|看过|知道.*吗/.test(message)
+      const searchMsg = _kbf
 
         ? message.replace(/你|在|知识库|看过|知道|吗|有没有|是否|曾经/g, '').replace(/[？?！!。，、：；]/g, '').trim()
 
@@ -848,7 +849,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         5,
       );
 
-      if (knResults.length > 0) {
+      if (knResults.length > 0 && (_kbf || knResults[0].matchScore > 0.3)) {
 
         // ① 写入 emotion_vector：把当前 24D perception 存到知识的 emotion_vector 字段
         // 下次 weightedSearch 就能按情感相似度排序了
@@ -917,7 +918,6 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     } catch (err) { console.warn('[KnowledgeSearch] 检索失败:', err); }
 
-    } // end MemoryGate knowledge gate
 
         // ═══════════════════════════════════════════════════════════════
 
@@ -2008,6 +2008,19 @@ let finalKnowledgeText = knowledgeBaseText;
         if (_eligible.length > 0) console.log("[Promotion] 双轨晋升: " + _eligible.length + " 条");
       }
     } catch (err) { console.warn("[Promotion] 双轨晋升失败:", err); }
+
+    // S2-3: 主动学习 — 检查当前话题是否有相关知识库内容尚未引用
+    (async () => {
+      try {
+        const _kbWords = message.match(/[一-龥]{2,4}/g) || [];
+        if (_kbWords.length >= 2 && ctx.knowledgeBase) {
+          const _kbHits = await ctx.knowledgeBase.search(_kbWords.slice(0, 2).join(" "), 2);
+          if (_kbHits.length > 0 && _kbHits[0].title) {
+            console.log("[KnowledgeAuto] 关联知识: " + _kbHits[0].title.slice(0, 30));
+          }
+        }
+      } catch (_kae) { /* 主动学习不阻塞 */ }
+    })();
 
     // ── 轻量自检：估算回复质量分（不精确，仅供 M7/前端参考） ──
     let emotionMatchScore = 50;

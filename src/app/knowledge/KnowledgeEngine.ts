@@ -508,17 +508,19 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     if (textCond) params.push(...keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`]));
 
     const whereClause = [sceneCond, textCond].filter(Boolean).join(' OR ');
-    const sql = `SELECT * FROM knowledge_base WHERE classification_pending = 0 AND (${whereClause}) ORDER BY updated_at DESC LIMIT 50`;
+    // S2-1: 不再强制 classification_pending = 0，所有条目都可检索
+    const sql = `SELECT * FROM knowledge_base WHERE ${whereClause} ORDER BY updated_at DESC LIMIT 50`;
 
     const rows = sqlite.queryAll(sql, params);
     if (!rows.length) return [];
 
     // 对每条结果计算得分
-    const scored: Array<{ item: KnowledgeItem; scene: number; emotion: number; text: number }> = [];
+    const scored: Array<{ item: KnowledgeItem; scene: number; emotion: number; text: number; pending: boolean }> = [];
     const maxPossibleHits = keywords.length || 1;
 
     for (const row of rows) {
       const item = rowToEntry(row);
+      const isPending = !!(row as any).classification_pending;
 
       // 场景匹配度 (0-1)
       const sceneScore = jaccardScene(item.scene_tags, sceneTags);
@@ -548,13 +550,16 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
         textScore = 0.5; // 无关键词时给中性分
       }
 
-      scored.push({ item, scene: sceneScore, emotion: emotionScore, text: textScore });
+      scored.push({ item, scene: sceneScore, emotion: emotionScore, text: textScore, pending: isPending });
     }
 
-    // 按 40/30/30 公式计算总分
-    let results = scored.map(({ item, scene, emotion, text }) => ({
+    // S2-1: 未分类条目分数打折（×0.7），但不屏蔽
+    const classificationPenalty = (item: { pending: boolean }) => item.pending ? 0.7 : 1.0;
+
+    // 按 40/30/30 公式计算总分（已分类正常，未分类打折）
+    let results = scored.map(({ item, scene, emotion, text, pending }) => ({
       ...item,
-      matchScore: Math.round((scene * 0.4 + emotion * 0.3 + text * 0.3) * 1000) / 1000,
+      matchScore: Math.round((scene * 0.4 + emotion * 0.3 + text * 0.3) * (pending ? 0.7 : 1.0) * 1000) / 1000,
       breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
     }));
 
@@ -564,9 +569,9 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     // 情感相似场景知识迁移：如果最佳结果的 sceneScore < 0.1，按 emotionScore 降维再搜一轮
     if (results.length > 0 && results[0].breakdown.scene < 0.1 && perception) {
       // 降低场景权重，提升情感权重：重新排序
-      const fallback = scored.map(({ item, scene, emotion, text }) => ({
+      const fallback = scored.map(({ item, scene, emotion, text, pending }) => ({
         ...item,
-        matchScore: Math.round((emotion * 0.6 + text * 0.3 + scene * 0.1) * 1000) / 1000,
+        matchScore: Math.round((emotion * 0.6 + text * 0.3 + scene * 0.1) * (pending ? 0.7 : 1.0) * 1000) / 1000,
         breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
       }));
       fallback.sort((a, b) => b.matchScore - a.matchScore);

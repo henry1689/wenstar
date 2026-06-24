@@ -590,6 +590,22 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   try {
     // ── 首页 ──
+
+    // S2-4: 知识库健康检查
+    if (req.method === 'GET' && url.pathname === '/api/knowledge/health') {
+      try {
+        const { KnowledgeMonitor } = await import('../app/knowledge/KnowledgeMonitor.js');
+        const engine = (knowledgeBase as any)['engine'] || knowledgeBase;
+        const monitor = new KnowledgeMonitor(storage.getSQLite(), engine.vectorStore);
+        const report = monitor.selfCheck();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(report));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
+      }
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(fs.readFileSync(HTML_PATH, 'utf-8'));
