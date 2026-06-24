@@ -80,6 +80,8 @@ export interface RetrievalQuery {
   entities?: string[];
   similarity_mode: SimilarityMode;
   limit: number;
+  /** P1: 对话组检索模式 — 'all'（默认，同组全返回）｜'first-per-group'（同组只返回锚点） */
+  dialogGroupMode?: 'all' | 'first-per-group';
 }
 
 /** 评分后的记忆 */
