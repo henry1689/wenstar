@@ -94,7 +94,7 @@ export class M4Orchestrator {
       decision,
       memory_summary: memorySummary,
       family_context: familyContext.length > 0 ? familyContext : undefined,
-      social_context: socialContext.length > 0 ? socialContext : undefined,
+      social_context: socialContext.length > 0 ? socialContext : [],
       current_time: new Date().toISOString(),
       meta: {
         has_history: memories.length > 0,

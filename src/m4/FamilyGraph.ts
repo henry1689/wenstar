@@ -123,6 +123,7 @@ const SOCIAL_REVERSE: Record<string, string> = {
 };
 
 const REVERSE_RELATION: Record<string, string> = {
+  parent_of: 'child_of',
   mother_of: 'child_of', father_of: 'child_of',
   spouse_of: 'spouse_of',
   sibling_of: 'sibling_of',
