@@ -2,7 +2,7 @@
 // Ref: M4-design-v1.md §5
 
 import type { M3Decision } from '../m3/types/perception.js';
-import type { M4Context } from './types/index.js';
+import type { M4Context, MemorySummary } from './types/index.js';
 import type { DNA } from "../m1/types/dna.js";
 import type { ScoredMemory } from '../m2/types/index.js';
 import type { FusionStorageAdapter } from '../m2/FusionStorageAdapter.js';

@@ -67,6 +67,10 @@ import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.
 import { AsyncTaskQueue } from '../app/tools/AsyncTaskQueue.js';
 import { fetchBionicMemories, getVadToneHint, pushToVadCache, isVadAvailable } from './chat/retrieval.js';
 import { ingestFromConversation } from '../app/ingestion/ConversationIngestionService.js';
+// P0-1: 角色路由静态导入
+import { classify, type RoleType } from '../app/role/RoleClassifier.js';
+import { evaluateTransition, createInitialState, type TransitionState } from '../app/role/TransitionManager.js';
+
 
 // 全局异步任务队列（VAD 谱曲等不阻塞主回复的后台任务）
 const chatTaskQueue = new AsyncTaskQueue({ concurrency: 1, retryCount: 1, autoRemoveCompleted: true });
@@ -87,6 +91,10 @@ let _lastCandidates: any = null;
 
 // S3-2: 从 guard-builder 导入角色路由和守卫
 
+
+// P0-1: 角色路由模块级状态（函数外，跨轮次持久化）
+let _currentRole: RoleType = 'secretary';
+let _transitionState: TransitionState = createInitialState();
 
 export interface ChatContext {
 
@@ -457,21 +465,19 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const decision = ctx.m3.decide(dna, { current_time: new Date().toISOString(), current_location: '深圳' });
 
-    // SP3-1: 角色路由（上浮到 chat.ts 主管线）
-    try {
-      const p = decision.enhanced.perception;
-      const { classify } = await import('../app/role/RoleClassifier.js');
-      const { evaluateTransition, createInitialState } = await import('../app/role/TransitionManager.js');
-      let _currentRole: import('../app/role/RoleClassifier.js').RoleType = 'secretary';
-      let _transitionState = createInitialState();
-      const _d = classify({ message, perception: p, entities: dna.entity_genes as any[], previousRole: _currentRole, consecutiveIntimateCount: _transitionState.consecutiveIntimate });
-      const _t = evaluateTransition(_transitionState, _d, message);
-      _transitionState = _t.state;
-      _currentRole = _t.newRole;
-      console.log('[RoleRouter] ' + _currentRole + ' (' + _d.rule + ')');
-    } catch (_re) { console.warn('[RoleRouter] 失败:', _re); }
-
-        
+    // P0-1: 角色路由（模块级状态持久化）
+    const p = decision.enhanced.perception;
+    const roleDecision = classify({
+      message, perception: p,
+      entities: dna.entity_genes,
+      previousRole: _currentRole,
+      consecutiveIntimateCount: _transitionState.consecutiveIntimate,
+    });
+    const transition = evaluateTransition(_transitionState, roleDecision, message);
+    _transitionState = transition.state;
+    _currentRole = transition.newRole;
+    console.log('[RoleRouter] ' + _currentRole + ' (' + roleDecision.rule + ')');
+    try { const { WorkingMemory: WM } = await import('../m9/WorkingMemory.js'); WM.currentTag = _currentRole; } catch {}
     // 主人大脑镜像提取：每轮对话后自动提取+审查+存储
     if (ctx.masterProfile && message.length > 3) {
       try {
@@ -492,8 +498,6 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         console.warn('[Mirror] 提取失败:', (err as Error).message);
       }
     }
-
-    const p = decision.enhanced.perception;
 
     const seqPos = ctx.storage.reserveNextSeq();
 

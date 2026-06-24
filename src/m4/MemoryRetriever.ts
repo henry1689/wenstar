@@ -6,6 +6,7 @@ import type { KnowledgeBase } from '../m2/KnowledgeBase.js';
 import type { DNA } from '../m1/types/dna.js';
 import type { Perception24D } from '../m3/types/perception.js';
 import type { MemorySummary } from './types/index.js';
+import { RETRIEVAL_THRESHOLDS, BATCH_SIZES, MIN_MATCHED_FOR_BREAK } from '../m2/retrieval-constants.js';
 import { LocalCache } from '../app/tools/LocalCache.js';
 
 // 关键词检索缓存：相同关键词 30 秒内复用结果

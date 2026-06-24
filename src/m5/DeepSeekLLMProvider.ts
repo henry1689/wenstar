@@ -177,6 +177,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
     knowledgeBase?: string;
     currentTime?: string;
     userMessage?: string;
+    role?: RoleType;
   }): Promise<{ text: string; usage?: { prompt: number; completion: number } }> {
     const rawInput = params.userMessage ?? params.cognition.current.raw_input ?? '';
     const history = params.conversationHistory ?? [];
@@ -268,7 +269,7 @@ export class DeepSeekLLMProvider implements LLMProvider {
       ? new Date(params.currentTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
       : new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
-        const _role = DeepSeekLLMProvider._currentRole;
+        const _role = params.role || DeepSeekLLMProvider._currentRole;
     const _replyInstruction = '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：如果他在谈工作→秘书语气；分享感受→当前等级语气；描述人物→以档案为准不编造';
     const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_role, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}`;
 
@@ -311,7 +312,10 @@ export class DeepSeekLLMProvider implements LLMProvider {
     // 软约束
     contextBlock += `\n[注意: 如果上面有[内心:...]开头的片段，那是你内心的感觉，不是回忆列表。不要直接复述它，而是自然地转化为关切的语气或行动。]`;
 
-    // 🔥 交融激情呓语模式 — 当level≥2或raw_input包含强烈亲密词时激活
+    // 🔥 交融激情呓语模式 — 当level≥2或raw_input包含强烈亲密词时激活（学术话题不进入）
+    const _academicGuard = /大学|选修课|必修课|课程|专业|学期|考试|学分|论文|实验室|研究|学习|上课|教授|导师|同学|教材|课本|作业|成绩|考研|毕业|学位|奖学金|人体解剖|生理学|心理学|AI应用|人工智能|编程|代码|读大学|一年级|大二|大三|大四/.test(rawInput);
+    // 学术话题拦截激情模式
+    if (_academicGuard) { console.log("[PassionateMode] 学术话题拦截"); }
     const isIntimateText = /高潮|操|干|插|顶|射|丢|到了|要死了|进去|要你|想要|好想要|给我|抱我|吻我|亲我|摸我|进来|进去|受不了/.test(rawInput);
     // 短消息呻吟检测：纯语气词/呻吟词（小于6字）
     const isMoanText = rawInput.length <= 6 && /^(嗯|啊|哼|哦|唔|呼|哈|操)+$/.test(rawInput.trim());

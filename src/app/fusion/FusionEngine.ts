@@ -202,7 +202,14 @@ export function fuseSources(input: FusionInput): FusionResult {
     } else if (isIntimate) {
       const filtered = knowledgeBaseText
         .split('\n')
-        .filter(line => !isKnowledgeLine(line) || /情感|曲谱|VAD/.test(line))
+        .filter(line => {
+          if (!line.trim()) return true;
+          if (/【📋 人物档案】|【家庭\/社交铁律】/.test(line)) return true;
+          if (!isKnowledgeLine(line)) return true;
+          if (/情感|曲谱|VAD/.test(line)) return true;
+          if (/relation_to_user|外貌|性格|职业/.test(line)) return true;
+          return false;
+        })
         .join('\n');
       if (filtered.trim()) {
         parts.push(filtered);

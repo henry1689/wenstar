@@ -28,7 +28,10 @@ export class L2ContentExtractor {
     if (locusPath.startsWith('user.emotion')) {
       return 'emotion_valence_zone';
     }
-    if (locusPath.startsWith('user.family') || locusPath.startsWith('user.work')) {
+    if (locusPath.startsWith('user.family')) {
+      return 'social_schema_zone';
+    }
+    if (locusPath.startsWith('user.work')) {
       return 'language_semantic_zone';
     }
     // ② 按实体类型辅助判定（扩展至 5 区 — 白皮书 §2.2）

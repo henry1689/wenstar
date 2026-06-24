@@ -75,6 +75,18 @@ export function classify(input: RoleClassifierInput): RoleDecision {
     return { role: previousRole === 'lover' ? 'lover' : 'counselor', confidence: 0.6, rule: 'mixed_topic_emotional_first' };
   }
 
+  // 🔴 学术/教育/家庭/日常话题拦截（必须在亲密检测之前，防止误判）
+  // "人体解剖学"中的"人体"不应触发亲密模式
+  const ACADEMIC_KEYWORDS = /大学|选修课|必修课|课程|专业|学期|考试|学分|论文|实验室|研究|学习|上课|教授|导师|同学|教材|课本|作业|成绩|考研|毕业|学位|奖学金/;
+  const FAMILY_DAILY_KEYWORDS = /选修课|读大学|一年级|大二|大三|大四|考研|毕业设计|实习|人体解剖|生理学|心理学|AI应用|人工智能|编程|代码/;
+  if (ACADEMIC_KEYWORDS.test(message) || FAMILY_DAILY_KEYWORDS.test(message)) {
+    // 即使有亲密词或高亲密感知，也优先走秘书/延续路由
+    const hasWorkContext = WORK_KEYWORDS.test(message) || p.factual > 0.3;
+    if (hasWorkContext) return { role: 'secretary', confidence: 0.75, rule: 'academic_topic' };
+    if (previousRole) return { role: previousRole, confidence: 0.6, rule: 'academic_continuation' };
+    return { role: 'secretary', confidence: 0.7, rule: 'academic_default' };
+  }
+
   // ⑤ 亲密检测
   const isIntimate = p.intimacy > 0.3 || p.sexual_attraction > 0.2 || INTIMATE_KEYWORDS.test(message);
   if (isIntimate) {
