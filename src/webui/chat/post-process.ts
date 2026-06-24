@@ -36,12 +36,7 @@ export async function executePostProcess(input: PostProcessInput): Promise<void>
   const _rid = dna.dna_root_id;
 
   // ① 对话持久化（砂金库）
-  try {
-    ctx.conversationDB?.insertConversation('user', message);
-    ctx.conversationDB?.insertConversation('assistant', reply);
-  } catch (err) {
-    console.warn('[PostProcess] 对话持久化失败:', err);
-  }
+  // 已在 chat.ts:1670-1671 执行，此处不重复写入
 
   // ② 人物档案更新（从 M1 实体）
   try {
@@ -61,11 +56,13 @@ export async function executePostProcess(input: PostProcessInput): Promise<void>
 
   // ③ 关系图谱同步
   try {
-    if (ctx.m4) {
+    if (ctx.m4 && ctx.storage?.getSQLite) {
       const { extractRelations, storeRelations } = await import('../../app/knowledge/RelationshipExtractor.js');
       const relations = extractRelations(message, dna.entity_genes);
       if (relations.length > 0) {
-        storeRelations(ctx.m4.getFamilyGraph(), relations);
+        const sqlite = ctx.storage.getSQLite();
+        const fg = ctx.m4.getFamilyGraph();
+        storeRelations(sqlite, relations, message, fg);
       }
     }
   } catch (err) {
@@ -155,11 +152,6 @@ export async function executePostProcess(input: PostProcessInput): Promise<void>
     console.warn('[PostProcess] M7梦境触发失败:', err);
   }
 
-  // ⑨ 知识库异步摄入
-  try {
-    const { ingestFromConversation } = await import('../../app/ingestion/ConversationIngestionService.js');
-    ingestFromConversation(ctx.storage, message, reply, dna as any).catch(() => {});
-  } catch (err) {
-    console.warn('[PostProcess] 知识摄入失败:', err);
-  }
+  // ⑨ 知识库异步摄入（已在 chat.ts:2133 执行主调用，此处不重复）
+  // chat.ts 已完整处理：亲密检测→ingestFromConversation→异步入库
 }

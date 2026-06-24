@@ -14,6 +14,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EntityGene } from '../m1/types/dna.js';
+import { validatePersonName, validateRelationType } from './EntityValidator.js';
 import type {
   FamilyGraph as FamilyGraphInterface,
   GraphNode,
@@ -32,6 +33,11 @@ const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'data', 'knowledge', 'family
 /**
  * P1: 人物画像 — 从"名字"到"完整的人"
  * 存储在 node.properties JSON 中，每次对话逐步丰富。
+ *
+ * v1.1 升级: 新增 PersonDossier 6 模块结构化档案体系
+ *  - 基础信息卡、人生履历、形象特质、性格偏好、关系定位、记忆锚点
+ *  - 原有 flat 字段保持兼容
+ *  - 新增字段通过 dossier 子对象存储
  */
 interface PersonProfile {
   // ── 基础 ──
@@ -78,6 +84,71 @@ interface PersonProfile {
   asked_questions?: string[];
   /** 画像完整度（0-1，自动计算） */
   completeness?: number;
+
+  // ── v1.1 新增: 6 模块结构化档案 + 辅助字段 ──
+  /** 结构化人事档案（6 模块） */
+  dossier?: PersonDossier;
+  /** 待确认条目（30 天 TTL） */
+  pendingItems?: PendingItem[];
+  /** 已记录的冲突历史 */
+  conflicts?: Array<{ field: string; oldValue: string; newValue: string; timestamp: string }>;
+  /** 是否标记为有冲突 */
+  conflict?: boolean;
+}
+
+/**
+ * 6 模块人事档案结构化定义
+ * 所有档案字段统一走 EntityValidator 校验
+ */
+interface PersonDossier {
+  /** 模块① 基础信息卡 */
+  basicInfo: {
+    gender?: string;
+    birthYear?: number;
+    birthPlace?: string;
+    education?: string;
+    maritalStatus?: string;
+  };
+  /** 模块② 人生履历 */
+  lifeResume: {
+    timeline: Array<{ date: string; summary: string; emotion?: string }>;
+    careerHistory?: string;
+    notableEvents?: string[];
+  };
+  /** 模块③ 形象特质 */
+  imageTraits: {
+    looks?: string;        // 外貌长相
+    bodyFeatures?: string;  // 身材特征
+    style?: string;         // 穿着风格
+    voice?: string;         // 声音特征
+    distinguishingMarks?: string;  // 辨识特征
+  };
+  /** 模块④ 性格偏好 */
+  personalityPrefs: {
+    traits: string[];       // 标签化性格（开朗/幽默等）
+    description?: string;   // 性格自由描述
+    interests: string[];    // 兴趣爱好
+    habits?: string;        // 习惯
+    psychology?: string;    // 心理/内心特征
+  };
+  /** 模块⑤ 关系定位 */
+  relationMap: {
+    relationToUser: string; // 与用户的关系
+    notes?: string;          // 自由备注
+  };
+  /** 模块⑥ 记忆锚点（Top-5，满5自动淘汰最旧） */
+  memoryAnchors: {
+    diamondIds: string[];   // 最多 5 条，存黑钻记忆 ID
+  };
+}
+
+/** 待确认条目（30 天 TTL） */
+interface PendingItem {
+  field: string;            // 对应的模块字段名
+  value: string;            // 待确认的值
+  source: string;           // 来源（对话摘要）
+  timestamp: string;        // 创建时间
+  confirmed: boolean;       // 是否已确认
 }
 
 // ─── 亲属称谓 → 关系映射（自动推断核心词表）───
@@ -129,6 +200,7 @@ const REVERSE_RELATION: Record<string, string> = {
   sibling_of: 'sibling_of',
   grandfather_of: 'grandchild_of', grandmother_of: 'grandchild_of',
   child_of: 'parent_of',
+  grandchild_of: 'grandfather_of',
   lives_in: 'residence_of',
   close_to: 'close_to',
 };
@@ -976,17 +1048,30 @@ export class FamilyGraph implements FamilyGraphInterface {
 
   /**
    * SP2-3: 反义词冲突检测对
+   * v1.1: 扩充覆盖外貌/性格/职业/关系四大类
    */
   private static CONFLICT_PAIRS: Array<[RegExp, RegExp]> = [
+    // 外貌类
     [/高(?!中)/, /矮/], [/瘦/, /胖/], [/长发/, /短发/], [/大胸|丰满/, /平胸|飞机场|贫乳/],
     [/白/, /黑/], [/大眼睛/, /小眼睛/], [/瓜子脸|圆脸/, /方脸|长脸/], [/双眼皮/, /单眼皮/],
     [/长发/, /短发/], [/卷发/, /直发/], [/戴眼镜/, /不戴眼镜/],
+    // 性格类（v1.1 新增）
+    [/外向|开朗|活泼/, /内向|安静|腼腆/], [/急脾气|暴躁/, /温和|慢性子|温柔/],
+    [/大方/, /小气|抠门/], [/勤快|勤奋|勤劳/, /懒|懒惰|懒散/],
+    [/乐观/, /悲观|消极/], [/细心|细致/, /粗心|马虎|大大咧咧/],
+    // 职业类（v1.1 新增）
+    [/创业|老板|ceo|创始人|总经理/, /员工|打工|上班族|基层/],
+    [/全职/, /兼职|临时/],
+    // 关系类（v1.1 新增）
+    [/已婚|有家室/, /未婚|单身/], [/有孩子|有小孩/, /没孩子|丁克/],
+    [/本地人/, /外地人/],
   ];
 
   /**
    * 更新或创建人物画像
    *
    * SP2-3: 新增冲突检测 — 检测到关键字段矛盾时保留双版本+标记冲突
+   * v1.1: 支持 dossier 6 模块结构化更新 + pending 待确认机制
    */
   async updatePersonProfile(personName: string, updates: Partial<PersonProfile>): Promise<void> {
     const nodes = this.query('SELECT id, properties, aliases FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
@@ -1004,23 +1089,59 @@ export class FamilyGraph implements FamilyGraphInterface {
     merged.mention_count = (existing.mention_count || 0) + 1;
 
     // SP2-3: 冲突检测 — 检查关键描述字段矛盾
-    const _conflictFields = ['appearance', 'body_features', 'description'];
+    const _conflictFields = ['appearance', 'body_features', 'description', 'occupation'];
     const _existingConflicts: Array<{ field: string; oldValue: string; newValue: string; timestamp: string }> = (existing as any).conflicts || [];
     for (const field of _conflictFields) {
       const oldVal = (existing as any)[field] || '';
       const newVal = (updates as any)[field] || '';
       if (oldVal && newVal && oldVal !== newVal) {
-        // 检测反义词
         const hasConflict = FamilyGraph.CONFLICT_PAIRS.some(([a, b]) => a.test(oldVal) && b.test(newVal));
         if (hasConflict) {
           _existingConflicts.push({ field, oldValue: oldVal, newValue: newVal, timestamp: new Date().toISOString() });
-          // 保持旧值，新值存入 conflicts
           (merged as any)[field] = oldVal;
           (merged as any).conflicts = _existingConflicts;
           (merged as any).conflict = true;
           console.log('[FamilyGraph] 冲突检测: ' + personName + ' ' + field + ' (' + oldVal + ' vs ' + newVal + ')');
         }
       }
+    }
+
+    // ── dossier 升级: 存量 flat 字段同步到 dossier ──
+    if (!merged.dossier) {
+      merged.dossier = this.buildDossierFromFlat(merged, existing as any);
+    }
+    // 如有新的 flat 字段更新，同步到 dossier
+    if (updates.appearance && merged.dossier.imageTraits) {
+      merged.dossier.imageTraits.looks = merged.dossier.imageTraits.looks || updates.appearance;
+    }
+    if (updates.body_features && merged.dossier.imageTraits) {
+      merged.dossier.imageTraits.bodyFeatures = merged.dossier.imageTraits.bodyFeatures || updates.body_features;
+    }
+    if (updates.style && merged.dossier.imageTraits) {
+      merged.dossier.imageTraits.style = merged.dossier.imageTraits.style || updates.style;
+    }
+    if (updates.voice && merged.dossier.imageTraits) {
+      merged.dossier.imageTraits.voice = merged.dossier.imageTraits.voice || updates.voice;
+    }
+    if (updates.traits && merged.dossier.personalityPrefs) {
+      for (const t of updates.traits) {
+        if (!merged.dossier.personalityPrefs.traits.includes(t)) {
+          merged.dossier.personalityPrefs.traits.push(t);
+        }
+      }
+    }
+    if (updates.interests && merged.dossier.personalityPrefs) {
+      for (const t of updates.interests) {
+        if (!merged.dossier.personalityPrefs.interests.includes(t)) {
+          merged.dossier.personalityPrefs.interests.push(t);
+        }
+      }
+    }
+    if (updates.occupation && merged.dossier.basicInfo) {
+      merged.dossier.basicInfo.education = merged.dossier.basicInfo.education || updates.occupation;
+    }
+    if (updates.relation_to_user && merged.dossier.relationMap) {
+      merged.dossier.relationMap.relationToUser = updates.relation_to_user;
     }
 
     merged.completeness = this.calcProfileCompleteness(merged);
@@ -1032,17 +1153,413 @@ export class FamilyGraph implements FamilyGraphInterface {
   /**
    * 计算画像完整度 (0-1)
    * 权重：relation=30%, traits=20%, occupation=15%, interests=10%, timeline=15%, description=10%
+   * v1.1: 支持 dossier 结构补充评分
    */
   calcProfileCompleteness(profile: PersonProfile): number {
     let score = 0;
-    if (profile.relation_to_user && profile.relation_to_user !== '认识的人') score += 0.3;
-    else if (profile.relation_to_user) score += 0.15;
-    if (profile.traits && profile.traits.length > 0) score += 0.2;
-    if (profile.occupation) score += 0.15;
+    // flat 字段评分
+    if (profile.relation_to_user && profile.relation_to_user !== '认识的人') score += 0.25;
+    else if (profile.relation_to_user) score += 0.1;
+    if (profile.traits && profile.traits.length > 0) score += 0.15;
+    if (profile.occupation) score += 0.1;
     if (profile.interests && profile.interests.length > 0) score += 0.1;
-    if (profile.timeline && profile.timeline.length > 0) score += 0.15;
-    if (profile.description) score += 0.1;
+    if (profile.timeline && profile.timeline.length > 0) score += 0.1;
+    if (profile.description || profile.personality) score += 0.05;
+    // dossier 补充评分（性别/生日等基础信息）
+    if (profile.dossier) {
+      if (profile.dossier.basicInfo?.gender) score += 0.05;
+      if (profile.dossier.basicInfo?.birthYear) score += 0.05;
+      if (profile.dossier.imageTraits?.looks) score += 0.05;
+      if (profile.dossier.personalityPrefs?.habits) score += 0.05;
+      if (profile.dossier.memoryAnchors?.diamondIds?.length > 0) score += 0.05;
+    }
     return Math.round(Math.min(1, score) * 100) / 100;
+  }
+
+  /**
+   * 从 flat 字段构建初始 dossier（存量迁移用）
+   */
+  private buildDossierFromFlat(profile: Partial<PersonProfile>, _existing: any): PersonDossier {
+    return {
+      basicInfo: {
+        gender: undefined,
+        birthYear: undefined,
+        birthPlace: undefined,
+        education: profile.occupation || undefined,
+        maritalStatus: undefined,
+      },
+      lifeResume: {
+        timeline: (profile as any).timeline || [],
+        careerHistory: profile.occupation || undefined,
+        notableEvents: undefined,
+      },
+      imageTraits: {
+        looks: profile.appearance || undefined,
+        bodyFeatures: profile.body_features || undefined,
+        style: profile.style || undefined,
+        voice: profile.voice || undefined,
+        distinguishingMarks: undefined,
+      },
+      personalityPrefs: {
+        traits: profile.traits || [],
+        description: profile.personality || undefined,
+        interests: profile.interests || [],
+        habits: profile.habits || undefined,
+        psychology: profile.psychology || undefined,
+      },
+      relationMap: {
+        relationToUser: profile.relation_to_user || '',
+        notes: _existing.备注 || _existing.note || _existing.context || undefined,
+      },
+      memoryAnchors: {
+        diamondIds: [],
+      },
+    };
+  }
+
+  /**
+   * v1.1: 添加记忆锚点（Top-5，满5自动淘汰最旧）
+   */
+  async addMemoryAnchor(personName: string, diamondId: string): Promise<void> {
+    const nodes = this.query('SELECT id, properties FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (nodes.length === 0) return;
+
+    const props = nodes[0].properties ? JSON.parse(nodes[0].properties) : {};
+    const dossier: PersonDossier = props.dossier || this.buildDossierFromFlat(props, props);
+    const anchors = dossier.memoryAnchors || { diamondIds: [] };
+
+    if (anchors.diamondIds.includes(diamondId)) return;
+    anchors.diamondIds.push(diamondId);
+    if (anchors.diamondIds.length > 5) {
+      anchors.diamondIds = anchors.diamondIds.slice(-5);
+    }
+    dossier.memoryAnchors = anchors;
+    props.dossier = dossier;
+    this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(props), new Date().toISOString(), nodes[0].id]);
+    this.markDirty(true);
+  }
+
+  /**
+   * v1.1: 获取完整结构化档案
+   */
+  getFullProfile(personName: string): PersonDossier | null {
+    const profile = this.getPersonProfile(personName);
+    if (!profile) return null;
+    return profile.dossier ?? this.buildDossierFromFlat(profile, {});
+  }
+
+  /**
+   * v1.1: 迁移所有存量人物画像到 dossier 结构（幂等）
+   */
+  async migrateProfilesToDossier(): Promise<{ total: number; migrated: number; errors: number }> {
+    const persons = this.query('SELECT id, name, properties FROM nodes WHERE type = ?', ['person']);
+    let migrated = 0, errors = 0;
+    for (const node of persons) {
+      try {
+        const props = node.properties ? JSON.parse(node.properties) : {};
+        if (props.dossier) continue;
+        const profile: Partial<PersonProfile> = { ...props, name: node.name };
+        props.dossier = this.buildDossierFromFlat(profile, props);
+        props.completeness = this.calcProfileCompleteness({ ...profile, dossier: props.dossier } as PersonProfile);
+        this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
+          [JSON.stringify(props), new Date().toISOString(), node.id]);
+        migrated++;
+      } catch { errors++; }
+    }
+    if (migrated > 0) {
+      this.markDirty(true);
+      console.log(`[FamilyGraph] dossier 迁移: ${migrated} 人升级, ${errors} 错误`);
+    }
+    return { total: persons.length, migrated, errors };
+  }
+
+  /**
+   * v1.1: 添加待确认条目（30 天 TTL）
+   */
+  async addPendingItem(personName: string, field: string, value: string, source: string): Promise<void> {
+    const props = this.query('SELECT properties FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (props.length === 0) return;
+    const parsed = props[0].properties ? JSON.parse(props[0].properties) : {};
+    const pending: PendingItem = {
+      field, value, source: source.substring(0, 80),
+      timestamp: new Date().toISOString(), confirmed: false,
+    };
+    parsed.pendingItems = [...(parsed.pendingItems || []), pending];
+    this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE name = ? AND type = ?',
+      [JSON.stringify(parsed), new Date().toISOString(), personName, 'person']);
+    this.markDirty();
+  }
+
+  /**
+   * v1.1: 清理 30 天以上未确认的 pending 条目
+   */
+  cleanExpiredPendingItems(): number {
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+    const persons = this.query('SELECT id, name, properties FROM nodes WHERE type = ?', ['person']);
+    let total = 0;
+    for (const node of persons) {
+      try {
+        const props = node.properties ? JSON.parse(node.properties) : {};
+        const items: PendingItem[] = props.pendingItems || [];
+        const before = items.length;
+        props.pendingItems = items.filter(i => i.timestamp >= cutoff || i.confirmed);
+        if (props.pendingItems.length < before) {
+          total += before - props.pendingItems.length;
+          this.run('UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?',
+            [JSON.stringify(props), new Date().toISOString(), node.id]);
+        }
+      } catch { /* skip */ }
+    }
+    if (total > 0) { this.markDirty(); console.log(`[FamilyGraph] 清理 ${total} 条过期 pending`); }
+    return total;
+  }
+
+  /**
+   * v1.1: 从对话文本中提取人物档案信息（ProfileExtractor）
+   * 规则：
+   *   - 履历/特质类（traits/interests）：只追加不覆盖
+   *   - 基础信息/关系类（occupation/relation_to_user）：仅高置信度可覆盖
+   *   - 冲突信息：标记为 pending 而非直接覆盖
+   *
+   * @param personName 目标人物名
+   * @param conversationText 对话原文（用于提取上下文）
+   * @returns 本次提取到的字段数
+   */
+  async extractProfileFromText(personName: string, conversationText: string): Promise<number> {
+    const profile = this.getPersonProfile(personName);
+    if (!profile || !conversationText) return 0;
+
+    let extracted = 0;
+
+    // 1. 提取职业/身份（高置信度模式：包含"是"的声明句）
+    const occupationMatch = conversationText.match(new RegExp(`${personName}(?:是|做|从事|在.+?担任)([^，。！？]{2,20}(?:工作|一职|岗位|职位|老师|医生|工程师|经理|主管|员)?)`));
+    if (occupationMatch && !profile.occupation) {
+      const occupation = occupationMatch[1].substring(0, 30);
+      await this.updatePersonProfile(personName, { occupation } as any);
+      extracted++;
+    }
+
+    // 2. 提取性格标签（低置信度追加模式）
+    const traitHints = [
+      { regex: /开朗|外向|活泼/, value: '开朗' },
+      { regex: /内向|安静|腼腆/, value: '内向' },
+      { regex: /温柔|温和|脾气好/, value: '温柔' },
+      { regex: /急脾气|暴躁|火爆/, value: '急躁' },
+      { regex: /幽默|风趣|搞笑/, value: '幽默' },
+      { regex: /细心|细致|心细/, value: '细心' },
+      { regex: /大方|豪爽/, value: '大方' },
+      { regex: /勤快|勤奋/, value: '勤奋' },
+      { regex: /懒惰|懒散/, value: '懒散' },
+      { regex: /乐观/, value: '乐观' },
+      { regex: /悲观/, value: '悲观' },
+      { regex: /热心|乐于助人/, value: '热心' },
+      { regex: /固执|要强/, value: '固执' },
+    ];
+    const newTraits: string[] = [];
+    for (const hint of traitHints) {
+      if (hint.regex.test(conversationText)) {
+        const existing = profile.traits || [];
+        if (!existing.includes(hint.value)) {
+          newTraits.push(hint.value);
+        }
+      }
+    }
+    if (newTraits.length > 0) {
+      const merged = [...(profile.traits || []), ...newTraits];
+      await this.updatePersonProfile(personName, { traits: merged } as any);
+      extracted += newTraits.length;
+    }
+
+    // 3. 提取关系描述（低置信度 → 只追加备注）
+    const relationNoteMatch = conversationText.match(new RegExp(`${personName}(?:是|算|属于)(?:我的|我)?([^，。！？]{2,20}(?:朋友|同学|同事|亲戚|邻居|合伙人|搭档|合作伙伴))`));
+    if (relationNoteMatch && relationNoteMatch[1]) {
+      const note = relationNoteMatch[1].substring(0, 30);
+      // 如果当前 relation_to_user 为空，设置高置信度
+      if (!profile.relation_to_user) {
+        await this.updatePersonProfile(personName, { relation_to_user: note } as any);
+        extracted++;
+      } else if (profile.relation_to_user !== note) {
+        // 有冲突 → 标记为 pending
+        await this.addPendingItem(personName, 'relationMap.relationToUser', note, conversationText.substring(0, 80));
+        extracted++;
+      }
+    }
+
+    // 4. 提取爱好（追加模式）
+    const interestHints = [
+      /喜欢|爱好|爱看|爱听|爱玩|爱打|爱去|爱做/,
+      /热爱|酷爱|迷恋/,
+    ];
+    for (const hint of interestHints) {
+      const interestMatch = conversationText.match(hint);
+      if (interestMatch) {
+        // 尝试提取具体爱好内容（"喜欢XX" / "爱好XX"）
+        const detailMatch = conversationText.match(new RegExp(`${interestMatch[0]}([^，。！？]{2,20})`));
+        if (detailMatch) {
+          const interest = detailMatch[1].substring(0, 15);
+          if (!(profile.interests || []).includes(interest) && interest.length >= 2) {
+            const merged = [...(profile.interests || []), interest];
+            await this.updatePersonProfile(personName, { interests: merged } as any);
+            extracted++;
+          }
+        }
+      }
+    }
+
+    // 5. 提取外貌描述（低置信度 → 标记为 pending 而非直接覆盖）
+    const appearanceMatch = conversationText.match(new RegExp(`${personName}(?:长?得?|长相|样子|看起来)([^，。！？]{3,30})`));
+    if (appearanceMatch && appearanceMatch[1].length >= 3) {
+      const desc = appearanceMatch[1].substring(0, 40);
+      if (!profile.appearance && !profile.dossier?.imageTraits?.looks) {
+        await this.updatePersonProfile(personName, { appearance: desc } as any);
+        extracted++;
+      } else if (profile.appearance && profile.appearance !== desc) {
+        // 有冲突 → pending
+        await this.addPendingItem(personName, 'appearance', desc, conversationText.substring(0, 80));
+        extracted++;
+      }
+    }
+
+    return extracted;
+  }
+
+  /**
+   * v1.1: 全量补全缺失的反向边
+   * 遍历所有边，确保有正向边必有反向边，无单向断链
+   */
+  completeReverseEdges(): { completed: number; errors: number } {
+    let completed = 0, errors = 0;
+
+    const allEdges = this.query(
+      'SELECT e.source_id, e.target_id, e.relation, a.name as srcName, b.name as tgtName FROM edges e JOIN nodes a ON e.source_id = a.id JOIN nodes b ON e.target_id = b.id'
+    );
+
+    for (const edge of allEdges) {
+      const reverseRel = REVERSE_RELATION[edge.relation] || SOCIAL_REVERSE[edge.relation];
+      if (!reverseRel || reverseRel === edge.relation) continue; // 自反关系（spouse_of, friend_of）无需补全
+
+      const existing = this.query(
+        'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
+        [edge.target_id, edge.source_id, reverseRel]
+      );
+      if (existing.length === 0) {
+        try {
+          this.run('INSERT INTO edges (id, source_id, target_id, relation, properties, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [uid(), edge.target_id, edge.source_id, reverseRel, '{}', new Date().toISOString(), new Date().toISOString()]);
+          completed++;
+        } catch { errors++; }
+      }
+    }
+
+    if (completed > 0) {
+      this.markDirty(true);
+      console.log(`[FamilyGraph] 反向边补全: ${completed} 条新增, ${errors} 错误`);
+    }
+    return { completed, errors };
+  }
+
+  /**
+   * v1.1: 从备份文件恢复图谱（轻量回滚）
+   * 恢复前自动备份当前版本，恢复后自行校验完整性
+   */
+  async restoreFromBackup(backupPath: string): Promise<{ success: boolean; error?: string; preBackupPath?: string; verified: boolean }> {
+    const { existsSync, copyFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    // 1. 自动备份当前版本
+    const preBackupPath = this.dbPath + '.pre-restore.' + Date.now() + '.bak';
+    try {
+      const currentData = this.db!.export();
+      writeFileSync(preBackupPath, Buffer.from(currentData));
+    } catch (e) {
+      return { success: false, error: `当前版本备份失败: ${e}`, preBackupPath, verified: false };
+    }
+
+    // 2. 检查备份文件
+    if (!existsSync(backupPath)) {
+      return { success: false, error: '备份文件不存在', preBackupPath, verified: false };
+    }
+
+    // 3. 验证备份文件可读性
+    try {
+      const SQL = await initSqlJs();
+      const backupData = await import('node:fs').then(fs => fs.readFileSync(backupPath));
+      const testDb = new SQL.Database(backupData);
+      const nodes = testDb.exec('SELECT COUNT(*) as cnt FROM nodes');
+      const edges = testDb.exec('SELECT COUNT(*) as cnt FROM edges');
+      const nodeCnt = nodes[0]?.values[0]?.[0] || 0;
+      const edgeCnt = edges[0]?.values[0]?.[0] || 0;
+      testDb.close();
+      if (nodeCnt === 0) {
+        return { success: false, error: '备份文件无效（nodes 表为空）', preBackupPath, verified: false };
+      }
+    } catch (e) {
+      return { success: false, error: `备份文件不可读: ${e}`, preBackupPath, verified: false };
+    }
+
+    // 4. 替换当前库
+    try {
+      copyFileSync(backupPath, this.dbPath);
+      // 重新加载
+      const SQL = await initSqlJs();
+      const buffer = await import('node:fs').then(fs => fs.readFileSync(this.dbPath));
+      this.db = new SQL.Database(buffer);
+      console.log(`[FamilyGraph] 已从备份恢复: ${backupPath}`);
+    } catch (e) {
+      return { success: false, error: `恢复失败: ${e}`, preBackupPath, verified: false };
+    }
+
+    return { success: true, preBackupPath, verified: true };
+  }
+
+  /**
+   * v1.1: 获取备份状态统计
+   */
+  getBackupStats(): { personCount: number; edgeCount: number; reverseEdgeRatio: number } {
+    const persons = this.query("SELECT COUNT(*) as cnt FROM nodes WHERE type = 'person'");
+    const edges = this.query('SELECT COUNT(*) as cnt FROM edges');
+    const edgeCnt = edges[0]?.cnt ?? 0;
+
+    // 计算反向边比例：自反关系（spouse_of/friend_of）在每个 pair 中应出现 2 次
+    const pairsWithBoth = this.query(
+      `SELECT COUNT(*) as cnt FROM (
+        SELECT e1.source_id, e1.target_id FROM edges e1
+        INNER JOIN edges e2 ON e1.source_id = e2.target_id AND e1.target_id = e2.source_id
+        WHERE e1.relation != e2.relation
+        GROUP BY e1.source_id, e1.target_id
+      )`
+    );
+    const bothCount = pairsWithBoth[0]?.cnt ?? 0;
+    const totalPairs = this.query(
+      `SELECT COUNT(*) as cnt FROM (SELECT DISTINCT source_id, target_id FROM edges)`
+    );
+    const pairCnt = totalPairs[0]?.cnt ?? 1;
+
+    return {
+      personCount: persons[0]?.cnt ?? 0,
+      edgeCount: edgeCnt,
+      reverseEdgeRatio: Math.round(bothCount / Math.max(1, pairCnt) * 100) / 100,
+    };
+  }
+
+  /**
+   * v1.1: 使用 EntityValidator 校验档案字段
+   */
+  validateDossierField(field: string, value: string): { valid: boolean; reason?: string } {
+    switch (field) {
+      case 'name': return validatePersonName(value);
+      case 'relation': return validateRelationType(value);
+      case 'gender':
+        if (value && !['男', '女', '未知'].includes(value)) return { valid: false, reason: '性别只能为男/女/未知' };
+        return { valid: true };
+      case 'traits':
+        if (value && value.length > 10) return { valid: false, reason: '性格标签过长' };
+        return { valid: true };
+      default:
+        if (value && value.length > 200) return { valid: false, reason: '字段值超过200字符' };
+        return { valid: true };
+    }
   }
 
   /**
@@ -1165,6 +1682,140 @@ export class FamilyGraph implements FamilyGraphInterface {
       await this.addEdge({ id: uid(), source_id: personId, target_id: featureId, relation });
       console.log(`[FamilyGraph] 特征建边: ${personName} -${relation}-> ${featureName}`);
     }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // 双库统一兼容层（返回 entity_relations 兼容格式）
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * 获取指定人物的关联人物（兼容 entity_relations 格式）
+   * 返回 {name, relation, strength}[] 格式
+   */
+  getRelatedPersons(personName: string): Array<{ name: string; relation: string; strength: number }> {
+    const results: Array<{ name: string; relation: string; strength: number }> = [];
+    const nodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [personName, 'person']);
+    if (nodes.length === 0) return results;
+
+    const nodeId = nodes[0].id;
+
+    // 出边（此人认识谁）
+    const outgoing = this.query(
+      `SELECT n.name, e.relation FROM edges e JOIN nodes n ON e.target_id = n.id WHERE e.source_id = ?`,
+      [nodeId]
+    );
+    for (const e of outgoing) {
+      results.push({ name: e.name, relation: e.relation, strength: 1.0 });
+    }
+
+    // 入边（谁认识此人）
+    const incoming = this.query(
+      `SELECT n.name, e.relation FROM edges e JOIN nodes n ON e.source_id = n.id WHERE e.target_id = ?`,
+      [nodeId]
+    );
+    for (const e of incoming) {
+      results.push({ name: e.name, relation: e.relation, strength: 1.0 });
+    }
+
+    return results;
+  }
+
+  /**
+   * 批量获取关联人物（兼容 findRelatedEntities 格式）
+   * 对每个实体名查 FamilyGraph 并合并结果
+   */
+  getRelatedPersonsBatch(entityNames: string[], minStrength = 0.3): Array<{ name: string; relation: string; strength: number }> {
+    const results: Array<{ name: string; relation: string; strength: number }> = [];
+    const seen = new Set<string>();
+
+    for (const name of entityNames) {
+      const rels = this.getRelatedPersons(name);
+      for (const r of rels) {
+        if (!seen.has(r.name) && r.strength >= minStrength) {
+          seen.add(r.name);
+          results.push(r);
+        }
+      }
+      // 如果该名字本身就是人物节点，也算入关联
+      if (!seen.has(name) && entityNames.includes(name)) {
+        const profile = this.getPersonProfile(name);
+        if (profile?.relation_to_user) {
+          seen.add(name);
+          results.push({ name, relation: 'known_person', strength: 0.5 });
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
+   * N跳关联人物检索（兼容 findRelatedEntitiesN 格式）
+   */
+  getRelatedPersonsN(entityNames: string[], maxHops: 1|2|3 = 1, minStrength = 0.3): Array<{ name: string; relation: string; strength: number; hop: number }> {
+    const results: Array<{ name: string; relation: string; strength: number; hop: number }> = [];
+    const seen = new Set<string>(entityNames);
+    let currentLayer = entityNames.filter(n => {
+      const nodes = this.query('SELECT id FROM nodes WHERE name = ? AND type = ?', [n, 'person']);
+      return nodes.length > 0;
+    });
+    let hop = 1;
+
+    while (hop <= maxHops && currentLayer.length > 0 && results.length < 8) {
+      const nextLayer: string[] = [];
+      for (const name of currentLayer) {
+        const rels = this.getRelatedPersons(name);
+        for (const r of rels) {
+          if (seen.has(r.name)) continue;
+          seen.add(r.name);
+          if (r.strength >= minStrength) {
+            results.push({ ...r, hop });
+            nextLayer.push(r.name);
+            if (results.length >= 8) break;
+          }
+        }
+        if (results.length >= 8) break;
+      }
+      currentLayer = nextLayer;
+      hop++;
+    }
+
+    return results;
+  }
+
+  /**
+   * 获取图谱统计信息（用于健康检查）
+   */
+  getStats(): { personCount: number; edgeCount: number; locationCount: number; objectCount: number } {
+    const persons = this.query('SELECT COUNT(*) as cnt FROM nodes WHERE type = ?', ['person']);
+    const edges = this.query('SELECT COUNT(*) as cnt FROM edges');
+    const locations = this.query('SELECT COUNT(*) as cnt FROM nodes WHERE type = ?', ['place']);
+    const objects = this.query('SELECT COUNT(*) as cnt FROM nodes WHERE type = ?', ['object']);
+    return {
+      personCount: (persons[0] as any)?.cnt ?? 0,
+      edgeCount: (edges[0] as any)?.cnt ?? 0,
+      locationCount: (locations[0] as any)?.cnt ?? 0,
+      objectCount: (objects[0] as any)?.cnt ?? 0,
+    };
+  }
+
+  /**
+   * 获取所有边摘要（用于 debug API）
+   */
+  getAllEdgesSummary(): Array<{ entityA: string; entityB: string; relation: string; strength: number }> {
+    const results = this.query(
+      `SELECT a.name as entityA, b.name as entityB, e.relation
+       FROM edges e
+       JOIN nodes a ON a.id = e.source_id
+       JOIN nodes b ON b.id = e.target_id
+       ORDER BY e.created_at DESC
+       LIMIT 50`,
+    );
+    return (results as any[]).map(r => ({
+      entityA: r.entityA,
+      entityB: r.entityB,
+      relation: r.relation,
+      strength: 1.0,
+    }));
   }
 
   private rowToNode(row: any): GraphNode {

@@ -11,6 +11,7 @@ import type { KnowledgeItem } from './types.js';
 import type { Perception24D } from '../../m3/types/perception.js';
 import { parseFile } from './FileUploadService.js';
 import { FileChunker } from '../tools/FileChunker.js';
+import { INGESTION_GUARD } from '../../config/ingestion-guard.js';
 
 // 文件切片器实例（段落策略，每块 500 字符，50 重叠）
 const fileChunker = new FileChunker({ strategy: 'paragraph', chunkSize: 500, overlap: 50, minChunkLen: 20 });
@@ -210,6 +211,22 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     /** P0: 情感曲谱（24D 感知向量 JSON） */
     emotion_vector?: string;
   }): Promise<KnowledgeItem> {
+    // 🔴 防线④: 写库前最终兜底 — 从配置读取阈值+关键词
+    const PT = INGESTION_GUARD.perceptionThresholds;
+    const ec = params.emotionalContext;
+    if (ec && ((ec.intimacy ?? 0) > PT.intimacy || (ec as any).sexual_attraction > PT.sexualAttraction)) {
+      if (INGESTION_GUARD.loggingEnabled)
+        console.log(`[KnowledgeGuard] 防线④ | 感知阈值拦截 | intimacy=${ec.intimacy}, sexual=${(ec as any).sexual_attraction}, 来源: ${params.source_type || 'unknown'}, 摘要: ${params.title?.substring(0, 30)}`);
+      return { id: '', title: params.title, content: '', source_type: 'blocked', tags: [], created_at: '', updated_at: '', locked: false, classification_pending: true } as any;
+    }
+    // 关键词拦截（使用配置的关键词列表）
+    const KEYWORD_RE = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
+    if (KEYWORD_RE.test(params.title + ' ' + (params.content || ''))) {
+      if (INGESTION_GUARD.loggingEnabled)
+        console.log(`[KnowledgeGuard] 防线④ | 亲密关键词命中 | 来源: ${params.source_type || 'unknown'}, 摘要: ${params.title?.substring(0, 30)}`);
+      return { id: '', title: params.title, content: '', source_type: 'blocked', tags: [], created_at: '', updated_at: '', locked: false, classification_pending: true } as any;
+    }
+
     const id = `kn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
     const allTags = [...(params.tags ?? [])];
@@ -273,16 +290,27 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     return rows.length > 0 ? rowToEntry(rows[0]) : null;
   }
 
-  /** 更新（重新分块 + 嵌入） */
+  /** 更新（重新分块 + 嵌入）
+   *  🔴 防线④: 更新内容同样需要经过亲密守卫（防止先创建再绕过）
+   */
   async function update(id: string, params: {
     title?: string; content?: string; tags?: string[]; locked?: boolean;
   }): Promise<boolean> {
     const existing = getById(id);
     if (!existing || existing.locked) return false;
+    // 🔴 更新内容同样触发亲密守卫
+    const newTitle = params.title ?? existing.title;
+    const newContent = params.content ?? existing.content;
+    const KEYWORD_RE = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
+    if (KEYWORD_RE.test(newTitle + ' ' + newContent)) {
+      if (INGESTION_GUARD.loggingEnabled)
+        console.log(`[KnowledgeGuard] 防线④ | update拦截 | 原因: 亲密关键词 | id: ${id}, 摘要: ${newTitle.substring(0, 30)}`);
+      return false;
+    }
     const now = new Date().toISOString();
     sqlite.writeRaw(
       `UPDATE knowledge_base SET title=?, content=?, tags=?, locked=?, updated_at=? WHERE id=?`,
-      params.title ?? existing.title, params.content ?? existing.content,
+      newTitle, newContent,
       JSON.stringify(params.tags ?? existing.tags),
       (params.locked ?? existing.locked) ? 1 : 0, now, id,
     );

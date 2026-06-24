@@ -67,6 +67,7 @@ import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.
 import { AsyncTaskQueue } from '../app/tools/AsyncTaskQueue.js';
 import { fetchBionicMemories, getVadToneHint, pushToVadCache, isVadAvailable } from './chat/retrieval.js';
 import { ingestFromConversation } from '../app/ingestion/ConversationIngestionService.js';
+import { INGESTION_GUARD } from '../config/ingestion-guard.js';
 // P0-1: 角色路由静态导入
 import { classify, type RoleType } from '../app/role/RoleClassifier.js';
 import { evaluateTransition, createInitialState, type TransitionState } from '../app/role/TransitionManager.js';
@@ -389,6 +390,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
                             "INSERT OR IGNORE INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, 'has_feature', 0.5, ?)",
                             [_personEntity[0].id, _featId, new Date().toISOString()]
                           );
+                          // (FG-迁移) 同步写入 FamilyGraph 特征边
+                          try { ctx.m4?.getFamilyGraph()?.addFeatureEdge(_n, _featName, 'appearance').catch(() => {}); } catch {}
                         }
                       }
                     } catch {}
@@ -2124,8 +2127,14 @@ let finalKnowledgeText = knowledgeBaseText;
     // ═══════════════════════════════════════════════════════════════
     // 对话→知识自动沉淀（异步，不阻塞主回复）
     // ═══════════════════════════════════════════════════════════════
-    // 扫描用户消息中的个人信息、习惯、偏好，自动写入 knowledge_base
-    if (!false && message.length > 4) {
+    // 🔴 防线①: 调用侧过滤 — 感知+关键词双重拦截（阈值/关键词见 config/ingestion-guard.ts）
+    const _PT = INGESTION_GUARD.perceptionThresholds;
+    const _KEYWORDS_RE = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
+    const _isIntimateByContext = (p.intimacy ?? 0) > _PT.intimacy || (p.sexual_attraction ?? 0) > _PT.sexualAttraction || (p.sensory_craving ?? 0) > _PT.sensoryCraving;
+    const _isIntimateByKeyword = _KEYWORDS_RE.test(message);
+    const _inWhitelist = INGESTION_GUARD.whitelistTerms.some((w: string) => message.includes(w));
+    const _isIntimateMsg = _isIntimateByKeyword && !_inWhitelist;
+    if (!_isIntimateMsg && !_isIntimateByContext && message.length > 4) {
       chatTaskQueue.enqueue(async () => {
         try {
           await ingestFromConversation(
@@ -2278,13 +2287,15 @@ async function flushDialogGroup(ctx: any, dg: any, dna: any, decision: any, mess
       console.log('[DG] 黑钻共同回忆: ' + title);
     }
 
-    // 图谱实体同步
+    // 图谱实体同步 + 档案提取
     if (ctx.m4 && dg.entities.length > 0) {
       try {
         const fg = ctx.m4.getFamilyGraph();
         if (fg) {
           for (const name of dg.entities) {
             fg.integrateSocialRelation(name, 'acquaintance_of', '').catch(() => {});
+            // v1.1: 闭组时自动提取人物档案
+            fg.extractProfileFromText(name, combined).catch(() => {});
           }
         }
       } catch {}

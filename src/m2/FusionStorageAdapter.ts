@@ -15,6 +15,7 @@ import type { WriteResult, ReadResult, QueryOptions, StorageStatus } from './typ
 import { SQLiteAdapter } from './SQLiteAdapter.js';
 import { computeCalcium, initialStrength } from './math.js';
 import type { EmotionalMemoryRecord, RetrievalQuery, ScoredMemory, EmotionalLandscape } from './types/index.js';
+import { FAMILY_GRAPH_MIGRATION } from '../config/family-graph-migration.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,6 +26,8 @@ export class FusionStorageAdapter {
   private dataDir: string;
   private seqCounter = 0;
   private initialized = false;
+  /** 家族图谱主库引用（双库统一用） */
+  private familyGraph: any | null = null;
   /** P10: JSON Zone 备份开关（默认开启保持兼容，生产环境可关闭减少IO） */
   private enableJsonZone: boolean;
 
@@ -211,18 +214,78 @@ export class FusionStorageAdapter {
     return this.sqlite.runDecayMaintenance();
   }
 
-  // ─── 实体关系检索 ───
+  // ─── 实体关系检索（双库统一路由） ───
 
+  /**
+   * 查找关联实体（双库统一路由）
+   * - shadow 模式：仅从 entity_relations（影子库）读取
+   * - compat 模式：影子库 + FamilyGraph 合并
+   * - main 模式：先查 FamilyGraph，不足时回退影子库
+   */
   findRelatedEntities(entityNames: string[], minStrength = 0.3) {
-    return this.sqlite.findRelatedEntities(entityNames, minStrength);
+    const oldResult = this.sqlite.findRelatedEntities(entityNames, minStrength);
+
+    if (this.familyGraph && FAMILY_GRAPH_MIGRATION.readMode !== 'shadow') {
+      try {
+        const fgResult = this.familyGraph.getRelatedPersonsBatch(entityNames, minStrength);
+        if (fgResult.length > 0) {
+          // 合并：FamilyGraph 数据优先（覆盖同名条目），其余用影子库补足
+          const fgNames = new Set(fgResult.map((r: any) => r.name));
+          const merged = [...fgResult, ...oldResult.filter((r: any) => !fgNames.has(r.name))];
+          return merged;
+        }
+      } catch (e) {
+        console.warn('[FG-Mig] FamilyGraph 读取失败，回退影子库:', (e as Error).message);
+      }
+    }
+
+    return oldResult;
+  }
+
+  /**
+   * N跳关联实体检索（双库统一路由）
+   */
+  findRelatedEntitiesN(entityNames: string[], maxHops: 1|2|3 = 1, minStrength = 0.3, maxAgeDays?: number) {
+    const oldResult = this.sqlite.findRelatedEntitiesN(entityNames, maxHops, minStrength, maxAgeDays);
+
+    if (this.familyGraph && FAMILY_GRAPH_MIGRATION.readMode !== 'shadow') {
+      try {
+        const fgResult = this.familyGraph.getRelatedPersonsN(entityNames, maxHops, minStrength);
+        if (fgResult.length > 0) {
+          const fgNames = new Set(fgResult.map((r: any) => r.name));
+          const merged = [...fgResult, ...oldResult.filter((r: any) => !fgNames.has(r.name))];
+          return merged.sort((a: any, b: any) => (b.strength || 0) - (a.strength || 0)).slice(0, 15);
+        }
+      } catch (e) {
+        console.warn('[FG-Mig] FamilyGraph N跳读取失败:', (e as Error).message);
+      }
+    }
+
+    return oldResult;
   }
 
   findMemoriesByEntityNames(entityNames: string[], limit = 10) {
     return this.sqlite.findMemoriesByEntityNames(entityNames, limit);
   }
 
+  /**
+   * 实体关系摘要（双库合并）
+   */
   getEntityRelationSummary() {
-    return this.sqlite.getEntityRelationSummary();
+    const oldResult = this.sqlite.getEntityRelationSummary();
+
+    if (this.familyGraph && FAMILY_GRAPH_MIGRATION.readMode !== 'shadow') {
+      try {
+        const fgSummary = this.familyGraph.getAllEdgesSummary();
+        if (fgSummary.length > 0) {
+          return [...fgSummary, ...oldResult];
+        }
+      } catch (e) {
+        console.warn('[FG-Mig] FamilyGraph 摘要读取失败:', (e as Error).message);
+      }
+    }
+
+    return oldResult;
   }
 
   // ─── 状态 ───
@@ -241,6 +304,17 @@ export class FusionStorageAdapter {
   async nextSeqPos(): Promise<number> {
     this.seqCounter++;
     return this.seqCounter;
+  }
+
+  /**
+   * 设置家族图谱实例（双库统一读取路由）
+   */
+  setFamilyGraph(fg: any): void {
+    this.familyGraph = fg;
+  }
+
+  getFamilyGraph(): any | null {
+    return this.familyGraph;
   }
 
   // ─── SQLite 直通 ───

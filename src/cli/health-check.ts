@@ -110,8 +110,24 @@ async function run() {
     // 1c. entity_relations 关联完整性
     const relCount = query(db, 'SELECT COUNT(*) as cnt FROM entity_relations');
     if (relCount.length > 0) {
-      pass('记忆神经通路', 'entity_relations 实体关系', `图谱中有 ${relCount[0].cnt} 条实体关系`);
+      pass('记忆神经通路', 'entity_relations 实体关系', `影子库中有 ${relCount[0].cnt} 条实体关系`);
     }
+
+    // 1c-bis. FamilyGraph 主库节点完整性（双库统一迁移后主库状态）
+    try {
+      const fgPath = join(PROJECT_ROOT, 'data', 'knowledge', 'family_graph.db');
+      if (existsSync(fgPath)) {
+        const fdb = await loadSQLite(fgPath);
+        if (fdb) {
+          const nodeCount = query(fdb, "SELECT COUNT(*) as cnt FROM nodes WHERE type = 'person'");
+          const edgeCount = query(fdb, 'SELECT COUNT(*) as cnt FROM edges');
+          if (nodeCount.length > 0) {
+            pass('记忆神经通路', 'FamilyGraph 主库', `人物节点 ${nodeCount[0].cnt} 个, 关系边 ${edgeCount[0]?.cnt ?? 0} 条`);
+          }
+          fdb.close();
+        }
+      }
+    } catch (_fe) { /* 主库检查为附加信息，失败不阻塞 */ }
 
     // 1d. 取样检查 knowledge_memories 的 relevance 字段
     const kmSample = query(db,

@@ -9,9 +9,50 @@
  *   2. 高置信度模式直接入库（auto-classify）
  *   3. 低置信度标记 classification_pending=1，待玉瑶反问确认
  *   4. 不修改对话历史，不做侵入式处理
+ *
+ * 🔴 铁律：亲密内容绝对禁止进入知识库 — 三道防线
+ *   防线①: 感知级过滤 (ingestFromConversation 入口)
+ *   防线②: 消息级关键词+白名单 (extractCandidates 入口)
+ *   防线③: API 层冗余校验 (KnowledgeEngine.add 入口)
+ *   所有阈值和关键词见 src/config/ingestion-guard.ts
  */
 
 import type { KnowledgeItem } from '../knowledge/types.js';
+import { INGESTION_GUARD } from '../../config/ingestion-guard.js';
+
+// ─── 构建正则（从配置生成，支持白名单） ───
+
+/** 关键词正则 — 全局匹配用 */
+const KEYWORD_PATTERN = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
+
+/** 白名单正则 — 白名单词在消息中出现时降低拦截权重 */
+const WHITELIST_PATTERN = new RegExp(INGESTION_GUARD.whitelistTerms.join('|'));
+
+/** 感知阈值快捷引用 */
+const PT = INGESTION_GUARD.perceptionThresholds;
+
+// ─── 标准化拦截日志 ───
+
+function logGuard(level: string, reason: string, detail: string): void {
+  if (!INGESTION_GUARD.loggingEnabled) return;
+  console.log(`[KnowledgeGuard] ${level} | ${reason} | ${detail}`);
+}
+
+/**
+ * 检查消息是否命中亲密内容（关键词 + 白名单抵消）
+ * 白名单中的词汇（如"生理""科普""医学"）可使消息免于拦截
+ */
+function isIntimateContent(message: string): { blocked: boolean; reason: string } {
+  if (!KEYWORD_PATTERN.test(message)) return { blocked: false, reason: '' };
+
+  // 白名单检测：如果消息包含白名单词（医学/生理/科普等），放行
+  const hasWhitelist = WHITELIST_PATTERN.test(message);
+  if (hasWhitelist) {
+    return { blocked: false, reason: '白名单抵消' };
+  }
+
+  return { blocked: true, reason: `亲密关键词命中: ${message.substring(0, 30)}` };
+}
 
 export interface IngestionCandidate {
   title: string;
@@ -30,11 +71,6 @@ export interface IngestionCandidate {
 
 // ─── 抽取规则 ───
 
-/**
- * 从一段用户消息中提取可沉淀的知识候选项。
- * 每条规则返回 IngestionCandidate | null。
- */
-
 type Rule = (message: string, sceneTags?: string[]) => IngestionCandidate | null;
 
 /** 规则1: 个人偏好 — "我喜欢/我超爱/我最爱 XXX" */
@@ -42,9 +78,12 @@ const rulePreference: Rule = (msg) => {
   const m = msg.match(/(?:我喜欢|我超爱|我最爱|我最喜欢|我特别[喜欢爱])(.{2,25}?)(?:[，。！？蛋了]|$)/);
   if (!m) return null;
   let pref = m[1].trim().replace(/[的了的]$/, '');
-  // "喝咖啡" → keep; "咖啡了" → "咖啡"
   pref = pref.replace(/^(就|都|还|也|只)/, '');
   if (pref.length < 2) return null;
+  // 白名单检查：如果提取的偏好词在白名单中，直接放行
+  if (WHITELIST_PATTERN.test(pref)) {
+    // 正常偏好，放行
+  }
   return {
     title: `喜好: ${pref}`,
     content: `用户喜欢${pref}`,
@@ -63,8 +102,6 @@ const ruleHabit: Rule = (msg) => {
   if (!m) return null;
   const habit = m[1].trim().replace(/[的了]$/, '');
   if (habit.length < 2) return null;
-  // Clean up prefix: "三健身三次" → "健身三次"
-  // Remove leading time specifiers + pronouns
   const clean = habit.replace(/^[三四周末天早中晚我你他她]{0,2}/, '');
   return {
     title: `习惯: ${clean.substring(0, 20)}`,
@@ -78,7 +115,7 @@ const ruleHabit: Rule = (msg) => {
   };
 };
 
-/** 规则3: 用户计划 — "我打算/我计划/我准备/我想去/我想要/我要"（未来时态） */
+/** 规则3: 用户计划 — "我打算/我计划/我准备/我想去/我想要/我要" */
 const rulePlan: Rule = (msg) => {
   const m = msg.match(/(?:我打算|我计划|我准备|我想去|我想要|我要去)(.{2,30}?)(?:[，。！？]|$)/);
   if (!m) return null;
@@ -91,7 +128,7 @@ const rulePlan: Rule = (msg) => {
     tags: ['auto-ingested', 'plan'],
     interaction_type: 'conversation',
     scene_tags: ['计划'],
-    confident: false, // 计划可能变化，低置信度
+    confident: false,
   };
 };
 
@@ -129,11 +166,11 @@ const ruleMemory: Rule = (msg) => {
     tags: ['auto-ingested', 'memory'],
     interaction_type: 'conversation',
     scene_tags: ['回忆'],
-    confident: false, // 回忆需要确认准确性
+    confident: false,
   };
 };
 
-// ─── 规则列表 — 按优先级排序 ───
+// ─── 规则列表 ───
 
 const RULES: Rule[] = [
   rulePreference,
@@ -147,10 +184,18 @@ const RULES: Rule[] = [
 
 /**
  * 扫描一段用户消息，返回所有可沉淀的知识候选项。
- * 每条规则独立执行，不冲突去重（同一消息可产生多条知识）。
+ * 防线②: 关键词+白名单过滤在入口层执行
  */
 export function extractCandidates(message: string, sceneTags?: string[]): IngestionCandidate[] {
   if (!message || message.length < 4) return [];
+
+  // 🔴 防线②: 消息级亲密检测（关键词 + 白名单抵消）
+  const check = isIntimateContent(message);
+  if (check.blocked) {
+    logGuard('防线②', check.reason, `来源: conversation, 摘要: ${message.substring(0, 40)}`);
+    return [];
+  }
+
   const candidates: IngestionCandidate[] = [];
   const seen = new Set<string>();
 
@@ -159,7 +204,6 @@ export function extractCandidates(message: string, sceneTags?: string[]): Ingest
       const c = rule(message, sceneTags);
       if (c && !seen.has(c.title)) {
         seen.add(c.title);
-        // 注入场景标签
         if (sceneTags?.length) {
           c.scene_tags = [...new Set([...(c.scene_tags ?? []), ...sceneTags])];
         }
@@ -175,7 +219,7 @@ export function extractCandidates(message: string, sceneTags?: string[]): Ingest
 
 /**
  * 提取并直接存入知识库（由 chat.ts 在对话结束后调用）。
- * 返回本次新入库的条目数。
+ * 防线①: 感知级过滤在函数入口执行
  */
 export async function ingestFromConversation(
   message: string,
@@ -184,11 +228,21 @@ export async function ingestFromConversation(
   perception?: { pleasure: number; arousal: number; intimacy: number },
   dnaId?: string,
 ): Promise<number> {
+  // 🔴 防线①: 感知级过滤 — 从配置读取阈值
+  if (perception) {
+    const p = perception as any;
+    if ((p.intimacy ?? 0) > PT.intimacy ||
+        (p.sexual_attraction ?? 0) > PT.sexualAttraction ||
+        (p.sensory_craving ?? 0) > PT.sensoryCraving) {
+      logGuard('防线①', `感知阈值拦截`, `intimacy=${p.intimacy}, sexual=${p.sexual_attraction}, sensory=${p.sensory_craving}, 摘要: ${message.substring(0, 30)}`);
+      return 0;
+    }
+  }
+
   const candidates = extractCandidates(message, sceneTags);
   let count = 0;
 
   for (const c of candidates) {
-    // 去重: 检查标题是否已存在
     const existing = await knowledgeEngine.search(c.title.substring(0, 15), 1);
     if (existing.length > 0) continue;
 

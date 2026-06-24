@@ -63,6 +63,7 @@ import { TopicTracker } from '../app/knowledge/TopicTracker.js';
 import { researchTopic } from '../app/knowledge/WebResearchService.js';
 import { M6Orchestrator } from '../m6/M6Orchestrator.js';
 import { KnowledgeBase } from '../m2/KnowledgeBase.js';
+import { syncFamilyGraphToKnowledgeBase, verifyFamilyGraphSync } from '../app/knowledge/FamilyGraphSync.js';
 import { M5ClueAssistant } from '../m5/clue/M5ClueAssistant.js';
 import { ClueTracker } from '../m7/ClueTracker.js';
 import { TaskAgentEngine, ToolRegistry, calendarTool, reminderTool, noteTool, createSearchTool, startReminderChecker } from '../app/task-agent/index.js';
@@ -171,6 +172,8 @@ maintenance.injectDeps({
   runKnowledgeGc: () => (knowledgeBase as any)?.deleteExpiredUnclassified?.(90) ?? 0,
   // 砂金库→金库关联：压缩时查 M2
   _sqliteGetter: () => storage?.getSQLite?.() ?? null,
+  // 家族图谱主库（双写人名抢救用，惰性）
+  familyGraph: () => familyGraph,
 });
 
 // ── 管道 ──
@@ -181,6 +184,10 @@ let m3: M3LogicOrchestrator;
 let familyGraph: FamilyGraph;
 let m4: M4Orchestrator;
 let m5: M5Orchestrator;
+
+// 备份统计（统一备份引擎写入，健康检查读取）
+interface BackupStats { lastBackupTime: string | null; backupCount: number; successCount: number; totalAttempts: number; }
+let backupStats: BackupStats = { lastBackupTime: null, backupCount: 0, successCount: 0, totalAttempts: 0 };
 let inductionScheduler: InductionScheduler;
 let consolidationQueue: ConsolidationQueue;
 let m7: M7Orchestrator;
@@ -212,6 +219,14 @@ async function initPipeline(): Promise<void> {
   await familyGraph.initialize();
   m4 = new M4Orchestrator(storage, familyGraph, knowledgeBase);
   await m4.initialize();
+  // 双库统一：将 FamilyGraph 注入 storage 适配层（读取路由用）
+  storage.setFamilyGraph(familyGraph);
+  // 启动时反向边补全
+  try {
+    const { completed } = familyGraph.completeReverseEdges();
+    if (completed > 0) console.log(`  FG 反向边补全: ${completed} 条 ✓`);
+    else console.log('  FG 反向边完整性检查: 通过 ✓');
+  } catch (e) { console.warn('  FG 反向边补全失败:', e); }
   m3 = new M3LogicOrchestrator();
   llmProvider = deepseekAvailable() ? new DeepSeekLLMProvider() : new MockLLMProvider();
   console.log(`  LLM: ${deepseekAvailable() ? 'DeepSeek (API)' : 'MockLLM (无API Key, 模板降级)'} ✓`);
@@ -288,37 +303,120 @@ async function initPipeline(): Promise<void> {
   setTimeout(() => { try { memoryVault?.backup(); } catch {} }, 5 * 60 * 1000);
   console.log('  记忆仓已启动 ✓');
 
-  // 家族图谱每日备份 + 自检（启动后10分钟首次执行）
-  setTimeout(() => {
-    try {
-      const { execSync } = require('child_process');
-      const result = execSync('node scripts/family-graph-backup.cjs 2>&1', { encoding: 'utf8', timeout: 10000 });
-      console.log('[FamilyGraph] 自动备份完成\n' + result.split('\n').slice(-5).join('\n'));
-    } catch (err) {
-      console.warn('[FamilyGraph] 自动备份失败:', err.message);
-    }
-  }, 10 * 60 * 1000);
-  console.log('  家族图谱备份已启动 ✓');
+  // ── 统一备份引擎（三大永久存储：fusion_memory + family_graph + knowledge） ──
+  // 启动后15分钟首次执行，之后每30分钟执行一次
+  const BACKUP_DIR = path.join(PROJECT_ROOT, "data", "backups");
+  if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true });
 
-  // S2-6: 知识库备份（fusion_memory.db）
-  const _kbTimer = 30 * 60 * 1000;
-  setInterval(() => {
-    try {
-      const { copyFileSync, existsSync, mkdirSync } = require("fs");
-      const path = require("path");
-      const backupDir = path.join(PROJECT_ROOT, "data", "backups");
-      if (!existsSync(backupDir)) mkdirSync(backupDir, { recursive: true });
-      const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
-      copyFileSync(
-        path.join(DATA_DIR, "fusion_memory.db"),
-        path.join(backupDir, "knowledge_" + dateStr + ".db")
-      );
-      console.log("[KnowledgeBackup] ✅ 知识库已备份");
-    } catch (err) {
-      console.warn("[KnowledgeBackup] ❌ 备份失败:", err.message);
+  async function runUnifiedBackup(): Promise<void> {
+    const { copyFileSync, statSync, readFileSync, unlinkSync, readdirSync } = await import('node:fs');
+    const initSqlJs = (await import('sql.js')).default;
+    backupStats.totalAttempts++;
+    const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
+    let successCount = 0;
+    const sources: Array<{ src: string; prefix: string }> = [];
+
+    // 主记忆库 + 知识库
+    const fmPath = path.join(DATA_DIR, 'fusion_memory.db');
+    if (existsSync(fmPath)) sources.push({ src: fmPath, prefix: 'knowledge' });
+
+    // 家族图谱
+    const fgPath = path.join(PROJECT_ROOT, 'data', 'knowledge', 'family_graph.db');
+    if (existsSync(fgPath)) sources.push({ src: fgPath, prefix: 'family_graph' });
+
+    for (const { src, prefix } of sources) {
+      const bkPath = path.join(BACKUP_DIR, `${prefix}_${dateStr}.db`);
+      try {
+        copyFileSync(src, bkPath);
+
+        // 完整性校验 ①: 文件大小偏差 < 10%
+        const srcSize = statSync(src).size;
+        const bkSize = statSync(bkPath).size;
+        if (srcSize > 0 && Math.abs(bkSize - srcSize) / srcSize > 0.1) {
+          console.warn(`[Backup] ❌ ${prefix} 文件大小异常: 源=${srcSize}, 备份=${bkSize}`);
+          try { unlinkSync(bkPath); } catch {}
+          continue;
+        }
+
+        // 完整性校验 ②: 可读性校验（查询核心表）
+        const SQL = await initSqlJs();
+        const testDb = new SQL.Database(readFileSync(bkPath));
+        if (prefix === 'family_graph') {
+          const nodes = testDb.exec('SELECT COUNT(*) as cnt FROM nodes');
+          const edges = testDb.exec('SELECT COUNT(*) as cnt FROM edges');
+          const nodeCnt = nodes[0]?.values[0]?.[0] || 0;
+          if (nodeCnt === 0) {
+            console.warn(`[Backup] ❌ ${prefix} 可读性校验失败（nodes 为空）`);
+            try { unlinkSync(bkPath); } catch {}
+            testDb.close();
+            continue;
+          }
+          console.log(`[Backup] ✅ ${prefix} 备份完整: ${nodeCnt} 节点, ${edges[0]?.values[0]?.[0] || 0} 边`);
+        } else {
+          const mems = testDb.exec('SELECT COUNT(*) as cnt FROM memories');
+          testDb.close();
+          console.log(`[Backup] ✅ ${prefix} 备份完成 (${mems[0]?.values[0]?.[0] || 0} memories)`);
+        }
+        testDb.close();
+        successCount++;
+      } catch (err) {
+        console.warn(`[Backup] ❌ ${prefix} 备份失败:`, err);
+        try { unlinkSync(bkPath); } catch {}
+      }
     }
-  }, _kbTimer);
-  console.log('  知识库备份已启动 ✓');
+
+    if (successCount > 0) {
+      backupStats.lastBackupTime = new Date().toISOString();
+      backupStats.backupCount++;
+      backupStats.successCount++;
+    }
+
+    // 留存清理: 保留最近7天每日 + 最近4周每周
+    try {
+      const files = readdirSync(BACKUP_DIR).filter(f => f.endsWith('.db'));
+      // 按前缀分组
+      const groups: Record<string, string[]> = {};
+      for (const f of files) {
+        const prefix = f.split('_')[0] || 'other';
+        if (!groups[prefix]) groups[prefix] = [];
+        groups[prefix].push(f);
+      }
+
+      for (const [prefix, groupFiles] of Object.entries(groups)) {
+        // 按时间排序（最新的在前）
+        groupFiles.sort().reverse();
+        const kept: string[] = [];
+        const today = new Date();
+
+        for (const f of groupFiles) {
+          // 解析文件名中的日期: prefix_YYYYMMDD-HHmm.db
+          const dateMatch = f.match(/(\d{4})-?(\d{2})-?(\d{2})/);
+          if (!dateMatch) { kept.push(f); continue; }
+
+          const fileDate = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]));
+          const daysDiff = Math.floor((today.getTime() - fileDate.getTime()) / 86400000);
+
+          if (daysDiff <= 7) {
+            kept.push(f); // 最近 7 天全留
+          } else if (daysDiff <= 28 && fileDate.getDay() === 1) {
+            kept.push(f); // 最近 4 周的周一备份
+          }
+        }
+
+        // 删除不在保留列表中的文件
+        for (const f of groupFiles) {
+          if (!kept.includes(f)) {
+            try { unlinkSync(path.join(BACKUP_DIR, f)); } catch {}
+          }
+        }
+      }
+    } catch (_) { /* 留存清理不影响主流程 */ }
+  }
+
+  // 启动后15分钟首次执行，之后每30分钟
+  setTimeout(async () => { try { await runUnifiedBackup(); } catch {} }, 15 * 60 * 1000);
+  setInterval(async () => { try { await runUnifiedBackup(); } catch {} }, 30 * 60 * 1000);
+  console.log('  统一备份引擎已启动 ✓ (15min首执行, 30min周期)');
 
 
   workingMemory = new WorkingMemory(storage, 50);
@@ -618,7 +716,19 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         const { KnowledgeMonitor } = await import('../app/knowledge/KnowledgeMonitor.js');
         const engine = (knowledgeBase as any)['engine'] || knowledgeBase;
         const monitor = new KnowledgeMonitor(storage.getSQLite(), engine.vectorStore);
-        const report = monitor.selfCheck();
+        const report = monitor.selfCheck() as any;
+        // 追加备份状态
+        const successRate = backupStats.totalAttempts > 0
+          ? (backupStats.successCount / backupStats.totalAttempts * 100).toFixed(1) + '%'
+          : 'N/A';
+        const backupDirPath = path.join(PROJECT_ROOT, "data", "backups");
+        let backupFiles: string[] = [];
+        try { backupFiles = fs.readdirSync(backupDirPath).filter(f => f.endsWith('.db')); } catch {}
+        report.backup = {
+          lastBackupTime: backupStats.lastBackupTime,
+          backupSuccessRate: successRate,
+          backupCount: backupFiles.length,
+        };
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(report));
       } catch (err) {
@@ -800,13 +910,27 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     // ── 家族图谱自检 ──
     if (req.method === 'GET' && url.pathname === '/api/family/self-check') {
       try {
-        const { execSync } = require('child_process');
-        const result = execSync('node scripts/family-graph-backup.cjs --check 2>&1', { encoding: 'utf8', timeout: 10000 });
+        const fg = m4?.getFamilyGraph();
+        const stats = fg?.getStats();
+        const backupDirPath = path.join(PROJECT_ROOT, "data", "backups");
+        let backupFiles: string[] = [];
+        try { backupFiles = fs.readdirSync(backupDirPath).filter(f => f.startsWith('family_graph')); } catch {}
+        const successRate = backupStats.totalAttempts > 0
+          ? (backupStats.successCount / backupStats.totalAttempts * 100).toFixed(1) + '%'
+          : 'N/A';
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ status: 'ok', report: result }));
+        res.end(JSON.stringify({
+          status: 'ok',
+          fg: stats || { personCount: 0, edgeCount: 0 },
+          backup: {
+            lastBackupTime: backupStats.lastBackupTime,
+            backupSuccessRate: successRate,
+            backupCount: backupFiles.length,
+          },
+        }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ status: 'error', message: err.message }));
+        res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
       }
       return;
     }
@@ -821,6 +945,102 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ status: 'error', message: err.message }));
+      }
+      return;
+    }
+
+    // ── FG 从备份恢复 ──
+    if (req.method === 'POST' && url.pathname === '/api/family/restore') {
+      try {
+        let body = '';
+        req.on('data', (chunk: string) => body += chunk);
+        await new Promise<void>(resolve => req.on('end', resolve));
+        const { backupPath } = JSON.parse(body || '{}');
+        if (!backupPath) {
+          res.writeHead(400); res.end(JSON.stringify({ status: 'error', message: 'backupPath 必填' }));
+          return;
+        }
+        const fg = m4?.getFamilyGraph();
+        if (!fg || typeof fg.restoreFromBackup !== 'function') {
+          res.writeHead(503); res.end(JSON.stringify({ status: 'error', message: 'FG 未就绪' }));
+          return;
+        }
+        const result = await fg.restoreFromBackup(backupPath);
+        res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: result.success ? 'ok' : 'error', ...result }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
+      }
+      return;
+    }
+
+    // ── FG→知识库 人物档案同步 ──
+    if (req.method === 'POST' && url.pathname === '/api/family/sync-knowledge') {
+      try {
+        const fg = m4?.getFamilyGraph();
+        const kb = knowledgeBase;
+        if (!fg || !kb) {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: 'FamilyGraph 或 KnowledgeBase 未就绪' }));
+          return;
+        }
+        const result = await syncFamilyGraphToKnowledgeBase(fg, kb);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', ...result }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
+      }
+      return;
+    }
+
+    // ── FG↔知识库 同步校验 ──
+    if (req.method === 'GET' && url.pathname === '/api/family/verify-sync') {
+      try {
+        const fg = m4?.getFamilyGraph();
+        const kb = knowledgeBase;
+        if (!fg || !kb) {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'error', message: 'FamilyGraph 或 KnowledgeBase 未就绪' }));
+          return;
+        }
+        const result = await verifyFamilyGraphSync(fg, kb);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', ...result }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
+      }
+      return;
+    }
+
+    // ── FG dossier 存量迁移（幂等） ──
+    if (req.method === 'POST' && url.pathname === '/api/family/migrate-dossier') {
+      try {
+        const fg = m4?.getFamilyGraph();
+        if (!fg) { res.writeHead(503); res.end(JSON.stringify({ status: 'error', message: 'FG 未就绪' })); return; }
+        const result = await fg.migrateProfilesToDossier();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', ...result }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
+      }
+      return;
+    }
+
+    // ── FG 获取完整档案 ──
+    if (req.method === 'GET' && url.pathname.startsWith('/api/family/full-profile/')) {
+      try {
+        const personName = decodeURIComponent(url.pathname.substring('/api/family/full-profile/'.length));
+        const fg = m4?.getFamilyGraph();
+        if (!fg) { res.writeHead(503); res.end(JSON.stringify({ status: 'error', message: 'FG 未就绪' })); return; }
+        const dossier = fg.getFullProfile(personName);
+        const profile = fg.getPersonProfile(personName);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ status: 'ok', name: personName, dossier, profile }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ status: 'error', message: (err as Error).message }));
       }
       return;
     }

@@ -104,6 +104,8 @@ export class MaintenanceService {
   private storage: AnyStorage | null = null;
   private runDecay: () => { total: number; archived: number } = () => ({ total: 0, archived: 0 });
   private _sqliteGetter: (() => any | null) | null = null;
+  private familyGraph: any | null = null;
+  private _fgGetter: (() => any) | null = null;
 
   constructor(config?: Partial<MaintenanceConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -125,6 +127,8 @@ export class MaintenanceService {
     runKnowledgeGc?: () => number;
     /** 砂金库→金库关联：压缩时查 M2 是否已存（提供 SQLite queryAll） */
     _sqliteGetter?: () => any | null;
+    /** 家族图谱主库（双写人名抢救用） */
+    familyGraph?: any;
   }): void {
     this.conversationHistory = deps.conversationHistory;
     this.getConversationHistory = deps.getConversationHistory;
@@ -137,6 +141,12 @@ export class MaintenanceService {
     if (deps.runDecay) this.runDecay = deps.runDecay;
     if (deps.runKnowledgeGc) this._runKnowledgeGc = deps.runKnowledgeGc;
     if (deps._sqliteGetter) this._sqliteGetter = deps._sqliteGetter;
+    if (deps.familyGraph) {
+      this.familyGraph = typeof deps.familyGraph === 'function' ? null : deps.familyGraph;
+      if (typeof deps.familyGraph === 'function') {
+        this._fgGetter = deps.familyGraph as () => any;
+      }
+    }
   }
 
   private _runKnowledgeGc: () => number = () => 0;
@@ -166,6 +176,14 @@ export class MaintenanceService {
     setInterval(() => {
       try { const r = this._runKnowledgeGc(); if (r > 0) console.log('[Maintenance] 知识库GC: 清理 ' + r + ' 条过期未分类条目'); }
       catch (e) { console.error('[Maintenance] 知识库GC失败:', e); }
+      // (v1.1) 同步清理 FG 过期 pending 条目（30天TTL）
+      try {
+        const fg = this.familyGraph ?? (this._fgGetter ? this._fgGetter() : null);
+        if (fg && typeof fg.cleanExpiredPendingItems === 'function') {
+          const r = fg.cleanExpiredPendingItems();
+          if (r > 0) console.log('[Maintenance] FG pending清理: ' + r + ' 条');
+        }
+      } catch (e) { console.warn('[Maintenance] FG pending清理失败:', e); }
     }, 24 * 60 * 60 * 1000);
 
     // 记忆衰减定时器（15 分钟）
@@ -309,7 +327,7 @@ export class MaintenanceService {
    */
   private async compressTurnsSmart(turns: ConversationTurn[], sqlite: any | null): Promise<ConversationTurn[]> {
     // ── 人名抢救：压缩前全文本扫描 ──
-    this.rescueNamesBeforeCompression(turns, sqlite);
+    this.rescueNamesBeforeCompression(turns, sqlite, this.familyGraph);
 
     const result: ConversationTurn[] = [];
     const CHUNK_SIZE = 20; // LLM 批量摘要：20轮一组
@@ -360,8 +378,10 @@ export class MaintenanceService {
    * 提取中文人名（姓+名、阿X、小X）并写入 entity_relations 和 knowledge_base，
    * 防止压缩后原始对话丢失导致人名永久遗漏。
    */
-  private rescueNamesBeforeCompression(turns: ConversationTurn[], sqlite: any | null): void {
+  private rescueNamesBeforeCompression(turns: ConversationTurn[], sqlite: any | null, fg?: any | null): void {
     if (!sqlite) return;
+    // 惰性解析：如果传 null 但存在 getter，取一次
+    const familyGraph = fg ?? (this._fgGetter ? this._fgGetter() : null);
     const now = new Date().toISOString();
     const SURNAMES_SET = new Set(
       '赵孙李周吴郑王冯陈褚蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜戚谢邹柏水窦章苏潘葛彭郎鲁韦马苗凤花方俞任袁柳鲍史费廉岑薛雷贺倪汤罗郝邬安乐于时傅卞齐康余元卜顾孟平和穆萧尹邵湛汪祁毛禹狄贝明臧计戴谈宋庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫经房解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴荣翁荀於惠甄家封羿储靳邴糜松段富乌焦巴弓牧谷车侯宓蓬全郗班仰仲伊宫宁仇甘厉戎符刘景詹束龙叶幸司韶黎薄印宿白蒲从鄂索赖卓蔺屠蒙池乔阴苍双闻莘党翟谭劳逄姬申扶冉宰郦雍郤濮牛寿通扈燕郏浦尚农别庄柴阎充慕茹习宦艾鱼容向古易慎戈廖庾衡步耿满弘匡寇广禄阙沃蔚越隆师巩厍聂晁敖融辛阚那简饶曾毋沙乜养鞠须丰巢关蒯相查荆红游竺逯盖桓公'
@@ -426,6 +446,10 @@ export class MaintenanceService {
             'INSERT INTO entity_relations (entity_a_id, entity_b_id, relation, strength, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(entity_a_id, entity_b_id, relation) DO UPDATE SET strength = MIN(5.0, excluded.strength + 0.1), updated_at = excluded.updated_at',
             meRows[0].id, personRows[0].id, '认识的人', 0.3, now
           );
+          // (FG-迁移) 双写 FamilyGraph
+          if (familyGraph) {
+            try { familyGraph.integrateSocialRelation(rawName, 'acquaintance_of', allText).catch(() => {}); } catch {}
+          }
         }
 
         // 知识库不再存人（已废弃，人物统一归家族图谱）
