@@ -139,6 +139,13 @@ export class SQLiteAdapter {
     // P1-1: 黑钻库 emotion_vector 列迁移
     try { this.db.run("ALTER TABLE black_diamond ADD COLUMN emotion_vector TEXT DEFAULT NULL"); } catch { /* 列已存在 */ }
 
+    // 对话组结构字段
+    try { this.db.run("ALTER TABLE memories ADD COLUMN dialog_group_id TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN round_count INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN topic_label TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN anchor_score REAL"); } catch { /* 列已存在 */ }
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_dialog_group ON memories(dialog_group_id)"); } catch { /* 索引已存在 */ }
+
     // S2-6: 知识库印象值 + 最近召回时间
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN last_recalled_at TEXT"); } catch { /* 列已存在 */ }

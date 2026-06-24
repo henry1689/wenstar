@@ -96,6 +96,21 @@ let _lastCandidates: any = null;
 let _currentRole: RoleType = 'secretary';
 let _transitionState: TransitionState = createInitialState();
 
+// 对话组状态（跨轮次持久化）
+interface DialogGroupState {
+  id: string;
+  topic: string;
+  locusPath: string;
+  rounds: Array<{ q: string; a: string; seqPos: number; time: number }>;
+  perceptions: Record<string, number>[];
+  maxCalcium: number;
+  maxCalciumRound: number;
+  entities: string[];
+  startTime: number;
+}
+let _dg: DialogGroupState | null = null;
+let _dgTimer: ReturnType<typeof setTimeout> | null = null;
+
 export interface ChatContext {
 
   encoder: DNAEncoder;
@@ -1595,6 +1610,51 @@ let finalKnowledgeText = knowledgeBaseText;
 
     // 持久化对话历史（故障重启后自动恢复，带时间戳）
 
+    // (P0) 对话组管理
+    {
+      const _locusPath = dna.locus_path || 'general';
+      const _locusChanged = _dg && _locusPath !== _dg.locusPath &&
+        _locusPath.split('.')[1] !== _dg.locusPath?.split('.')[1];
+
+      const _shouldCloseGroup = _dg && (
+        _locusChanged || isTopicShift ||
+        _dg.rounds.length >= 10 ||
+        (Date.now() - _dg.startTime) > 30 * 60 * 1000
+      );
+
+      if (_shouldCloseGroup) {
+        const _old = _dg;
+        _dg = null;
+        flushDialogGroup(ctx, _old, dna, decision, message, reply).catch(() => {});
+      }
+
+      if (!_dg) {
+        _dg = {
+          id: (dna as any).dna_root_id + '_DG_' + String(seqPos).padStart(3, '0'),
+          topic: _locusPath,
+          locusPath: _locusPath,
+          rounds: [],
+          perceptions: [],
+          maxCalcium: 0,
+          maxCalciumRound: 0,
+          entities: [],
+          startTime: Date.now(),
+        };
+      }
+
+      _dg.rounds.push({ q: message, a: reply, seqPos, time: Date.now() });
+      _dg.perceptions.push({ ...p });
+      if (decision.enhanced.calcium_score > _dg.maxCalcium) {
+        _dg.maxCalcium = decision.enhanced.calcium_score;
+        _dg.maxCalciumRound = _dg.rounds.length - 1;
+      }
+      for (const g of dna.entity_genes) {
+        if (g.name && g.name !== '我' && !_dg.entities.includes(g.name)) {
+          _dg.entities.push(g.name);
+        }
+      }
+    }
+
     const nowTs = new Date().toISOString();
 
     
@@ -2136,6 +2196,73 @@ let finalKnowledgeText = knowledgeBaseText;
 
 }
 
+
+// 对话组：闭组写入金库
+async function flushDialogGroup(ctx: ChatContext, dg: DialogGroupState, dna: any, decision: any, message: string, reply: string): Promise<void> {
+  try {
+    const sql = ctx.storage.getSQLite();
+    if (!sql || typeof sql.writeRaw !== 'function') return;
+
+    const combined = dg.rounds.map((r, i) =>
+      `【第${i + 1}轮】
+用户: ${r.q}
+玉瑶: ${r.a}`
+    ).join('\n\n');
+    const peakP = dg.perceptions[dg.maxCalciumRound] || dg.perceptions[0] || {};
+    const pVec = JSON.stringify([
+      peakP.pleasure || 0, peakP.arousal || 0, peakP.dominance || 0, peakP.aggression || 0,
+      peakP.sincerity || 0, peakP.humor || 0, peakP.factual || 0, peakP.logical || 0,
+      peakP.certainty || 0, peakP.abstract || 0, peakP.temporal_focus || 0, peakP.self_ref || 0,
+      peakP.intimacy || 0, peakP.power_diff || 0, peakP.dependency || 0, peakP.moral_judgment || 0,
+      peakP.etiquette || 0, peakP.belonging || 0, peakP.sexual_attraction || 0, peakP.sensory_craving || 0,
+      peakP.energy_merge || 0, peakP.possessiveness || 0, peakP.ecstasy || 0, peakP.safety || 0.5,
+    ]);
+    const now = new Date().toISOString();
+
+    // 分块写入（每轮一块）
+    for (let i = 0; i < dg.rounds.length; i++) {
+      const r = dg.rounds[i];
+      const chunkText = `【第${i + 1}轮】
+用户: ${r.q}
+玉瑶: ${r.a}`;
+      const chunkId = `${dg.id}_CHUNK_${String(i).padStart(3, '0')}`;
+      sql.writeRaw(
+        `INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion, dialog_group_id, round_count, topic_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        chunkId, -dg.rounds.length - i, now, pVec, dg.maxCalcium,
+        Math.min(Math.floor(dg.maxCalcium * 2), 3), dg.locusPath || 'general',
+        'language_semantic_zone', chunkText, 0.5 + dg.maxCalcium * 0.3, now,
+        decision.primary_emotion || '对话', dg.id, dg.rounds.length, dg.topic
+      );
+    }
+
+    // 黑钻晋升
+    if (dg.maxCalcium >= 4.5) {
+      const bdId = `${dg.id}_BD`;
+      sql.writeRaw(
+        `INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, emotion_vector, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        bdId, combined.substring(0, 200), decision.primary_emotion || '对话', pVec,
+        now, now
+      );
+      console.log('[DG] 黑钻晋升: ' + bdId);
+    }
+
+    // 图谱新增实体检测
+    if (ctx.m4 && dg.entities.length > 0) {
+      try {
+        const fg = ctx.m4.getFamilyGraph();
+        if (fg) {
+          for (const name of dg.entities) {
+            fg.integrateSocialRelation(name, 'acquaintance_of', '').catch(() => {});
+          }
+        }
+      } catch {}
+    }
+
+    console.log('[DG] 闭组: ' + dg.id + ' (' + dg.rounds.length + '轮, topic=' + dg.topic + ')');
+  } catch (err) {
+    console.warn('[DG] 写入失败:', err);
+  }
+}
 export function deriveM5Strategy(decision: M3Decision): {
 
   strategy_id: string; tone: string; depth: string; max_length: number; description: string;
