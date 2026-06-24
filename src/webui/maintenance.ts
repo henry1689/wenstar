@@ -298,10 +298,10 @@ export class MaintenanceService {
             }
           }
           const cutoff = remaining.length > 0 ? remaining[0].timestamp : null;
-          // 安全保护：没有timestamp时不清理（防止误删全库）
+          // 🔴 铁律：砂金库永久留存原始对话，仅做压缩标记，不物理删除
           if (cutoff) {
-            sqlite.writeRaw('DELETE FROM conversations WHERE timestamp < ? AND is_summary = 0', [cutoff]);
-            console.log('[Maintenance] 清理 < ' + cutoff);
+            sqlite.writeRaw('UPDATE conversations SET is_compacted = 1 WHERE timestamp < ? AND is_compacted = 0', [cutoff]);
+            console.log('[Maintenance] 标记压缩完成: < ' + cutoff + ' (原始数据永久保留)');
           }
         }
       } catch (e) {

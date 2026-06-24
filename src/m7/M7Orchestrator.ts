@@ -166,12 +166,12 @@ export class M7Orchestrator {
         if (groups[label].samples.length < 3) groups[label].samples.push((mem.raw_input || '').substring(0, 60));
       }
 
-      // 保存到黑钻
+      // 写入 dream_logs（替代原写入黑钻，避免系统摘要混入永久回忆）
       for (const [emotion, data] of Object.entries(groups)) {
         const now = new Date().toISOString();
         const summary = '【梦境】高情绪_' + emotion + ': ' + data.count + '次 · ' + data.samples.join(' | ');
         sqlite.writeRaw(
-          'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, tags, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT OR IGNORE INTO dream_logs (id, summary, emotion_tag, source, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)',
           'dh_' + crypto.createHash('md5').update(summary).digest('hex').substring(0, 12),
           summary, emotion, 'dream_high_emotion', 2,
           JSON.stringify(['dream_high_emotion', emotion, '梦境自动沉淀']),
@@ -278,7 +278,7 @@ export class M7Orchestrator {
       if (positiveCount + negativeCount > 0) {
         const now = new Date().toISOString();
         sqlite.writeRaw(
-          'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, source_id, calcium_level, tags, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT OR IGNORE INTO dream_logs (id, summary, emotion_tag, source, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)',
           'de_' + crypto.createHash('md5').update('【梦境自我优化】正向反馈' + positiveCount + '次, 负向' + negativeCount + '次').digest('hex').substring(0, 12),
           '【梦境自我优化】正向反馈' + positiveCount + '次, 负向' + negativeCount + '次',
           '中性', 'dream_evolution', 1,

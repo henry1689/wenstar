@@ -151,6 +151,11 @@ export class SQLiteAdapter {
       this.db.run("CREATE INDEX IF NOT EXISTS idx_person_aliases_alias ON person_aliases(alias)");
     } catch (e) { console.warn('[SQLite] person_aliases 表创建失败:', e); }
  } catch { /* 索引已存在 */ }
+    // M7 梦境日志独立表（替代写入黑钻，避免摘要混入永久回忆）
+    try {
+      this.db.run("CREATE TABLE IF NOT EXISTS dream_logs (id TEXT PRIMARY KEY, summary TEXT, emotion_tag TEXT, source TEXT, tags TEXT, created_at TEXT NOT NULL)")
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_dream_logs_created ON dream_logs(created_at)")
+    } catch (e) { console.warn("[SQLite] dream_logs 表创建失败:", e); }
 
     // S2-6: 知识库印象值 + 最近召回时间
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }

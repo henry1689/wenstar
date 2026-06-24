@@ -114,7 +114,7 @@ export class WorkingMemory {
       createdAt: Date.now(),
     };
 
-    // P4(简化): 毕业即写入 — 符合条件的直接进金库，不入buffer
+    // 毕业即写入 — 符合条件的直接进金库
     const tier = this.shouldGraduate(entry);
     if (tier === 'full') {
       entry.dna.seq_pos = entry.seqPos;
@@ -122,10 +122,6 @@ export class WorkingMemory {
         console.log('[WM] 即时毕业');
       }).catch((err) => {
         console.warn('[WM] 即时毕业失败，入buffer:', err);
-      });
-    } else if (tier === 'light') {
-      this.writeLightEntry(entry).catch((e) => {
-        console.warn('[WM] 轻量失败，入buffer:', e);
         this.buffer.push(entry);
       });
     } else {
@@ -144,13 +140,13 @@ export class WorkingMemory {
   // 合格(钙质≥1+实体)→进金库；不合格→丢弃
 
   /** 毕业策略
-   *  full: 钙质≥1+有实体 → 完整24D写入金库
-   *  light: 有实体 → 轻量写入（只要有内容就记住，不论钙质高低）
-   *  false: 无实体 → 留在砂金库 */
-  private shouldGraduate(entry: WorkingEntry): 'full' | 'light' | false {
+   *  full: 钙质≥0.3+有实体 → 完整24D写入金库
+   *  false: 无实体 → 留在砂金库等闭组
+   *  (light 已移除：所有记忆统一走 storage.write()，由 flushDialogGroup 管理归组) */
+  private shouldGraduate(entry: WorkingEntry): 'full' | false {
     if (!entry.hasMeaningfulEntity) return false;
-    if (entry.calciumLevel >= 1) return 'full';
-    return 'light'; // 只要有实体就轻量记录
+    if (entry.calciumLevel >= 0.3) return 'full';
+    return false; // 一律走砂金库，等闭组写入金库
   }
 
   async consolidate(): Promise<WriteResult[]> {
@@ -162,9 +158,6 @@ export class WorkingMemory {
       if (tier === 'full') {
         const result = await this.writeEntry(entry);
         results.push(result);
-      } else if (tier === 'light') {
-        const result = await this.writeLightEntry(entry);
-        if (result) results.push(result);
       }
     }
     this.buffer = [];
@@ -172,70 +165,6 @@ export class WorkingMemory {
       console.log("[WM] 巩固: " + results.length + " 条进入金库");
     }
     return results;
-  }
-  /** P0-3: 轻量毕业 — 写完整24D向量 + scene_tags + entity_ids */
-  private async writeLightEntry(entry: WorkingEntry): Promise<WriteResult | null> {
-    try {
-      const sqlite = typeof (this.storage as any).getSQLite === 'function' ? (this.storage as any).getSQLite() : null;
-      if (!sqlite) return null;
-      const now = new Date().toISOString();
-      const entities = entry.dna.entity_genes;
-      const entityNames = entities.filter((g: any) => g.type !== 'self').map((g: any) => g.name);
-      const sceneTags = [...(entry.dna.scene_tags || [])];
-      // R6: 追加角色标签（用于记忆定向过滤）
-      if (WorkingMemory.currentTag && !sceneTags.includes(WorkingMemory.currentTag)) {
-        sceneTags.push(WorkingMemory.currentTag);
-      }
-      // P0-3: 使用真实 perception 向量，全零数组兜底
-      const p = entry.perception;
-      const percepVec = p ? JSON.stringify([
-        p.pleasure, p.arousal, p.dominance, p.aggression, p.sincerity, p.humor,
-        p.factual, p.logical, p.certainty, p.abstract, p.temporal_focus, p.self_ref,
-        p.intimacy, p.power_diff, p.dependency, p.moral_judgment, p.etiquette, p.belonging,
-        p.sexual_attraction, p.sensory_craving, p.energy_merge, p.possessiveness, p.ecstasy, p.safety,
-      ]) : JSON.stringify(Array(24).fill(0.01));
-      // P0-3: 自动语义切片
-      const sentences = (entry.dna.raw_input || '').split(/[，,。.！!？?；;\n]/).filter((s: string) => s.trim().length > 2);
-      const narrativeTag = sceneTags.length ? sceneTags[0] : '';
-      if (sentences.length <= 1) {
-        sqlite.writeRaw(
-          'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion, narrative_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          'light_' + entry.dna.branch_id, entry.seqPos, now,
-          percepVec, entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
-          entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
-          entry.dna.raw_input, 0.3, now, entry.primaryEmotion || '中性', narrativeTag
-        );
-      } else {
-        for (let si = 0; si < sentences.length; si++) {
-          sqlite.writeRaw(
-            'INSERT OR IGNORE INTO memories (id, seq_pos, created_at, perception_json, calcium_score, calcium_level, locus_path, leaf_zone, raw_input, effective_strength, strength_updated_at, primary_emotion, narrative_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            'light_' + entry.dna.branch_id + '_s' + si, entry.seqPos + si, now,
-            percepVec, entry.calciumScore, Math.max(0, Math.min(3, Math.floor(entry.calciumScore * 2))),
-            entry.dna.locus_path || 'user.misc.light', 'language_semantic_zone',
-            sentences[si].trim(), 0.3, now, entry.primaryEmotion || '中性', narrativeTag
-          );
-        }
-      }
-      // 实体关联写入 memory_entities
-      for (const en of entityNames) {
-        try {
-          const eid = sqlite.queryAll('SELECT id FROM entities WHERE name = ? LIMIT 1', [en]);
-          if (eid.length > 0) {
-            sqlite.writeRaw('INSERT OR IGNORE INTO memory_entities (memory_id, entity_id) VALUES (?, ?)',
-              'light_' + entry.dna.branch_id, eid[0].id);
-          }
-        } catch {}
-      }
-      sqlite.insertConversation('user', entry.dna.raw_input, {
-        seqPos: entry.seqPos, entityNames,
-        calciumScore: entry.calciumScore,
-      });
-      console.log('[WM] 轻量毕业: ' + entry.dna.raw_input.substring(0, 30));
-      return { success: true, real_ref: 'light_' + entry.seqPos, seq_pos: entry.seqPos };
-    } catch (err) {
-      console.warn('[WM] 轻量写入失败:', err);
-      return null;
-    }
   }
 
   /** 写入一条记录到 M2，使用预分配的 seqPos */

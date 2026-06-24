@@ -324,6 +324,10 @@ async function initPipeline(): Promise<void> {
     const fgPath = path.join(PROJECT_ROOT, 'data', 'knowledge', 'family_graph.db');
     if (existsSync(fgPath)) sources.push({ src: fgPath, prefix: 'family_graph' });
 
+    // MemoryVault 独立仓
+    const vaultPath = path.join(PROJECT_ROOT, 'data', 'memory-vault', 'vault.db');
+    if (existsSync(vaultPath)) sources.push({ src: vaultPath, prefix: 'vault' });
+
     for (const { src, prefix } of sources) {
       const bkPath = path.join(BACKUP_DIR, `${prefix}_${dateStr}.db`);
       try {
@@ -1373,69 +1377,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
-    // ── 新增黑钻条目 ──
-    if (req.method === 'POST' && url.pathname === '/api/vault/diamond') {
-      const { addBlackDiamond } = await import('../app/vault/VaultManager.js');
-      const body = JSON.parse(await readBody(req));
-      const entry = addBlackDiamond(storage.getSQLite(), {
-        summary: body.summary,
-        emotion_tag: body.emotion_tag,
-        source_id: body.source_id,
-        calcium_level: body.calcium_level,
-        tags: body.tags,
-        notes: body.notes,
-      });
-      res.writeHead(200); res.end(JSON.stringify({ status: 'ok', entry }));
-      return;
-    }
-
-    // ── 更新黑钻条目 ──
-    if (req.method === 'PUT' && url.pathname.startsWith('/api/vault/diamond/')) {
-      const { updateBlackDiamond } = await import('../app/vault/VaultManager.js');
-      const id = url.pathname.split('/').pop()!;
-      const body = JSON.parse(await readBody(req));
-      const ok = updateBlackDiamond(storage.getSQLite(), id, body);
-      res.writeHead(ok ? 200 : 404);
-      res.end(JSON.stringify({ status: ok ? 'ok' : 'not_found' }));
-      return;
-    }
-
-    // ── 删除黑钻条目 ──
-    if (req.method === 'DELETE' && url.pathname.startsWith('/api/vault/diamond/')) {
-      const { deleteBlackDiamond } = await import('../app/vault/VaultManager.js');
-      const id = url.pathname.split('/').pop()!;
-      const ok = deleteBlackDiamond(storage.getSQLite(), id);
-      res.writeHead(ok ? 200 : 404);
-      res.end(JSON.stringify({ status: ok ? 'ok' : 'not_found' }));
-      return;
-    }
-
-    // ── 从金库→黑钻库提炼 ──
-    if (req.method === 'POST' && url.pathname === '/api/vault/promote') {
-      const { promoteToBlackDiamond } = await import('../app/vault/VaultManager.js');
-      const body = JSON.parse(await readBody(req));
-      const entry = promoteToBlackDiamond(storage.getSQLite(), body.memory_id);
-      if (entry) {
-        res.writeHead(200); res.end(JSON.stringify({ status: 'ok', entry }));
-      } else {
-        res.writeHead(404); res.end(JSON.stringify({ status: 'not_found' }));
-      }
-      return;
-    }
-
-    // ── 自动提炼（批量扫描金库） ──
-    // P2: 黑钻批量删除
-    if (req.method === 'POST' && url.pathname === '/api/vault/diamond/batch-delete') {
-      try {
-        const { batchDeleteDiamonds } = await import('../app/vault/VaultManager.js');
-        const body = JSON.parse(await readBody(req));
-        const result = batchDeleteDiamonds(storage.getSQLite(), body.ids || []);
-        res.writeHead(200); res.end(JSON.stringify(result));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
-      return;
-    }
-
-    // P2: 黑钻导出
+    // ── 黑钻导出（只读，可导出） ──
     if (req.method === 'GET' && url.pathname === '/api/vault/diamond/export') {
       const { exportDiamonds } = await import('../app/vault/VaultManager.js');
       const format = url.searchParams.get('format') || 'json';

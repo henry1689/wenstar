@@ -78,45 +78,8 @@ export async function executePostProcess(input: PostProcessInput): Promise<void>
     console.warn('[PostProcess] 主题追踪失败:', err);
   }
 
-  // ⑤ 高钙记忆晋升（异步）
-  if (_cl >= 1 && _rid) {
-    try {
-      const _sqlite = ctx.storage.getSQLite();
-      if (_sqlite && typeof _sqlite.writeRaw === 'function') {
-        const _texts = [message, reply].filter(Boolean).join('。')
-          .split(/[。！？!?]/g).map((s: string) => s.trim()).filter((s: string) => s.length >= 20);
-        if (_texts.length === 0) _texts.push((message + ' ' + reply).substring(0, 200));
-        const _pVec = JSON.stringify([
-          p.pleasure, p.arousal, p.dominance, p.aggression, p.sincerity, p.humor,
-          p.factual, p.logical, p.certainty, p.abstract, p.temporal_focus, p.self_ref,
-          p.intimacy, p.power_diff, p.dependency, p.moral_judgment, p.etiquette, p.belonging,
-          p.sexual_attraction, p.sensory_craving, p.energy_merge, p.possessiveness, p.ecstasy, p.safety,
-        ]);
-
-        for (let i = 0; i < Math.min(_texts.length, 3); i++) {
-          const { DNAEncoder } = await import('../../m1/DNAEncoder.js');
-          const _cr = DNAEncoder.generateSubId(_rid, 'MEM', i + 1);
-          _sqlite.writeRaw(
-            'INSERT OR IGNORE INTO memories (id, raw_input, entity_genes, created_at, calcium_score, emotion_vector, dna_root_id) VALUES (?,?,?,?,?,?,?)',
-            _cr, _texts[i], JSON.stringify(dna.entity_genes || []), new Date().toISOString(), _cs, _pVec, _rid,
-          );
-        }
-
-        // 金库→黑钻（钙化≥4.5）
-        if (_cs >= 4.5) {
-          const _bId = (await import('../../m1/DNAEncoder.js')).DNAEncoder.generateSubId(_rid, 'BD', 1);
-          _sqlite.writeRaw(
-            'INSERT OR IGNORE INTO black_diamond (id, summary, emotion_tag, tags, emotion_vector, dna_root_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-            _bId, message.substring(0, 200), decision.primary_emotion || '强烈',
-            JSON.stringify((dna.entity_genes || []).map((g: any) => g.name)),
-            _pVec, _rid, new Date().toISOString(), new Date().toISOString(),
-          );
-        }
-      }
-    } catch (err) {
-      console.warn('[PostProcess] 晋升失败:', err);
-    }
-  }
+  // ⑤ 高钙记忆晋升 — 已由 chat.ts 双轨晋升（行2064）和 flushDialogGroup（行2247）处理
+  // 此处不再重复写入 memories 或 black_diamond
 
   // ⑥ M6 反馈信号
   try {
