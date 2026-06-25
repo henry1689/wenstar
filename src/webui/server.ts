@@ -132,9 +132,9 @@ let conversationHistory: ConversationTurn[] = [];
 const MAX_SAVED_TURNS = 500;
 function loadConversationHistory(): void {
   try {
-    if (storage && storage.getSQLite) {
-      // 只加载最近 20 轮（防止旧会话历史污染新会话上下文）
-      const recent = storage.getSQLite().getRecentConversations(20);
+    if (conversationDB) {
+      // 从独立对话存储库加载最近对话
+      const recent = conversationDB.getRecentConversations(30);
       conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
     }
     console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
@@ -219,6 +219,10 @@ async function initPipeline(): Promise<void> {
   await familyGraph.initialize();
   m4 = new M4Orchestrator(storage, familyGraph, knowledgeBase);
   await m4.initialize();
+  // 初始化对话独立存储库（砂金库实时落盘用）
+  conversationDB = new (await import('../m2/ConversationDB.js')).ConversationDB();
+  await conversationDB.initialize();
+  console.log('  对话存储库已启动 ✓');
   // 双库统一：将 FamilyGraph 注入 storage 适配层（读取路由用）
   storage.setFamilyGraph(familyGraph);
   // 启动时反向边补全
