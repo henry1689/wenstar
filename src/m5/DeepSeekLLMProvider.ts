@@ -201,6 +201,8 @@ export class DeepSeekLLMProvider implements LLMProvider {
     const rawInput = params.userMessage ?? params.cognition.current.raw_input ?? '';
     const history = params.conversationHistory ?? [];
     const kb = params.knowledgeBase ?? '';
+    // 从策略中提取 max_length 约束（M5 策略选择器设定）
+    const _strategyMaxLen = params.strategy?.params?.max_length ?? 0;
 
     // R4: 角色路由
     try {
@@ -289,8 +291,10 @@ export class DeepSeekLLMProvider implements LLMProvider {
       : new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
         const _role = params.role || DeepSeekLLMProvider._currentRole;
-    const _replyInstruction = '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：如果他在谈工作→秘书语气；分享感受→当前等级语气；描述人物→以档案为准不编造。\n\n【🔴 重要】用户可能一次问多个问题（如先问时间再问别的事），你必须完整回答所有问题，不能只回答第一个。\n\n【🔴 防误判】用户说的深/浅/大/小/长/短/硬/软等词不一定有性含义，除非上下文明显是亲密场景(intimacy>=0.3)，否则按字面意思理解。不要让恋人角色误导你对普通词汇的解读。';
-    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_role, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}
+    // M5简短模式强制切秘书(压制恋人)
+    const _effectiveRole = (_strategyMaxLen > 0 && _strategyMaxLen <= 30) ? 'secretary' : _role;
+    const _replyInstruction = '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：如果他在谈工作→秘书语气；分享感受→当前等级语气；描述人物→以档案为准不编造。\n\n【🔴 重要】用户可能一次问多个问题（如先问时间再问别的事），你必须完整回答所有问题，不能只回答第一个。\n\n【🔴 防误判】用户说的深/浅/大/小/长/短/硬/软等词不一定有性含义，除非上下文明显是亲密场景(intimacy>=0.3)，否则按字面意思理解。不要让恋人角色误导你对普通词汇的解读。\n\n【🔴 不理解就反问】用户问的话如果没听懂、没理解、或不确定指的什么，就像正常人一样反问确认："哪个？""什么？""你说的哪个？"不要编造、不要默认用户的意思。';
+    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_effectiveRole, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}
 
 【🚫 绝对禁止内心独白】直接以"我/玉瑶"的口吻回答鸿艺。不要说"让我想想/我心里想/我想到/我记得/我感觉/我脑子里"这类思维过程。不要描述自己的情绪状态。直接说话，像面对面聊天一样自然。`;
 
