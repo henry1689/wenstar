@@ -6,7 +6,7 @@
  *
  * 环境变量:
  *   DEEPSEEK_API_KEY — 你的 DeepSeek API Key
- *   DEEPSEEK_MODEL — 模型名，默认 deepseek-chat
+ *   DEEPSEEK_MODEL — 模型名，默认 deepseek-v4-flash
  */
 import type { LLMProvider, StrategyConfig, CognitionObject, ConversationTurn } from './types/index.js';
 import { buildSystemPrompt, STYLE_ANCHORS } from './persona/lover-persona.js';
@@ -27,7 +27,7 @@ if (!API_KEY) {
   console.warn('[DeepSeekLLMProvider] 警告: 未设置 DEEPSEEK_API_KEY 环境变量，将使用降级回复');
 }
 
-const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat';
+const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-v4-flash';
 const BASE_URL = 'https://api.deepseek.com/v1';
 const MAX_HISTORY_TURNS = 200;
 // FIX-3: 工作消息时缩减历史（防止亲密历史污染工作上下文）
@@ -50,7 +50,7 @@ interface DeepSeekMessage {
 
 interface DeepSeekResponse {
   choices: Array<{
-    message: { content: string };
+    message: { content: string; reasoning_content?: string };
     finish_reason: string;
   }>;
   usage?: { prompt_tokens: number; completion_tokens: number };
@@ -142,8 +142,27 @@ export class DeepSeekLLMProvider implements LLMProvider {
         }
 
         const data = (await response.json()) as DeepSeekResponse;
-        const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+        const msg = data.choices?.[0]?.message;
+        // DeepSeek V4-flash 是思维链模型，content 始终为空，回复在 reasoning_content 中
+        // 需要清理 reasoning 前缀，只保留真正回复
+        let text = '';
+        if (msg?.content && msg.content.trim()) {
+          text = msg.content.trim();
+        } else if (msg?.reasoning_content) {
+          text = msg.reasoning_content.trim();
+        }
         if (!text) throw new Error('Empty response from DeepSeek');
+        // 后处理：剥离思维链前缀
+        // DeepSeek V4-flash 的 reasoning_content 格式通常是：
+        //   "思考句1。思考句2……\n\n回答句1。回答句2。"
+        // 思维部分通常在第一个双换行之前，或只包含1个短段落
+        // 策略：如果开头有1-3句内心独白（含特定关键词），则去掉
+        const THINKING_KEYWORDS = /让[我你]想|让我回|记得|心里|想到|脑中|好好回|在意|吃醋|心酸/;
+        // 去掉开头第一个段落（以双换行结束），如果它包含思维关键词
+        const firstPara = text.match(/^(.+?)(\n\n|$)/);
+        if (firstPara && THINKING_KEYWORDS.test(firstPara[1])) {
+          text = text.substring(firstPara[1].length + (firstPara[2]?.length || 0)).trimStart();
+        }
 
         return {
           text,
@@ -271,7 +290,9 @@ export class DeepSeekLLMProvider implements LLMProvider {
 
         const _role = params.role || DeepSeekLLMProvider._currentRole;
     const _replyInstruction = '\n\n【⚠️ 回复指令】请回复鸿艺的消息。根据话题选择语气：如果他在谈工作→秘书语气；分享感受→当前等级语气；描述人物→以档案为准不编造';
-    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_role, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}`;
+    const systemPrompt = `当前系统时间（北京时间）: ${timeStr}\n\n${buildRoleSystemPrompt(_role, level as -2|-1|0|1|2, params.knowledgeBase)}${_replyInstruction}
+
+【🚫 绝对禁止内心独白】直接以"我/玉瑶"的口吻回答鸿艺。不要说"让我想想/我心里想/我想到/我记得/我感觉/我脑子里"这类思维过程。不要描述自己的情绪状态。直接说话，像面对面聊天一样自然。`;
 
     // 构建上下文提示词
     const dimContext = [

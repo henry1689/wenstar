@@ -96,25 +96,11 @@ export class M5Orchestrator {
       final = draft || '';
     }
 
-    // P1-3: 长耗时自动插入过渡话术
+    // P1-3: 长耗时自动插入过渡话术（已禁用 — 导致回复不自然的内心独白前缀）
+    // 原逻辑：当 LLM 生成耗时 >500ms 时，在回复前插入"让我想想……"类过渡话术
+    // 问题：过渡话术与 LLM 真实回复拼接后，呈现"内心独白"风格，让用户感觉玉瑶在自言自语
+    // 修复：直接使用 LLM 原始回复，不做前缀拼接
     const _elapsed = Date.now() - _startTime;
-    // 亲密场景不插入过渡话术（破坏氛围）
-    const _isIntimateCtx = cognition.current.perception_snapshot.intimacy > 0.3
-      || cognition.current.perception_snapshot.sexual_attraction > 0.2
-      || /高潮|操|干|插|顶|射|丢|舔|吸|咬|揉|捏|屌|阴道|屄|鸡巴|肉棒|湿了|硬了|想要|好想要|要你|进去|死了/.test(userMessage || '');
-    if (_elapsed > 500 && final && final.length > 2 && !_isIntimateCtx) {
-      const _bufCtx: BufferContext = {
-        mode: (cognition.current.emotion_summary?.includes('知识') || final.length > 300) ? 'knowledge_query'
-          : cognition.current.action?.some((a: string) => a === 'comfort') ? 'vague_recall'
-          : 'memory_recall',
-        elapsedMs: _elapsed,
-      };
-      const _buffer = getBufferPhrase(_bufCtx);
-      if (_buffer) {
-        final = _buffer + '\n\n' + final;
-        console.log('[M5Buffer] 过渡话术(' + _elapsed + 'ms): ' + _buffer.substring(0, 20));
-      }
-    }
 
     // Step 5: 更新场景记忆（供下一轮使用）
     try {

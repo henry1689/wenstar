@@ -1453,15 +1453,7 @@ let finalKnowledgeText = knowledgeBaseText;
 	if (intimacyFilter) {
 	  finalKnowledgeText = intimacyFilter + '\n\n' + (finalKnowledgeText || '');
 	}
-        if (memoryGate.fillerPhrase && (memoryGate.mode === 'memory_recall' || memoryGate.mode === 'vague_recall' || memoryGate.mode === 'knowledge_query')) {
-
-          const innerThought = '【内心独白】' + memoryGate.fillerPhrase.replace(/[。！？]/g, '…') + '…';
-
-          finalKnowledgeText = innerThought + (knowledgeBaseText ? '\n\n' + knowledgeBaseText : '');
-
-          memoryGateFillerUsed = true;
-
-        }
+        // 已禁用：过渡话术导致回复呈现内心独白风格
 
         // P4: LLM 辅助知识路由 — 知识查询模式时补充检索
         if (memoryGate.mode === 'knowledge_query' && ctx.llmProvider && message.length > 3) {
