@@ -131,15 +131,52 @@ interface PersonDossier {
     careerHistory?: string;
     notableEvents?: string[];
   };
-  /** 模块④ 形象特质 */
+  /** 模块④ 形象特质 — 含女性详细体征描述 */
   imageTraits: {
-    looks?: string;        // 外貌长相
-    bodyFeatures?: string;  // 身材特征
+    looks?: string;        // 外貌长相（脸型、五官、皮肤等）
+    bodyFeatures?: string;  // 身材特征（身高、体型、曲线等）
     style?: string;         // 穿着风格
     voice?: string;         // 声音特征
-    distinguishingMarks?: string;  // 辨识特征
+    distinguishingMarks?: string;  // 辨识特征（痣、纹身、疤痕等）
     /** 香水/气味标签 */
     scent?: string;
+    /** 🧬 女性详细体征（非家人女性专用 — 详细到像活生生站在眼前） */
+    feminineDetails?: {
+      /** 整体印象 — 看到她的第一感觉、气质类型 */
+      firstImpression?: string;
+      /** 身高体型 */
+      stature?: string;
+      /** 三围/身材数据（胸围/腰围/臀围/腿长等描述） */
+      measurements?: string;
+      /** 胸部特征（大小/形状/手感/乳晕等） */
+      breasts?: string;
+      /** 臀部特征（大小/形状/手感/弹性） */
+      buttocks?: string;
+      /** 腰/腹部特征 */
+      waist?: string;
+      /** 腿部特征 */
+      legs?: string;
+      /** 皮肤（颜色/质感/光滑度/温度） */
+      skin?: string;
+      /** 手部特征 */
+      hands?: string;
+      /** 唇部特征 */
+      lips?: string;
+      /** 眼神/眼睛特征 */
+      eyes?: string;
+      /** 秀发特征 */
+      hair?: string;
+      /** 性感度/魅惑力描述 */
+      allure?: string;
+      /** 私密体味/体香 */
+      bodyScent?: string;
+      /** 触感描述（皮肤手感、身体温度等） */
+      touch?: string;
+      /** 亲密时的反应特征 */
+      intimateReaction?: string;
+      /** 特殊记忆点（最让人怀念的独特之处） */
+      memorableTraits?: string;
+    };
   };
   /** 模块⑤ 性格偏好 */
   personalityPrefs: {
@@ -1255,6 +1292,15 @@ export class FamilyGraph implements FamilyGraphInterface {
       if (d.imageTraits?.looks) score += 0.04;
       if (d.imageTraits?.voice) score += 0.02;
       if (d.imageTraits?.distinguishingMarks) score += 0.02;
+      if (d.imageTraits?.scent) score += 0.02;
+      // 女性详细体征评分
+      if (d.imageTraits?.feminineDetails?.firstImpression) score += 0.02;
+      if (d.imageTraits?.feminineDetails?.stature || d.imageTraits?.feminineDetails?.measurements) score += 0.03;
+      if (d.imageTraits?.feminineDetails?.breasts) score += 0.03;
+      if (d.imageTraits?.feminineDetails?.skin) score += 0.02;
+      if (d.imageTraits?.feminineDetails?.allure) score += 0.02;
+      if (d.imageTraits?.feminineDetails?.bodyScent) score += 0.02;
+      if (d.imageTraits?.feminineDetails?.intimateReaction || d.imageTraits?.feminineDetails?.memorableTraits) score += 0.03;
       if (d.personalityPrefs?.habits) score += 0.03;
       if (d.imageTraits?.scent) score += 0.02;
       // 交集模块评分
@@ -1299,6 +1345,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         voice: profile.voice || undefined,
         distinguishingMarks: undefined,
         scent: undefined,
+        feminineDetails: undefined,
       },
       personalityPrefs: {
         traits: profile.traits || [],
@@ -1630,6 +1677,78 @@ export class FamilyGraph implements FamilyGraphInterface {
     if (interestMatch) {
       const interestRelation = interestMatch[0].substring(0, 20);
       await this.addPendingItem(personName, 'relationMap.intersections.interestRelation', interestRelation, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // ── v1.2 新增：女性详细体征提取（非家人女性） ──
+
+    // 17. 提取整体印象/气质
+    const impressionMatch = conversationText.match(new RegExp(`${personName}.*?(?:第一印象|给人的感觉|气质|那种|一看就是|看起来)([^。！？]{3,30})`));
+    if (impressionMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.firstImpression', impressionMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 18. 提取身高体型描述（含三围/身材数据）
+    const statureMatch = conversationText.match(new RegExp(`${personName}.*?(?:身高|一米[五六七八九]|身材|个子|体型|三围|胸围|腰围|臀围|匀称|苗条|丰满|娇小|高挑|修长|性感|火辣)([^。！？]{3,30})`));
+    if (statureMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.stature', statureMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 19. 提取胸部特征
+    const breastMatch = conversationText.match(new RegExp(`${personName}.*?(?:胸|乳房|乳沟|奶子|胸部|乳晕|乳头|胸型|罩杯|丰满|平胸|微乳|大胸|巨乳|椒乳|酥胸|双峰)([^。！？]{2,30})`));
+    if (breastMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.breasts', breastMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 20. 提取臀部/腰/腿特征
+    const bodyPartMatch = conversationText.match(new RegExp(`${personName}.*?(?:臀|屁股|翘臀|蜜桃臀|圆润|腰|细腰|小蛮腰|水蛇腰|蜜桃|美腿|大腿|长腿|玉腿|腿型|小腿|修长|笔直|性感)([^。！？]{2,30})`));
+    if (bodyPartMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.buttocks', bodyPartMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 21. 提取皮肤描述
+    const skinMatch = conversationText.match(new RegExp(`${personName}.*?(?:皮肤|肌肤|肤质|雪白|白皙|嫩滑|光滑|细腻|吹弹可破|冰肌玉骨|小麦色|古铜|白嫩|弹性|体温|温热|冰凉)([^。！？]{2,30})`));
+    if (skinMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.skin', skinMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 22. 提取唇/眼/发特征
+    const lookMatch = conversationText.match(new RegExp(`${personName}.*?(?:嘴唇|双唇|红唇|性感|丰唇|薄唇|眼睛|眼神|双眸|眼眸|瞳孔|桃花眼|丹凤眼|睫毛|秀发|长发|青丝|发丝|发质|马尾|披肩发|短发|卷发|直发|发香)([^。！？]{2,30})`));
+    if (lookMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.lips', lookMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 23. 提取体味/体香/香水
+    const scentMatch = conversationText.match(new RegExp(`${personName}.*?(?:体味|体香|香水|味道|气味|香|气息|芬芳|幽香|清香|淡香|浓郁|奶香|花|栀子|玫瑰|茉莉|檀香|麝香)([^。！？]{2,30})`));
+    if (scentMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.bodyScent', scentMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 24. 提取性感/魅惑描述
+    const allureMatch = conversationText.match(new RegExp(`${personName}.*?(?:性感|魅惑|妩媚|妖娆|撩人|迷人|勾人|摄魂|风骚|骚|浪|淫荡|风情|韵味|诱惑|挑逗|销魂|让人受不了|把持不住|欲火)([^。！？]{2,30})`));
+    if (allureMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.allure', allureMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 25. 提取触感描述
+    const touchMatch = conversationText.match(new RegExp(`${personName}.*?(?:手感|触感|抚摸|接触|温软|柔软|柔滑|细腻|紧致|弹性|炙热|滚烫|冰凉|润滑|湿润|嫩滑)([^。！？]{2,30})`));
+    if (touchMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.touch', touchMatch[0].substring(0, 50), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 26. 提取特殊记忆点
+    const memMatch = conversationText.match(new RegExp(`${personName}.*?(?:最让人|最令我|印象最深|忘不了|怀念|想念|回味|魂牵梦萦|念念不忘|挥之不去)([^。！？]{3,40})`));
+    if (memMatch) {
+      await this.addPendingItem(personName, 'imageTraits.feminineDetails.memorableTraits', memMatch[0].substring(0, 60), conversationText.substring(0, 80));
       extracted++;
     }
 
