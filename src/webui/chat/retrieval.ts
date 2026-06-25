@@ -33,7 +33,7 @@ export function getVadCachedTone(): string {
 
 /** VAD 是否可用 */
 export function isVadAvailable(): boolean { return _vadAvailable; }
-export function setVadUnavailable(): void { _vadAvailable = false; }
+export function setVadUnavailable(): void { _vadAvailable = false; _vadOffline = true; }
 
 /**
  * 仿生智脑降级检索（抽离为独立函数，仅在话题切换时调用）
@@ -78,11 +78,15 @@ export async function fetchBionicMemories(
 /**
  * 获取 VAD 谱曲 tone hint
  */
+let _vadOffline = false;
+
 export async function getVadToneHint(message: string): Promise<string> {
+  if (_vadOffline) return '';
+
   if (!_vadAvailable) return '';
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
+    const timeout = setTimeout(() => controller.abort(), 500);
     const vadResp = await fetch('http://localhost:8100/api/v1/emotion/compose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -115,7 +119,7 @@ export async function getVadToneHint(message: string): Promise<string> {
     if (arc && arc !== dom) hints.push('[VAD] 情感弧线: ' + arc);
     return hints.length > 0 ? hints.join('\n') : '';
   } catch {
-    _vadAvailable = false;
+    _vadAvailable = false; _vadOffline = true;
     return '';
   }
 }

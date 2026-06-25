@@ -236,54 +236,13 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const dna = ctx.encoder.encodeSingle(message);
 
-    // P3: LLM 辅助实体提取（三层过滤 — prompt约束+白名单+人名正则）
+    // P3: 实体提取跳过LLM（省~2秒，M1正则已够用）
     try {
-      const { extractEntitiesLLM } = await import('../m1/LLMEntityExtractor.js');
-      const llmGenerate = async (prompt: string) => {
-        const r = await (ctx.llmProvider).generate({
-          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 256 } } as any,
-          cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0 }, raw_input: prompt, calcium: 0 } } as any,
-          userMessage: prompt,
-        });
-        return r.text;
-      };
-      const llmEntities = await extractEntitiesLLM(message, llmGenerate);
-      // 以LLM为基准，规则仅补充LLM未命中的非person实体
-      if (llmEntities.length > 0) {
-        const llmNames = new Set(llmEntities.map(e => e.name));
-        // 规则提取的person实体只有LLM也确认才保留（消除"家里""贝安"等误报）
-        const keptRules = dna.entity_genes.filter((g: any) =>
-          g.type !== 'person' || g.name === '我' || llmNames.has(g.name)
-        );
-        const existingNames = new Set(keptRules.map(e => e.name));
-        for (const le of llmEntities) {
-          if (!existingNames.has(le.name)) {
-            existingNames.add(le.name);
-            keptRules.push({ name: le.name, type: le.type, allele: le.name, phenotype: 'neutral', knowledge_type: 'private' } as any);
-          }
-        }
-        dna.entity_genes = keptRules;
-        console.log('[LLMEntity] 提取: ' + llmEntities.map(e => e.name).join(','));
-      }
-    } catch (_err) {
-      console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
-    }
-
-        // 家族图谱兜底：M1+LLM没提到时直接从图谱匹配
-    try {
-      const _hp = dna.entity_genes.some((g) => g.type === "person" && g.name !== "我" && g.name.length > 1);
-      if (!_hp && ctx.m4) {
-        const _fg = ctx.m4.getFamilyGraph();
-        if (_fg) {
-          for (const _n of _fg.getAllPersonNames()) {
-            if (_n !== "我" && _n.length > 1 && message.includes(_n)) {
-              dna.entity_genes.push({ name: _n, type: "person", allele: _n, phenotype: "neutral", knowledge_type: "private" });
-              console.log("[FamilyGraph] 图谱匹配: " + _n);
-            }
-          }
-        }
-      }
-    } catch (_fe) { console.warn("[FamilyGraph] 图谱匹配失败:", _fe); }
+      // LLM实体提取已禁用（省~2s/次），仅使用M1正则提取
+      console.log('[LLMEntity] 跳过LLM提取（M1正则）');
+      const _extractedNames = dna.entity_genes.map((g: any) => g.name).filter(Boolean);
+      if (_extractedNames.length > 0) console.log('[LLMEntity] M1实体:', _extractedNames.join(','));
+    } catch (_err) { /* LLM实体提取已禁用 */ }
 
 // FIX-1: 推迟主写入到 M4 orchestrate 之后（防止覆盖家庭推理结果）
 
@@ -527,7 +486,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
     // 记忆以【相关记忆】标签注入到 knowledgeBaseText，不伪装成对话内容
     // 修复：干净的三层注入结构——对话原文/enrichedHistory、记忆/memoryFragments、知识/knowledgeBaseText
     let memoryFragments: string[] = [];
-    let enrichedHistory = ctx.conversationHistory.slice(-60);
+    let enrichedHistory = ctx.conversationHistory.slice(-20);
     // 时间导航：检测用户是否在问"昨天/上周说了什么"
     const _tmMatch = message.match(/(昨天|前天|上周|上个月|前几天|最近|刚才)/);
     if (_tmMatch && (message.indexOf('说') >= 0 || message.indexOf('聊') >= 0 || message.indexOf('提') >= 0)) {
