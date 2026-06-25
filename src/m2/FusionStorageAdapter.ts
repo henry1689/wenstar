@@ -16,6 +16,7 @@ import { SQLiteAdapter } from './SQLiteAdapter.js';
 import { computeCalcium, initialStrength } from './math.js';
 import type { EmotionalMemoryRecord, RetrievalQuery, ScoredMemory, EmotionalLandscape } from './types/index.js';
 import { FAMILY_GRAPH_MIGRATION } from '../config/family-graph-migration.js';
+import { ConversationDB } from './ConversationDB.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,6 +29,8 @@ export class FusionStorageAdapter {
   private initialized = false;
   /** 家族图谱主库引用（双库统一用） */
   private familyGraph: any | null = null;
+  /** 共享 ConversationDB 实例（三段存储③砂金库） */
+  private _conversationDB: any = null;
   /** P10: JSON Zone 备份开关（默认开启保持兼容，生产环境可关闭减少IO） */
   private enableJsonZone: boolean;
 
@@ -40,6 +43,9 @@ export class FusionStorageAdapter {
   async initialize(): Promise<void> {
     if (!existsSync(this.dataDir)) mkdirSync(this.dataDir, { recursive: true });
     await this.sqlite.initialize();
+    // 初始化共享 ConversationDB（使用同一个 sql.js 实例）
+    this._conversationDB = new ConversationDB(undefined, this.sqlite.getDb());
+    await this._conversationDB.initialize();
     this.seqCounter = this.sqlite.getTotalCount();
     this.initialized = true;
   }
@@ -68,6 +74,7 @@ export class FusionStorageAdapter {
       id: dna.branch_id,
       seq_pos: pos,
       created_at: now,
+      dna_root_id: (dna as any).dna_root_id,  // 三段关联主键
       perception,
       calcium_score: calcium.score,
       calcium_level: calcium.level,
@@ -321,6 +328,11 @@ export class FusionStorageAdapter {
 
   getSQLite(): SQLiteAdapter {
     return this.sqlite;
+  }
+
+  /** 获取共享的 ConversationDB 实例（三段存储③砂金库） */
+  getConversationDB(): any {
+    return this._conversationDB;
   }
 
   // ─── 私有方法 ───

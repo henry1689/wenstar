@@ -37,6 +37,8 @@ export interface EmotionalMemoryRecord {
   seq_pos: number;
   /** 创建时间 ISO8601 */
   created_at: string;
+  /** DNA 根码（三段关联主键） */
+  dna_root_id?: string;
 
   /** ── 主索引：完整 24 维情感向量 ── */
   perception: Perception24D;

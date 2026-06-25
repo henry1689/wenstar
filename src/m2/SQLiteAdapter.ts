@@ -161,6 +161,30 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN last_recalled_at TEXT"); } catch { /* 列已存在 */ }
 
+    // 砂金库：原始对话表（三段存储③，与原设计合并回同库）
+    try {
+      this.db.run(`CREATE TABLE IF NOT EXISTS conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seq_pos INTEGER NOT NULL DEFAULT 0,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        topic TEXT,
+        entity_names TEXT,
+        perception_summary TEXT,
+        calcium_score REAL DEFAULT 0,
+        dna_root_id TEXT,
+        dialog_group_id TEXT,
+        dialog_round INTEGER DEFAULT 0,
+        is_compacted INTEGER DEFAULT 0,
+        is_test INTEGER DEFAULT 0
+      )`);
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_conv_timestamp ON conversations(timestamp DESC)");
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_conv_seq ON conversations(seq_pos)");
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_conv_dna_root ON conversations(dna_root_id)");
+      this.db.run("CREATE INDEX IF NOT EXISTS idx_conv_dg ON conversations(dialog_group_id)");
+    } catch (e) { console.warn('[SQLite] conversations 表创建失败:', e); }
+
     // SP3-3: 黑钻库 FTS5 全文索引（加速检索）
     try {
       this.db.run("CREATE VIRTUAL TABLE IF NOT EXISTS black_diamond_fts USING fts5(summary, tags, content='black_diamond', content_rowid='rowid')");
@@ -171,6 +195,9 @@ export class SQLiteAdapter {
     this.ready = true;
     console.log(`[SQLiteAdapter] 初始化完成: ${this.dbPath}`);
   }
+
+  /** 获取原始 sql.js 实例（供 ConversationDB 共享） */
+  getDb(): any { return this.db; }
 
   close(): void {
     if (this.db) this.db.close();
@@ -184,15 +211,18 @@ export class SQLiteAdapter {
     seqPos?: number; topic?: string; entityNames?: string[];
     perception?: { pleasure: number; arousal: number; intimacy: number };
     calciumScore?: number;
+    dnaRootId?: string;
+    isCompacted?: number;
   }): number {
     this.ensureReady();
     const now = new Date().toISOString();
     this.runSql(
-      'INSERT INTO conversations (role, content, timestamp, seq_pos, topic, entity_names, perception_summary, calcium_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO conversations (role, content, timestamp, seq_pos, topic, entity_names, perception_summary, calcium_score, dna_root_id, is_compacted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [role, content, now, options?.seqPos ?? null, options?.topic ?? null,
        options?.entityNames ? JSON.stringify(options.entityNames) : null,
        options?.perception ? JSON.stringify(options.perception) : null,
-       options?.calciumScore ?? null]
+       options?.calciumScore ?? null, options?.dnaRootId ?? null,
+       options?.isCompacted ?? 0]
     );
     this.save();
     return this.queryAll('SELECT last_insert_rowid() as id')[0]?.id as number || 0;
@@ -202,7 +232,7 @@ export class SQLiteAdapter {
   searchConversations(keyword: string, limit = 10): Array<{ id: number; role: string; content: string; timestamp: string; topic?: string }> {
     this.ensureReady();
     return this.queryAll(
-      'SELECT id, role, content, timestamp, topic FROM conversations WHERE content LIKE ? AND is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+      'SELECT id, role, content, timestamp, topic FROM conversations WHERE content LIKE ? AND is_compacted = 0 ORDER BY timestamp DESC LIMIT ?',
       ['%' + keyword + '%', limit]
     );
   }
@@ -239,7 +269,7 @@ export class SQLiteAdapter {
   getRecentConversations(limit = 100): Array<{ role: string; content: string; timestamp: string }> {
     this.ensureReady();
     const rows = this.queryAll<{ role: string; content: string; timestamp: string }>(
-        'SELECT role, content, timestamp FROM conversations WHERE is_summary = 0 ORDER BY timestamp DESC LIMIT ?',
+        'SELECT role, content, timestamp FROM conversations WHERE is_compacted = 0 ORDER BY timestamp DESC LIMIT ?',
         [limit]
       );
       return rows.reverse();
@@ -274,7 +304,8 @@ export class SQLiteAdapter {
        is_landmark, landmarked_at, narrative_tag, sensory_anchor,
        scar_type, scar_healed,
        vad_spectrum,
-       primary_emotion, secondary_emotions)
+       primary_emotion, secondary_emotions,
+       dna_root_id)
       VALUES (?, ?, ?, ?,
               ?, ?,
               ?, ?, ?,
@@ -283,7 +314,8 @@ export class SQLiteAdapter {
               ?, ?, ?, ?,
               ?, ?,
               ?,
-              ?, ?)`,
+              ?, ?,
+              ?)`,
       [
         record.id, record.seq_pos, record.created_at, pJson,
         record.calcium_score, record.calcium_level,
@@ -296,6 +328,7 @@ export class SQLiteAdapter {
         record.vad_spectrum ? JSON.stringify(record.vad_spectrum) : null,
         record.primary_emotion ?? null,
         record.secondary_emotions ? JSON.stringify(record.secondary_emotions) : null,
+        record.dna_root_id ?? null,
       ],
     );
 

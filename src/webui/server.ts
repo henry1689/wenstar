@@ -137,7 +137,7 @@ function loadConversationHistory(): void {
       const recent = conversationDB.getRecentConversations(30);
       if (recent.length > 0) {
         conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
-        console.log('  从conversations.db加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+        console.log('  从融合库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
         return;
       }
     }
@@ -159,8 +159,25 @@ function loadConversationHistory(): void {
         }
       } catch {}
     }
-    console.log('  无历史对话记忆');
+    if (conversationHistory.length === 0) {
+      console.log('  无历史对话记忆');
+    }
+
   } catch (err) { console.error('[Conv] 砂金库加载失败:', err); conversationHistory = []; }
+
+  // 三段自检：输出关联率（无论是否有历史，都执行）
+  try {
+    const sqlite = storage?.getSQLite();
+    if (sqlite && conversationDB) {
+      const totalConv = sqlite.queryAll('SELECT COUNT(*) as cnt FROM conversations');
+      const withDna = sqlite.queryAll('SELECT COUNT(*) as cnt FROM conversations WHERE dna_root_id IS NOT NULL');
+      const goldCount = sqlite.queryAll('SELECT COUNT(*) as cnt FROM memories');
+      const bdCount = sqlite.queryAll('SELECT COUNT(*) as cnt FROM black_diamond');
+      const total = totalConv[0]?.cnt || 0;
+      const dnaPct = total ? Math.round(((withDna[0]?.cnt || 0) / total) * 100) : 0;
+      console.log(`[三段自检] 砂金:${total}条(${dnaPct}%关联DNA) | 金库:${goldCount[0]?.cnt||0}条 | 黑钻:${bdCount[0]?.cnt||0}条`);
+    }
+  } catch (_e) { /* 自检不阻塞启动 */ }
 }
 function saveConversationHistory(): void { /* 不再需要 — SQLite 已即时落盘 */ }
 function flushConversationHistory(): void { /* 不再需要 */ }
@@ -168,15 +185,6 @@ function resetConversationHistory(): void {
   conversationHistory = [];
 }
 
-function recordTurn(role: 'user' | 'assistant', content: string): void {
-  try {
-    conversationHistory.push({ role, content });
-    // 即时落盘到砂金库 SQLite
-    if (storage) {
-      conversationDB?.insertConversation(role, content);
-    }
-  } catch (err) { console.error('[Conv] recordTurn失败:', err); }
-}
 
 
 // ── 维护引擎 ──
@@ -241,10 +249,10 @@ async function initPipeline(): Promise<void> {
   await familyGraph.initialize();
   m4 = new M4Orchestrator(storage, familyGraph, knowledgeBase);
   await m4.initialize();
-  // 初始化对话独立存储库（砂金库实时落盘用）
-  conversationDB = new (await import('../m2/ConversationDB.js')).ConversationDB();
-  await conversationDB.initialize();
-  console.log('  对话存储库已启动 ✓');
+  // 使用与 FusionStorageAdapter 共享的 ConversationDB（三段存储③砂金库）
+  conversationDB = storage.getConversationDB();
+  if (conversationDB) console.log('  对话存储库已启动 ✓（共享 fusion_memory.db）');
+  else console.warn('  ⚠️ 对话存储库未就绪');
   // 双库统一：将 FamilyGraph 注入 storage 适配层（读取路由用）
   storage.setFamilyGraph(familyGraph);
   // 启动时反向边补全

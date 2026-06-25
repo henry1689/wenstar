@@ -865,7 +865,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
         5,
       );
 
-      if (knResults.length > 0 && (_kbf || knResults[0].matchScore > 0.3)) {
+      if (knResults.length > 0 && (_kbf || knResults[0].matchScore > 0.15)) {
 
         // ① 写入 emotion_vector：把当前 24D perception 存到知识的 emotion_vector 字段
         // 下次 weightedSearch 就能按情感相似度排序了
@@ -1658,8 +1658,8 @@ let finalKnowledgeText = knowledgeBaseText;
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
         ctx.saveConversationHistory();
-        try { ctx.conversationDB?.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score }); } catch {}
-        try { ctx.conversationDB?.insertConversation('assistant', reply, { seqPos: seqPos + 1, topic: _topic, calciumScore: decision.enhanced.calcium_score }); } catch {}
+        try { ctx.conversationDB?.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score, dnaRootId: (dna as any).dna_root_id }); } catch {}
+        try { ctx.conversationDB?.insertConversation('assistant', reply, { seqPos: seqPos + 1, topic: _topic, calciumScore: decision.enhanced.calcium_score, dnaRootId: (dna as any).dna_root_id }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);
 
@@ -2290,6 +2290,21 @@ async function flushDialogGroup(ctx: any, dg: any, dna: any, decision: any, mess
         }
       } catch {}
     }
+
+    // 闭组回填：将对话组内所有原始对话关联上 dialog_group_id
+    try {
+      const convDB = ctx.conversationDB;
+      const dnaRootId = (dna as any).dna_root_id;
+      if (convDB && dg.rounds.length > 0 && dnaRootId) {
+        const firstSeq = -(dg.rounds.length + 100);
+        const lastSeq = -dg.rounds.length;
+        convDB.writeRaw(
+          "UPDATE conversations SET dialog_group_id = ?, dialog_round = CASE WHEN role='user' THEN seq_pos - ? + 1 ELSE seq_pos - ? + 1 END WHERE seq_pos BETWEEN ? AND ? AND dna_root_id = ? AND dialog_group_id IS NULL",
+          [dg.id, lastSeq, lastSeq, lastSeq, firstSeq, dnaRootId]
+        );
+        console.log('[三段回填] 对话组 ' + dg.id + ' 已回填 ' + dg.rounds.length + ' 轮');
+      }
+    } catch (_e) { console.warn('[三段回填] 失败:', _e); }
   } catch (err) {
     console.warn('[DG] 写入失败:', err);
   }
