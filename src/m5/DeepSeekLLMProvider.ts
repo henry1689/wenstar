@@ -452,12 +452,12 @@ ${profileText}
     const maxTokens = Math.max(
       /讲(个|一)?故事|写(个|一)?小说|写(个|一)?故事/.test(rawInput) ? 1800
       : /感觉|感受|回忆|分享|记得|印象|那时|那次/.test(rawInput) ? 1500
-      : level >= 2 ? 1200 : 800,
+      : 1200,
       spec.wordCountMin,
     );
     const temperature = level >= 2 || /感觉|感受|回忆|分享|记得|印象|讲.*故事|写.*小说/.test(rawInput) ? 1.0 : 0.9;
     const frequencyPenalty = level >= 2 ? 0.0 : 0.3;
-    const presencePenalty = level >= 2 ? 0.2 : 0.4;
+    const presencePenalty = 0.2;
 
     try {
       return await this.callDeepSeekApi(messages, maxTokens, temperature, {
