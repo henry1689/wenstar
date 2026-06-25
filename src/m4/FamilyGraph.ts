@@ -149,9 +149,28 @@ interface PersonDossier {
     habits?: string;        // 习惯
     psychology?: string;    // 心理/内心特征
   };
-  /** 模块⑥ 关系定位 */
+  /** 模块⑥ 关系定位 — 与用户的关系定位 + 交集记录 */
   relationMap: {
     relationToUser: string; // 与用户的关系
+    /** 交集与共同经历 — 用户与此人的工作、生活、情感、社交等所有互动记录 */
+    intersections?: {
+      /** 结识时间/场景 */
+      metWhen?: string;
+      /** 共事记录（怎么认识的、一起做过什么项目/业务） */
+      workTogether?: string;
+      /** 生活交集（一起做过的事、去过的地方、共同的社交圈） */
+      lifeIntersection?: string;
+      /** 情感评价（用户对此人的真实情感倾向：信任/依赖/亲密/敌视/疏远等） */
+      emotionalAssessment?: string;
+      /** 利益关系（合伙人/上下游/竞争/雇佣等） */
+      interestRelation?: string;
+      /** 重要共同事件 */
+      sharedEvents?: Array<{
+        date: string;
+        event: string;
+        type: 'work' | 'life' | 'family' | 'business';
+      }>;
+    };
     notes?: string;          // 自由备注
   };
   /** 模块⑦ 家庭关系网 */
@@ -1237,6 +1256,14 @@ export class FamilyGraph implements FamilyGraphInterface {
       if (d.imageTraits?.voice) score += 0.02;
       if (d.imageTraits?.distinguishingMarks) score += 0.02;
       if (d.personalityPrefs?.habits) score += 0.03;
+      if (d.imageTraits?.scent) score += 0.02;
+      // 交集模块评分
+      if (d.relationMap?.intersections?.metWhen) score += 0.03;
+      if (d.relationMap?.intersections?.workTogether) score += 0.04;
+      if (d.relationMap?.intersections?.lifeIntersection) score += 0.03;
+      if (d.relationMap?.intersections?.emotionalAssessment) score += 0.03;
+      if (d.relationMap?.intersections?.interestRelation) score += 0.03;
+      if ((d.relationMap?.intersections?.sharedEvents || []).length > 0) score += 0.04;
       if (d.personalityPrefs?.psychology) score += 0.03;
       if (d.contact?.phone || d.contact?.wechat || d.contact?.address) score += 0.03;
       if (d.familyNetwork?.parents?.length || d.familyNetwork?.spouse || d.familyNetwork?.children?.length) score += 0.05;
@@ -1282,6 +1309,7 @@ export class FamilyGraph implements FamilyGraphInterface {
       },
       relationMap: {
         relationToUser: profile.relation_to_user || '',
+        intersections: undefined,
         notes: _existing.备注 || _existing.note || _existing.context || undefined,
       },
       familyNetwork: {
@@ -1560,6 +1588,48 @@ export class FamilyGraph implements FamilyGraphInterface {
     if (familyRelMatch) {
       const relation = familyRelMatch[0].substring(0, 20);
       await this.addPendingItem(personName, 'familyNetwork.extended', relation, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // ── v1.2 新增：与用户的交集提取 ──
+
+    // 12. 提取结识场景（"我和XX是在XX认识的/认识的"）
+    const metMatch = conversationText.match(new RegExp(`(?:我和|我和|与)${personName}(?:是在|是在|是)([^，。！？]{2,30})(?:认识的|认识的|认识的|见面|相遇|碰到的)`));
+    if (metMatch) {
+      const metWhen = metMatch[1].substring(0, 30);
+      await this.addPendingItem(personName, 'relationMap.intersections.metWhen', metWhen, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 13. 提取共事记录（"一起/合作/同事/项目/共事"）
+    const workMatch = conversationText.match(new RegExp(`${personName}(?:和我|同我|跟我)?(?:一起|一同|合作|共事|搭档|合伙|共同)(?:做|搞|负责|参与|创业|经营|管理)([^，。！？]{2,40})`));
+    if (workMatch) {
+      const workTogether = workMatch[0].substring(0, 50);
+      await this.addPendingItem(personName, 'relationMap.intersections.workTogether', workTogether, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 14. 提取生活交集（"一起去过/一起吃饭/我们经常"）
+    const lifeMatch = conversationText.match(new RegExp(`${personName}(?:和我|同我|跟我)?(?:一起|经常|偶尔|有时)(?:去|来|吃|喝|玩|聚|见|约|住|走)([^，。！？]{2,30})`));
+    if (lifeMatch) {
+      const lifeIntersection = lifeMatch[0].substring(0, 40);
+      await this.addPendingItem(personName, 'relationMap.intersections.lifeIntersection', lifeIntersection, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 15. 提取情感评价（"信得过/讨厌/信任/很看重/不喜欢"）
+    const emotionMatch = conversationText.match(new RegExp(`对${personName}(?:很|非常|挺|特别|有点|有些|一向)(?:信赖|信任|看重|欣赏|佩服|尊敬|感恩|感激|讨厌|反感|不满|失望|嫌弃|依赖|依靠|忌惮|防备)`));
+    if (emotionMatch) {
+      const assessment = emotionMatch[0].substring(0, 30);
+      await this.addPendingItem(personName, 'relationMap.intersections.emotionalAssessment', assessment, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 16. 提取利益关系（"我的客户/合伙人/供应商/老板"）
+    const interestMatch = conversationText.match(new RegExp(`${personName}(?:是|算|属于)我的(?:客户|供应商|合伙人|合作伙伴|老板|上级|下属|员工|同事|搭档|乙方|甲方|代理商|渠道商|股东|投资人)`));
+    if (interestMatch) {
+      const interestRelation = interestMatch[0].substring(0, 20);
+      await this.addPendingItem(personName, 'relationMap.intersections.interestRelation', interestRelation, conversationText.substring(0, 80));
       extracted++;
     }
 
