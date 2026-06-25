@@ -99,6 +99,10 @@ interface PersonProfile {
 /**
  * 6 模块人事档案结构化定义
  * 所有档案字段统一走 EntityValidator 校验
+ *
+ * v1.2 升级: 扩展为完整人事档案体系
+ * - 新增 联系方式、健康状况、人生里程碑、家庭关系网、社会资本 模块
+ * - 原6模块扩展为10模块
  */
 interface PersonDossier {
   /** 模块① 基础信息卡 */
@@ -108,22 +112,36 @@ interface PersonDossier {
     birthPlace?: string;
     education?: string;
     maritalStatus?: string;
+    /** 生肖 */
+    zodiac?: string;
+    /** 民族 */
+    ethnicity?: string;
   };
-  /** 模块② 人生履历 */
+  /** 模块② 联系方式 */
+  contact: {
+    phone?: string;
+    wechat?: string;
+    address?: string;
+    email?: string;
+    workplace?: string;
+  };
+  /** 模块③ 人生履历 */
   lifeResume: {
     timeline: Array<{ date: string; summary: string; emotion?: string }>;
     careerHistory?: string;
     notableEvents?: string[];
   };
-  /** 模块③ 形象特质 */
+  /** 模块④ 形象特质 */
   imageTraits: {
     looks?: string;        // 外貌长相
     bodyFeatures?: string;  // 身材特征
     style?: string;         // 穿着风格
     voice?: string;         // 声音特征
     distinguishingMarks?: string;  // 辨识特征
+    /** 香水/气味标签 */
+    scent?: string;
   };
-  /** 模块④ 性格偏好 */
+  /** 模块⑤ 性格偏好 */
   personalityPrefs: {
     traits: string[];       // 标签化性格（开朗/幽默等）
     description?: string;   // 性格自由描述
@@ -131,12 +149,54 @@ interface PersonDossier {
     habits?: string;        // 习惯
     psychology?: string;    // 心理/内心特征
   };
-  /** 模块⑤ 关系定位 */
+  /** 模块⑥ 关系定位 */
   relationMap: {
     relationToUser: string; // 与用户的关系
     notes?: string;          // 自由备注
   };
-  /** 模块⑥ 记忆锚点（Top-5，满5自动淘汰最旧） */
+  /** 模块⑦ 家庭关系网 */
+  familyNetwork: {
+    /** 父母 */
+    parents?: string[];
+    /** 配偶 */
+    spouse?: string;
+    /** 子女 */
+    children?: string[];
+    /** 兄弟姐妹 */
+    siblings?: string[];
+    /** 其他亲属关系描述 */
+    extended?: string;
+  };
+  /** 模块⑧ 健康状况 */
+  health: {
+    /** 身体状况描述 */
+    condition?: string;
+    /** 病史/疾病 */
+    medicalHistory?: string;
+    /** 过敏信息 */
+    allergies?: string;
+    /** 生活习惯（烟酒茶等） */
+    lifestyle?: string;
+  };
+  /** 模块⑨ 人生里程碑 */
+  lifeMilestones: Array<{
+    date: string;
+    event: string;
+    type: 'birth' | 'marriage' | 'childbirth' | 'death' | 'career' | 'education' | 'other';
+    detail?: string;
+  }>;
+  /** 模块⑩ 社会资本 */
+  socialCapital: {
+    /** 同事/合作伙伴 */
+    colleagues?: string[];
+    /** 朋友 */
+    friends?: string[];
+    /** 客户 */
+    clients?: string[];
+    /** 重要社交关系描述 */
+    description?: string;
+  };
+  /** 记忆锚点（Top-5，满5自动淘汰最旧） */
   memoryAnchors: {
     diamondIds: string[];   // 最多 5 条，存黑钻记忆 ID
   };
@@ -1158,20 +1218,31 @@ export class FamilyGraph implements FamilyGraphInterface {
   calcProfileCompleteness(profile: PersonProfile): number {
     let score = 0;
     // flat 字段评分
-    if (profile.relation_to_user && profile.relation_to_user !== '认识的人') score += 0.25;
-    else if (profile.relation_to_user) score += 0.1;
-    if (profile.traits && profile.traits.length > 0) score += 0.15;
-    if (profile.occupation) score += 0.1;
-    if (profile.interests && profile.interests.length > 0) score += 0.1;
-    if (profile.timeline && profile.timeline.length > 0) score += 0.1;
-    if (profile.description || profile.personality) score += 0.05;
-    // dossier 补充评分（性别/生日等基础信息）
+    if (profile.relation_to_user && profile.relation_to_user !== '认识的人') score += 0.2;
+    else if (profile.relation_to_user) score += 0.08;
+    if (profile.traits && profile.traits.length > 0) score += 0.1;
+    if (profile.occupation) score += 0.08;
+    if (profile.interests && profile.interests.length > 0) score += 0.08;
+    if (profile.timeline && profile.timeline.length > 0) score += 0.08;
+    if (profile.description || profile.personality) score += 0.04;
+    if (profile.appearance) score += 0.05;
+    if (profile.body_features) score += 0.03;
+    // dossier 10模块补充评分
     if (profile.dossier) {
-      if (profile.dossier.basicInfo?.gender) score += 0.05;
-      if (profile.dossier.basicInfo?.birthYear) score += 0.05;
-      if (profile.dossier.imageTraits?.looks) score += 0.05;
-      if (profile.dossier.personalityPrefs?.habits) score += 0.05;
-      if (profile.dossier.memoryAnchors?.diamondIds?.length > 0) score += 0.05;
+      const d = profile.dossier;
+      if (d.basicInfo?.gender) score += 0.03;
+      if (d.basicInfo?.birthYear) score += 0.03;
+      if (d.basicInfo?.birthPlace) score += 0.02;
+      if (d.imageTraits?.looks) score += 0.04;
+      if (d.imageTraits?.voice) score += 0.02;
+      if (d.imageTraits?.distinguishingMarks) score += 0.02;
+      if (d.personalityPrefs?.habits) score += 0.03;
+      if (d.personalityPrefs?.psychology) score += 0.03;
+      if (d.contact?.phone || d.contact?.wechat || d.contact?.address) score += 0.03;
+      if (d.familyNetwork?.parents?.length || d.familyNetwork?.spouse || d.familyNetwork?.children?.length) score += 0.05;
+      if (d.health?.condition || d.health?.medicalHistory) score += 0.03;
+      if (d.lifeMilestones && d.lifeMilestones.length > 0) score += 0.05;
+      if (d.memoryAnchors?.diamondIds?.length > 0) score += 0.04;
     }
     return Math.round(Math.min(1, score) * 100) / 100;
   }
@@ -1182,11 +1253,12 @@ export class FamilyGraph implements FamilyGraphInterface {
   private buildDossierFromFlat(profile: Partial<PersonProfile>, _existing: any): PersonDossier {
     return {
       basicInfo: {
-        gender: undefined,
-        birthYear: undefined,
-        birthPlace: undefined,
-        education: profile.occupation || undefined,
-        maritalStatus: undefined,
+        gender: undefined, birthYear: undefined, birthPlace: undefined,
+        education: profile.occupation || undefined, maritalStatus: undefined,
+        zodiac: undefined, ethnicity: undefined,
+      },
+      contact: {
+        phone: undefined, wechat: undefined, address: undefined, email: undefined, workplace: undefined,
       },
       lifeResume: {
         timeline: (profile as any).timeline || [],
@@ -1199,6 +1271,7 @@ export class FamilyGraph implements FamilyGraphInterface {
         style: profile.style || undefined,
         voice: profile.voice || undefined,
         distinguishingMarks: undefined,
+        scent: undefined,
       },
       personalityPrefs: {
         traits: profile.traits || [],
@@ -1211,9 +1284,18 @@ export class FamilyGraph implements FamilyGraphInterface {
         relationToUser: profile.relation_to_user || '',
         notes: _existing.备注 || _existing.note || _existing.context || undefined,
       },
-      memoryAnchors: {
-        diamondIds: [],
+      familyNetwork: {
+        parents: undefined, spouse: undefined, children: undefined,
+        siblings: undefined, extended: undefined,
       },
+      health: {
+        condition: undefined, medicalHistory: undefined, allergies: undefined, lifestyle: undefined,
+      },
+      lifeMilestones: [],
+      socialCapital: {
+        colleagues: undefined, friends: undefined, clients: undefined, description: undefined,
+      },
+      memoryAnchors: { diamondIds: [] },
     };
   }
 
@@ -1355,6 +1437,10 @@ export class FamilyGraph implements FamilyGraphInterface {
       { regex: /悲观/, value: '悲观' },
       { regex: /热心|乐于助人/, value: '热心' },
       { regex: /固执|要强/, value: '固执' },
+      { regex: /贤惠|体贴|顾家/, value: '顾家' },
+      { regex: /善良|心软/, value: '善良' },
+      { regex: /成熟|稳重/, value: '稳重' },
+      { regex: /大方|不小气/, value: '大方' },
     ];
     const newTraits: string[] = [];
     for (const hint of traitHints) {
@@ -1371,16 +1457,14 @@ export class FamilyGraph implements FamilyGraphInterface {
       extracted += newTraits.length;
     }
 
-    // 3. 提取关系描述（低置信度 → 只追加备注）
+    // 3. 提取关系描述
     const relationNoteMatch = conversationText.match(new RegExp(`${personName}(?:是|算|属于)(?:我的|我)?([^，。！？]{2,20}(?:朋友|同学|同事|亲戚|邻居|合伙人|搭档|合作伙伴))`));
     if (relationNoteMatch && relationNoteMatch[1]) {
       const note = relationNoteMatch[1].substring(0, 30);
-      // 如果当前 relation_to_user 为空，设置高置信度
       if (!profile.relation_to_user) {
         await this.updatePersonProfile(personName, { relation_to_user: note } as any);
         extracted++;
       } else if (profile.relation_to_user !== note) {
-        // 有冲突 → 标记为 pending
         await this.addPendingItem(personName, 'relationMap.relationToUser', note, conversationText.substring(0, 80));
         extracted++;
       }
@@ -1394,7 +1478,6 @@ export class FamilyGraph implements FamilyGraphInterface {
     for (const hint of interestHints) {
       const interestMatch = conversationText.match(hint);
       if (interestMatch) {
-        // 尝试提取具体爱好内容（"喜欢XX" / "爱好XX"）
         const detailMatch = conversationText.match(new RegExp(`${interestMatch[0]}([^，。！？]{2,20})`));
         if (detailMatch) {
           const interest = detailMatch[1].substring(0, 15);
@@ -1407,7 +1490,7 @@ export class FamilyGraph implements FamilyGraphInterface {
       }
     }
 
-    // 5. 提取外貌描述（低置信度 → 标记为 pending 而非直接覆盖）
+    // 5. 提取外貌描述
     const appearanceMatch = conversationText.match(new RegExp(`${personName}(?:长?得?|长相|样子|看起来)([^，。！？]{3,30})`));
     if (appearanceMatch && appearanceMatch[1].length >= 3) {
       const desc = appearanceMatch[1].substring(0, 40);
@@ -1415,10 +1498,69 @@ export class FamilyGraph implements FamilyGraphInterface {
         await this.updatePersonProfile(personName, { appearance: desc } as any);
         extracted++;
       } else if (profile.appearance && profile.appearance !== desc) {
-        // 有冲突 → pending
         await this.addPendingItem(personName, 'appearance', desc, conversationText.substring(0, 80));
         extracted++;
       }
+    }
+
+    // ── v1.2 新增提取规则 ──
+
+    // 6. 提取联系方式（电话/微信/地址）
+    const phoneMatch = conversationText.match(/(?:电话|手机|打给我|联系)(?:\s*[:：]?\s*)(1[3-9]\d{9})/);
+    if (phoneMatch) {
+      const phone = phoneMatch[1];
+      if (profile.dossier?.contact?.phone !== phone) {
+        const dossier = this.getFullProfile(personName) || this.buildDossierFromFlat(profile, {});
+        dossier.contact.phone = phone;
+        await this.updatePersonProfile(personName, {} as any);
+        extracted++;
+      }
+    }
+    const wechatMatch = conversationText.match(/(?:微信|WeChat|wx)(?:\s*[:：]?\s*)([a-zA-Z0-9_]{4,30})/);
+    if (wechatMatch) {
+      const wechat = wechatMatch[1];
+      await this.addPendingItem(personName, 'contact.wechat', wechat, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 7. 提取年龄/出生年份
+    const ageMatch = conversationText.match(/(?:今年|现在)(\d{1,2})岁/);
+    if (ageMatch) {
+      const age = parseInt(ageMatch[1]);
+      const birthYear = new Date().getFullYear() - age;
+      await this.addPendingItem(personName, 'basicInfo.birthYear', String(birthYear), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 8. 提取健康信息
+    const healthMatch = conversationText.match(new RegExp(`${personName}.*?(?:身体|健康|生病|住院|吃药|手术|过敏|毛病)([^。！？]{2,30})`));
+    if (healthMatch) {
+      const healthInfo = healthMatch[0].substring(0, 40);
+      await this.addPendingItem(personName, 'health.condition', healthInfo, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 9. 提取工作单位/地点
+    const workplaceMatch = conversationText.match(new RegExp(`${personName}.*?(?:在|任职于|工作于|在.*上班)([^，。！？]{2,20})`));
+    if (workplaceMatch) {
+      const workplace = workplaceMatch[1].substring(0, 20);
+      await this.addPendingItem(personName, 'contact.workplace', workplace, conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 10. 提取人生大事（结婚/生子/毕业等）
+    const milestoneMatch = conversationText.match(new RegExp(`${personName}.*?(?:结婚|生子|毕业|考上|入职|退休|去世|生病|住院|创业|开店)([^。！？]{2,30})`));
+    if (milestoneMatch) {
+      await this.addPendingItem(personName, 'lifeMilestones', milestoneMatch[0].substring(0, 40), conversationText.substring(0, 80));
+      extracted++;
+    }
+
+    // 11. 提取家庭关系（XX的爸爸/妈妈/老婆/老公等）
+    const familyRelMatch = conversationText.match(new RegExp(`${personName}(?:的|是)(?:爸爸|妈妈|父亲|母亲|老公|老婆|丈夫|妻子|儿子|女儿|孩子|哥哥|弟弟|姐姐|妹妹|兄弟|姐妹|爷爷|奶奶|外公|外婆)`));
+    if (familyRelMatch) {
+      const relation = familyRelMatch[0].substring(0, 20);
+      await this.addPendingItem(personName, 'familyNetwork.extended', relation, conversationText.substring(0, 80));
+      extracted++;
     }
 
     return extracted;
