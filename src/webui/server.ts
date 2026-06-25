@@ -133,11 +133,33 @@ const MAX_SAVED_TURNS = 500;
 function loadConversationHistory(): void {
   try {
     if (conversationDB) {
-      // 从独立对话存储库加载最近对话
+      // 尝试从独立的 conversations.db 加载
       const recent = conversationDB.getRecentConversations(30);
-      conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
+      if (recent.length > 0) {
+        conversationHistory = recent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
+        console.log('  从conversations.db加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+        return;
+      }
     }
-    console.log('  从砂金库加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+    // 后备: 从旧的 fusion_memory.db 加载（conversationDB修复前的存量数据）
+    if (storage && storage.getSQLite) {
+      try {
+        const oldRecent = storage.getSQLite().getRecentConversations(30);
+        if (oldRecent.length > 0) {
+          conversationHistory = oldRecent.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content, timestamp: r.timestamp }));
+          console.log('  从fusion_memory.db(旧库)加载了 ' + conversationHistory.length + ' 条对话记忆 ✓');
+          // 尝试迁移到新库
+          if (conversationDB) {
+            for (const conv of oldRecent.reverse()) {
+              try { conversationDB.insertConversation(conv.role, conv.content, { seqPos: 0 }); } catch {}
+            }
+            console.log('  已将旧对话迁移到conversations.db');
+          }
+          return;
+        }
+      } catch {}
+    }
+    console.log('  无历史对话记忆');
   } catch (err) { console.error('[Conv] 砂金库加载失败:', err); conversationHistory = []; }
 }
 function saveConversationHistory(): void { /* 不再需要 — SQLite 已即时落盘 */ }
