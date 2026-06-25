@@ -28,10 +28,6 @@ const EMOTION_API = process.env.EMOTION_API_URL || 'http://localhost:8100/api/v1
 // 外部查询缓存：按 query+userId 缓存 30 秒（短期防重复，不阻塞新鲜结果）
 const bionicSearchCache = new LocalCache<string, any[]>({ ttlMs: 30_000, namespace: 'bionic_search' });
 
-// 离线标志 — 连续失败2次后跳过所有请求，直到下次health检查成功
-let _bionicOffline = false;
-let _bionicFailCount = 0;
-
 /** P1: 情感指纹缓存 — 离线降级用 */
 const _bionicLocalCache = new LocalCache<string, any>({ ttlMs: 60_000, namespace: 'bionic_fallback', maxKeys: 200 });
 function _genCtxHash(input: string, emotion?: { pleasure?: number; arousal?: number }): string {
@@ -84,7 +80,7 @@ export interface SongSheet {
 // ── HTTP 工具 ──
 
 /** 简化的 HTTP 请求（针对 Node.js fetch 做了兼容处理） */
-async function bionicFetch<T>(path: string, options?: { method?: string; body?: string }, timeout = 1500): Promise<T | null> {
+async function bionicFetch<T>(path: string, options?: { method?: string; body?: string }, timeout = 5000): Promise<T | null> {
   const url = `${BIONIC_API}${path}`;
   try {
     const ctrl = new AbortController();
@@ -119,8 +115,6 @@ class BionicAdapter {
 
   /** 检索相关记忆（同步，对话回复前调用，带 30 秒缓存） */
   async search(query: string, userId = 'default_user'): Promise<BionicSearchResult[]> {
-    // 已知离线则快速跳过
-    if (_bionicOffline) return [];
     const cacheKey = `${userId}:${query.slice(0, 100)}`;
     const cached = await bionicSearchCache.get(cacheKey);
     if (cached) return cached as BionicSearchResult[];
@@ -138,12 +132,6 @@ class BionicAdapter {
       throw err;
     });
     const results = r?.results ?? [];
-    if (!r || !r.results) {
-      _bionicFailCount++;
-      if (_bionicFailCount >= 2) { _bionicOffline = true; console.log('[Bionic] 离线模式（连续失败2次）'); }
-    } else {
-      _bionicFailCount = 0;
-    }
     if (results.length > 0) {
       bionicSearchCache.set(cacheKey, results).catch(function() {});
       _bionicLocalCache.set(_ctxHash, results).catch(function() {});
@@ -153,7 +141,6 @@ class BionicAdapter {
 
   /** 存入歌单（异步，对话结束后调用） */
   async storeSongSheet(sheet: SongSheet): Promise<boolean> {
-    if (_bionicOffline) return true;
     if (!sheet.turns.length) return true;
     const emotionVec = sheet.emotion24d
       ? [
@@ -180,7 +167,7 @@ class BionicAdapter {
     if (emotionVec) body.emotion_vector = emotionVec;
     if (sheet.vad) body.vad_spectrum = sheet.vad;
 
-    const r = await bionicFetch<any>('/ingest-test', { method: 'POST', body: JSON.stringify(body) }, 2000);
+    const r = await bionicFetch<any>('/ingest-test', { method: 'POST', body: JSON.stringify(body) }, 10000);
     if (r?.status === 'injected' && sheet.vad) console.log(`[BionicStore] VAD谱曲已存入`);
     else if (r?.status === 'injected') console.log(`[BionicStore] 纯歌词已存入（待谱曲）`);
     return r?.status === 'injected';
@@ -188,13 +175,12 @@ class BionicAdapter {
 
   /** 调用情感谱曲引擎（异步，不阻塞回复） */
   async composeEmotion(text: string): Promise<VadSpectrum | null> {
-    if (_bionicOffline) return null;
     try {
       const resp = await fetch(`${EMOTION_API}/compose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 2000) }),
-        signal: AbortSignal.timeout(1500),
+        body: JSON.stringify({ text: text.slice(0, 10000) }),
+        signal: AbortSignal.timeout(5000),
       });
       if (!resp.ok) return null;
       const r = await resp.json() as any;
@@ -234,7 +220,7 @@ class BionicAdapter {
       user_id: params.userId || 'default_user',
     };
     if (params.tags) body.tags = params.tags;
-    const r = await bionicFetch<any>('/docs/upload', { method: 'POST', body: JSON.stringify(body) }, 2000);
+    const r = await bionicFetch<any>('/docs/upload', { method: 'POST', body: JSON.stringify(body) }, 15000);
     if (r?.id) {
       console.log('[BionicGold] ✅ 已存入金库:', params.title.substring(0, 40));
       return true;

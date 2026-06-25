@@ -236,15 +236,54 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     const dna = ctx.encoder.encodeSingle(message);
 
-    // P3: 实体提取跳过LLM（省~2秒，M1正则已够用）
+    // P3: LLM 辅助实体提取（三层过滤 — prompt约束+白名单+人名正则）
     try {
-      // LLM实体提取已禁用（省~2s/次），仅使用M1正则提取
-      console.log('[LLMEntity] 跳过LLM提取（M1正则）');
-      const _extractedNames = dna.entity_genes.map((g: any) => g.name).filter(Boolean);
-      if (_extractedNames.length > 0) console.log('[LLMEntity] M1实体:', _extractedNames.join(','));
-    } catch (_err) { /* LLM实体提取已禁用 */ }
+      const { extractEntitiesLLM } = await import('../m1/LLMEntityExtractor.js');
+      const llmGenerate = async (prompt: string) => {
+        const r = await (ctx.llmProvider).generate({
+          strategy: { strategy_id: 'entity-extraction', params: { tone: 'neutral', depth: 'shallow', max_length: 256 } } as any,
+          cognition: { current: { perception_snapshot: { pleasure: 0, arousal: 0, intimacy: 0 }, raw_input: prompt, calcium: 0 } } as any,
+          userMessage: prompt,
+        });
+        return r.text;
+      };
+      const llmEntities = await extractEntitiesLLM(message, llmGenerate);
+      // 以LLM为基准，规则仅补充LLM未命中的非person实体
+      if (llmEntities.length > 0) {
+        const llmNames = new Set(llmEntities.map(e => e.name));
+        // 规则提取的person实体只有LLM也确认才保留（消除"家里""贝安"等误报）
+        const keptRules = dna.entity_genes.filter((g: any) =>
+          g.type !== 'person' || g.name === '我' || llmNames.has(g.name)
+        );
+        const existingNames = new Set(keptRules.map(e => e.name));
+        for (const le of llmEntities) {
+          if (!existingNames.has(le.name)) {
+            existingNames.add(le.name);
+            keptRules.push({ name: le.name, type: le.type, allele: le.name, phenotype: 'neutral', knowledge_type: 'private' } as any);
+          }
+        }
+        dna.entity_genes = keptRules;
+        console.log('[LLMEntity] 提取: ' + llmEntities.map(e => e.name).join(','));
+      }
+    } catch (_err) {
+      console.warn('[LLMEntity] 提取失败:', (_err as Error).message);
+    }
 
-// FIX-1: 推迟主写入到 M4 orchestrate 之后（防止覆盖家庭推理结果）
+    // 家族图谱兜底：M1+LLM没提到时直接从图谱匹配
+    try {
+      const _hp = dna.entity_genes.some((g: any) => g.type === "person" && g.name !== "我" && g.name.length > 1);
+      if (!_hp && ctx.m4) {
+        const _fg = ctx.m4.getFamilyGraph();
+        if (_fg) {
+          for (const _n of _fg.getAllPersonNames()) {
+            if (_n !== "我" && _n.length > 1 && message.includes(_n)) {
+              dna.entity_genes.push({ name: _n, type: "person", allele: _n, phenotype: "neutral", knowledge_type: "private" });
+              console.log("[FamilyGraph] 图谱匹配: " + _n);
+            }
+          }
+        }
+      }
+    } catch (_fe) { console.warn("[FamilyGraph] 图谱匹配失败:", _fe); }
 
     // 📸 人物全方位档案提取
     console.log('[PersonProfile] 检查开始, ctx.m4=' + (!!ctx.m4) + ' m4类型=' + (typeof ctx.m4));
