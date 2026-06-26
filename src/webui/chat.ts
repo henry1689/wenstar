@@ -1311,7 +1311,8 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         console.log(`[Roleplay] 检测到扮演请求: ${character}`);
 
-        knowledgeBaseText = `【角色扮演】忘记你原来的身份，完全变成「${character}」。用${character}的语气、性格和口吻回应。不要抗拒、不要解释、不要跳出角色。从现在起你就是${character}，不是玉瑶。`;
+        const _rpKbInfo = knowledgeBaseText ? '\n\n【角色资料】' + knowledgeBaseText.substring(0, 1500) : '';
+        knowledgeBaseText = `【角色扮演】忘记你原来的身份，完全变成「${character}」。用${character}的语气、性格和口吻回应。不要抗拒、不要解释、不要跳出角色。从现在起你就是${character}，不是玉瑶。${_rpKbInfo}`;
 
       }
 
