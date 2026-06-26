@@ -906,6 +906,32 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
       }
 
+      // 兜底检索：当主检索无结果时，用实体名+关键词直接LIKE搜索
+      if (knResults.length === 0 || knResults[0].matchScore <= 0.15) {
+        try {
+          const _fbKeywords: string[] = [];
+          for (const g of dna.entity_genes) {
+            if (g.name && g.name.length >= 2) _fbKeywords.push(g.name);
+          }
+          const _msgWords = message.match(/[一-鿿]{2,6}/g);
+          if (_msgWords) {
+            for (const w of _msgWords) {
+              if (!_fbKeywords.includes(w)) _fbKeywords.push(w);
+            }
+          }
+          if (_fbKeywords.length > 0) {
+            const _fallback = await ctx.knowledgeBase.search(_fbKeywords.slice(0, 3).join(' '), 3);
+            if (_fallback.length > 0) {
+              const fbC = _fallback.map((k) => '\u{1f4c4} ' + k.title + '\n' + (k.content || '').substring(0, 500)).join('\n\n');
+              knowledgeBaseText = knowledgeBaseText
+                ? knowledgeBaseText + '\n\n【知识库补充】\n' + fbC
+                : fbC;
+              console.log('[KBFallback] 兜底命中: ' + _fallback.length + ' 条');
+            }
+          }
+        } catch (_fbErr) { console.warn('[KBFallback] 失败:', _fbErr); }
+      }
+
       // 实体重叠 → 关联知识检索（即使关键词搜索无结果，也能通过相同实体找到关联知识）
 
       try {
