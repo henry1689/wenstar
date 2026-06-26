@@ -62,6 +62,7 @@ import { generateCandidates, type CandidateSet } from '../m5/CandidateSelector.j
 // 仿生智脑适配器（可选依赖 — 不可用时降级）
 
 import { bionic } from '../adapter/bionic-adapter.js';
+import { ToolRegistry } from '../app/task-agent/ToolRegistry.js';
 
 import type { VadSpectrum, BionicSearchResult } from '../adapter/bionic-adapter.js';
 import { AsyncTaskQueue } from '../app/tools/AsyncTaskQueue.js';
@@ -2137,6 +2138,44 @@ let finalKnowledgeText = knowledgeBaseText;
     const candidates = _lastCandidates;
 
     _lastCandidates = null;
+
+
+    // ═══════════════════════════════════════════════════════════════
+    // 秘书工具执行（提醒/日程/笔记 — 不阻塞主回复）
+    // ═══════════════════════════════════════════════════════════════
+    try {
+      const _secretaryKws = /提醒|记住|记下来|别忘了|到时[候]?|帮我记|记得提醒|日程|安排|预约|会议|笔记|记录|写下来|记一下/;
+      if (_secretaryKws.test(message)) {
+        (async () => {
+          try {
+            let _timeStr = '';
+            const _hourMatch = message.match(/(\d{1,2})[点时]/);
+            if (_hourMatch) {
+              const _tc = new Date();
+              if (/明天/.test(message)) _tc.setDate(_tc.getDate() + 1);
+              else if (/后天/.test(message)) _tc.setDate(_tc.getDate() + 2);
+              _tc.setHours(parseInt(_hourMatch[1]), 0, 0, 0);
+              _timeStr = _tc.toISOString();
+            } else {
+              _timeStr = new Date(Date.now() + 3600000).toISOString();
+            }
+            if (/提醒|记住|记下来|别忘了|到时[候]?|帮我记|记得提醒|叫我/.test(message)) {
+              const _text = message.replace(/提醒.*?(我|你)/, '').replace(/帮我|给我|记|下来|别忘了|到时间/g, '').trim() || message.substring(0, 60);
+              const _result = await ToolRegistry.execute('reminder', 'set', { text: _text, time: _timeStr });
+              console.log('[Secretary] ' + _result);
+            }
+            if (/日程|安排|预约|会议/.test(message)) {
+              const _title = message.replace(/帮我|安排|一下|日程|预约/g, '').trim() || message.substring(0, 30);
+              await ToolRegistry.execute('calendar', 'add', { title: _title, time: _timeStr, duration: 60 });
+            }
+            if (/笔记|记录|写下来|记一下/.test(message)) {
+              const _content = message.replace(/帮我|记|笔记|写下来|记录|记一下/g, '').trim() || message.substring(0, 100);
+              await ToolRegistry.execute('note', 'add', { title: '备忘', content: _content });
+            }
+          } catch (_stErr) { console.warn('[Secretary] 工具执行失败:', _stErr); }
+        })().catch(() => {});
+      }
+    } catch (_seErr) { console.warn('[Secretary] 检查失败:', _seErr); }
 
     // SP4-4: 自介不再硬编码回复 — 走 M5 管线 + 玉瑶本人档案注入
     const isIntroCheck = /^(你是谁|你叫|你.*谁|叫什么名字|介绍一下你自己|介绍|能介绍一下|你多大了|你多大|介绍一下玉瑶)/.test(message.trim());
