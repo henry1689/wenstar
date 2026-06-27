@@ -180,8 +180,14 @@ const FALLBACK_REPLIES = [
 const LEVEL_NAMES = ["粉末","液体","固体","晶体"];
 
 const topicAskCount = new Map<string, number>();
+const TOPIC_ASK_MAX = 500;
 
 function getTopicRepeatCount(message: string): number {
+  // 防泄漏：超过上限时清理一半
+  if (topicAskCount.size > TOPIC_ASK_MAX) {
+    const keysToDelete = [...topicAskCount.keys()].slice(0, TOPIC_ASK_MAX / 2);
+    for (const k of keysToDelete) topicAskCount.delete(k);
+  }
   const words = message.match(/[一-龥]{4,}/g);
   if (!words) return 0;
   for (const w of words) {
@@ -1711,7 +1717,11 @@ let finalKnowledgeText = knowledgeBaseText;
 
     ctx.conversationHistory.push({ role: 'user', content: message, timestamp: nowTs, topic: _topic } as any);
         ctx.saveConversationHistory();
-        try { ctx.conversationDB?.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score, dnaRootId: (dna as any).dna_root_id }); } catch {}
+        // 裁剪内存：只保留最近 500 条
+        if (ctx.conversationHistory.length > 500) {
+          ctx.conversationHistory.splice(0, ctx.conversationHistory.length - 500);
+        }
+        try { ctx.conversationDB?.insertConversation('user', message, { seqPos, topic: _topic, entityNames: dna.entity_genes.filter(function(g) { return g.type !== 'self'; }).map(function(g) { return g.name; }), perception: { pleasure: p.pleasure, arousal: p.arousal, intimacy: p.intimacy }, calciumScore: decision.enhanced.calcium_score, dnaRootId: (dna as any).dna_root_id, isTest: ctx.testMode ? 1 : 0 }); } catch {}
         try { ctx.conversationDB?.insertConversation('assistant', reply, { seqPos: seqPos + 1, topic: _topic, calciumScore: decision.enhanced.calcium_score, dnaRootId: (dna as any).dna_root_id }); } catch {}
 
     ctx.conversationHistory.push({ role: 'assistant', content: reply, timestamp: nowTs, topic: _topic } as any);

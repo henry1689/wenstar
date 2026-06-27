@@ -1,46 +1,36 @@
 @echo off
-title 太虚境 · 一键启动
-cd /d C:\Users\Administrator
+chcp 65001 >nul
+cd /d "%~dp0"
 
-echo ═══════════════════════════════════════════
-echo   太虚境 · 全系统启动
-echo ═══════════════════════════════════════════
+title 太虚境 · 启动器
+
+echo ==============================
+echo   太虚境 · 一键启动
+echo ==============================
 echo.
 
-:: ===== 1. wenstar 后端 (3001) =====
-echo [1/4] 启动 wenstar 后端...
-start "wenstar-backend" cmd /c "cd /d C:\Users\Administrator\wenstar && set PORT=3001 && npx tsx src/webui/server.ts"
-timeout /t 5 /nobreak >nul
+:: 先杀残留进程
+echo [1/3] 清理残留进程...
+taskkill /F /FI "WINDOWTITLE eq node webui" 2>nul
+taskkill /F /FI "WINDOWTITLE eq node vite" 2>nul
+timeout /t 2 /nobreak >nul
 
-:: ===== 2. Vite 前端 (5174) =====
-echo [2/4] 启动 Vite 前端...
-start "vite-frontend" cmd /c "cd /d C:\Users\Administrator\wenstar\ui && npx vite --host 0.0.0.0"
-timeout /t 3 /nobreak >nul
+:: 启动后端
+echo [2/3] 启动后端 (端口 3000)...
+start "node webui" /min npx tsx src/webui/server.ts
+timeout /t 10 /nobreak >nul
 
-:: ===== 3. 仿生智脑 (7200) =====
-echo [3/4] 启动仿生智脑...
-start "bionic-brain" cmd /c "cd /d C:\Users\Administrator\bionic-cognitive-engine && .\venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 7200"
-timeout /t 5 /nobreak >nul
+:: 启动前端+守护
+echo [3/3] 启动前端 (端口 5174) + 守护...
+:restart_vite
+start "node vite" /min npx vite --host --port 5174
 
-:: ===== 4. TTS 语音 (8765) =====
-echo [4/4] 启动 TTS 语音...
-start "tts-server" cmd /c "cd /d C:\Users\Administrator\wenstar\src\webui && C:\Users\Administrator\bionic-cognitive-engine\venv\Scripts\python tts_server.py 8765"
-timeout /t 3 /nobreak >nul
-
-:: ===== 验证 =====
-echo.
-echo ═══════════════════════════════════════════
-echo   等待服务就绪...
-echo ═══════════════════════════════════════════
-timeout /t 8 /nobreak >nul
-
-echo.
-echo 验证服务状态:
-echo   wenstar : http://localhost:3001
-echo   Vite    : http://localhost:5174
-echo   仿生智脑: http://localhost:7200
-echo   TTS     : http://localhost:8765
-echo.
-echo 所有服务启动完毕！
-echo 按任意键关闭此窗口（服务仍在后台运行）
-pause >nul
+:watchdog
+timeout /t 10 /nobreak >nul
+tasklist /FI "WINDOWTITLE eq node vite" 2>nul | find "node.exe" >nul
+if errorlevel 1 (
+    echo [%date% %time%] Vite异常退出，正在重启... >> start-all.log
+    echo [%date% %time%] Vite异常退出，正在重启...
+    start "node vite" /min npx vite --host --port 5174
+)
+goto watchdog

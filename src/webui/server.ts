@@ -175,7 +175,7 @@ function loadConversationHistory(): void {
       const goldCount = sqlite.queryAll('SELECT COUNT(*) as cnt FROM memories');
       const bdCount = sqlite.queryAll('SELECT COUNT(*) as cnt FROM black_diamond');
       const total = totalConv[0]?.cnt || 0;
-      const dnaPct = total ? Math.round(((withDna[0]?.cnt || 0) / total) * 100) : 0;
+      const dnaPct = total ? Math.round(((Number(withDna[0]?.cnt) || 0) / Number(total)) * 100) : 0;
       console.log(`[三段自检] 砂金:${total}条(${dnaPct}%关联DNA) | 金库:${goldCount[0]?.cnt||0}条 | 黑钻:${bdCount[0]?.cnt||0}条`);
     }
   } catch (_e) { /* 自检不阻塞启动 */ }
@@ -257,6 +257,7 @@ async function initPipeline(): Promise<void> {
   encoder = new DNAEncoder(getSelfModel());
   storage = new FusionStorageAdapter(DATA_DIR);
   await storage.initialize();
+  yuyaoMemory = new YuyaoMemoryService(storage.getSQLite());
   yuyaoMemory = new YuyaoMemoryService(storage.getSQLite());
   memoryVault = new MemoryVault();
   await memoryVault.initialize();
@@ -583,7 +584,7 @@ async function initPipeline(): Promise<void> {
   topicTracker = new TopicTracker(storage.getSQLite());
   somaticMemory = new SomaticMemory(storage.getSQLite());
   // 玉瑶的"做梦研究"定时器（每5分钟检查一次待研究话题）
-  setInterval(async () => {
+  addTimer(setInterval(async () => {
     try {
       const needs = topicTracker.getTopicsNeedingResearch();
       if (needs.length === 0) return;
@@ -597,7 +598,7 @@ async function initPipeline(): Promise<void> {
     } catch (err) {
       console.warn('[DreamResearch] 研究失败:', err);
     }
-  }, 5 * 60 * 1000); // 5分钟
+  }, 5 * 60 * 1000)); // 5分钟
   console.log('  知识库已启动 ✓');
 
   masterProfile = new MasterProfileService(storage.getSQLite());
@@ -613,6 +614,7 @@ async function initPipeline(): Promise<void> {
   ));
   taskAgent = new TaskAgentEngine();
   startReminderChecker();
+  try { const logs = yuyaoMemory.checkMissedOnStartup(); for (const l of logs) console.log('[Memory]', l); } catch (e) { console.warn('[Memory] 启动自检失败:', e); }
   // 记事记忆启动自检
   try { const logs = yuyaoMemory.checkMissedOnStartup(); for (const l of logs) console.log('[Memory]', l); } catch (e) { console.warn('[Memory] 启动自检失败:', e); }
   console.log('  任务代理已启动 ✓');
@@ -624,14 +626,14 @@ async function initPipeline(): Promise<void> {
   // ── AQC 质检引擎启动（SandQC + GoldQC，定时独立运行） ──
   const { runSandQC, runGoldQC } = await import('../app/aqc/AQCEngine.js');
   // 砂金质检员（每小时扫描对话）
-  setInterval(async () => {
+  addTimer(setInterval(async () => {
     try {
       const result = runSandQC(storage.getSQLite(), conversationHistory);
       if (result.scanned > 0) console.log(`[SandQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条`);
     } catch (err) { console.warn('[SandQC] 失败:', err); }
-  }, 60 * 60 * 1000);
+  }, 60 * 60 * 1000));
   // 金库质检员 + 自动提炼（每小时）
-  setInterval(async () => {
+  addTimer(setInterval(async () => {
     try {
       const result = runGoldQC(storage.getSQLite());
       if (result.scanned > 0) console.log(`[GoldQC] 扫描 ${result.scanned} 条, 通过 ${result.approved} 条, 拒绝 ${result.rejected} 条`);
@@ -640,7 +642,7 @@ async function initPipeline(): Promise<void> {
       const promoted = autoPromoteCandidates(storage.getSQLite(), 5);
       if (promoted.length > 0) console.log(`[Vault] 自动提炼: ${promoted.length} 条→黑钻`);
     } catch (err) { console.warn('[GoldQC] 失败:', err); }
-  }, 60 * 60 * 1000);
+  }, 60 * 60 * 1000));
   // 启动后10分钟首次执行
   setTimeout(async () => {
     try {
@@ -653,7 +655,7 @@ async function initPipeline(): Promise<void> {
 
   console.log(`  融合存储已初始化 (${storage.getSQLite().getStatus().totalRecords} 条记忆 ✓`);
   // 景幻仙姑自动巡检（每30分钟）
-  setInterval(async () => {
+  addTimer(setInterval(async () => {
     try {
       const sqlite = storage.getSQLite();
       if (!sqlite) return;
@@ -670,7 +672,7 @@ async function initPipeline(): Promise<void> {
     } catch (e) {
       console.warn('[Jinghuan] 巡检失败:', e);
     }
-  }, 30 * 60 * 1000);
+  }, 30 * 60 * 1000));
 }
 
 import { deriveM5Strategy } from './chat.js';
@@ -1005,6 +1007,47 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 记事记忆 API ──
+    if (req.method === 'POST' && url.pathname === '/api/memory') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const { type, key, value, remind_at, repeat_rule } = body;
+        if (!type || !key || !value) { res.writeHead(400); res.end(JSON.stringify({ error: 'type, key, value required' })); return; }
+        switch (type) {
+          case 'object_location': yuyaoMemory.storeObjectLocation(key, value); break;
+          case 'fact': yuyaoMemory.storeFact(key, value); break;
+          case 'reminder': yuyaoMemory.setReminder(value, remind_at || new Date(Date.now() + 3600000).toISOString(), repeat_rule); break;
+          default: res.writeHead(400); res.end(JSON.stringify({ error: 'unknown type' })); return;
+        }
+        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory') {
+      try {
+        const q = url.searchParams.get('q') || '';
+        const results = yuyaoMemory.search(q);
+        res.writeHead(200); res.end(JSON.stringify({ results }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory/reminders') {
+      try {
+        const reminders = yuyaoMemory.getPendingReminders();
+        res.writeHead(200); res.end(JSON.stringify({ reminders }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/ack-reminder') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        if (!body.id) { res.writeHead(400); res.end(JSON.stringify({ error: 'id required' })); return; }
+        yuyaoMemory.markReminded(body.id);
+        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+
     // ── 候选回复偏好记录
     // ── 候选回复偏好记录（用户选择了哪个候选，记录到 M6） ──
     if (req.method === 'POST' && url.pathname === '/api/chat/prefer-candidate') {
@@ -1156,7 +1199,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         res.end(JSON.stringify({ status: 'ok', report: result }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ status: 'error', message: err.message }));
+        res.end(JSON.stringify({ status: 'error', message: (err instanceof Error ? err.message : String(err)) }));
       }
       return;
     }
