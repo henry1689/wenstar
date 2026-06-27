@@ -121,6 +121,19 @@ export function addBlackDiamond(
   const id = `bd_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
   const now = new Date().toISOString();
   const tags = params.tags || [];
+  // 黑钻上限 200 条：超出时淘汰钙化分最低的
+  try {
+    const total = (sqlite.queryAll('SELECT COUNT(*) as cnt FROM black_diamond') as any[])?.[0]?.cnt || 0;
+    if (total >= 200) {
+      const lowest = sqlite.queryAll('SELECT id, calcium_level FROM black_diamond ORDER BY CAST(calcium_level AS REAL) ASC, created_at ASC LIMIT 1') as any[];
+      if (lowest.length > 0) {
+        const demotedId = lowest[0].id;
+        sqlite.writeRaw('UPDATE memories SET promoted_to_diamond = 0 WHERE id = (SELECT source_id FROM black_diamond WHERE id = ?)', [demotedId]);
+        sqlite.writeRaw('DELETE FROM black_diamond WHERE id = ?', [demotedId]);
+        console.log('[Vault] 黑钻超出上限(200)，降级: ' + demotedId);
+      }
+    }
+  } catch (_) { /* 上限检测不阻塞晋升 */ }
   // P3: mark as promoted in memories table
   sqlite.writeRaw(`UPDATE memories SET promoted_to_diamond = 1 WHERE id = ?`, [params.source_id]);
   sqlite.writeRaw(

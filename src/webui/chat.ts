@@ -198,6 +198,27 @@ function getTopicRepeatCount(message: string): number {
   return 0;
 }
 
+const _invalidPersonNames = new Set([
+  '上班','吃饭','工作','散步','开会','咖啡','宠物','小孩','游戏',
+  '小屄','小逼','平胸','关上','关系','别喜欢','别说别','小小','小长',
+  '应用','强调','时代','时光','那个深','那次','解自己','解女子','解剖学',
+  '累','老是','老板','满足','亲戚','同事','李四','张三','钟师',
+  '王建国','周总开','喜欢','爱','结婚','运动','跑步','游泳','健身',
+  '手机','电脑','电视','电影','音乐','阅读','学习','考试','成绩',
+  '回家','出门','睡觉','起床','洗澡','刷牙','洗脸','衣服','鞋子',
+  '今天','明天','昨天','上午','下午','晚上','中午','早上','现在',
+  '这个','那个','什么','怎么','为什么','因为','所以','如果','然后',
+  '可以','应该','能够','需要','知道','觉得','认为','希望','相信',
+]);
+
+function isValidPersonName(name: string): boolean {
+  if (!name || name.length < 2 || name.length > 6) return false;
+  if (_invalidPersonNames.has(name)) return false;
+  // 纯数字/字母不算人名
+  if (/^[a-zA-Z0-9_]+$/.test(name)) return false;
+  return true;
+}
+
 const PERC_LABELS: Record<string,{q:number;label:string}> = {
   pleasure:{q:1,label:"E1愉悦度"}, arousal:{q:1,label:"E2唤醒度"}, dominance:{q:1,label:"E3支配感"},
   aggression:{q:1,label:"E4攻击性"}, sincerity:{q:1,label:"E5真诚度"}, humor:{q:1,label:"E6幽默感"},
@@ -1111,7 +1132,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     // FIX-1: M4 完成后写入尚未建立家庭关系的 person 实体
     try {
-      const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1);
+      const _pg = dna.entity_genes.filter((g: any) => g.type === 'person' && g.name !== '我' && g.name.length > 1 && isValidPersonName(g.name));
       if (_pg.length > 0 && ctx.m4) {
         const _fg = ctx.m4.getFamilyGraph();
         for (const _p of _pg) {
@@ -2376,7 +2397,7 @@ async function flushDialogGroup(ctx: any, dg: any, dna: any, decision: any, mess
         const fg = ctx.m4.getFamilyGraph();
         if (fg) {
           for (const name of dg.entities) {
-            fg.integrateSocialRelation(name, 'acquaintance_of', '').catch(() => {});
+            if (isValidPersonName(name)) fg.integrateSocialRelation(name, 'acquaintance_of', '').catch(() => {});
             // v1.1: 闭组时自动提取人物档案
             fg.extractProfileFromText(name, combined).catch(() => {});
           }

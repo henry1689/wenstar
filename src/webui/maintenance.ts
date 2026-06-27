@@ -125,6 +125,8 @@ export class MaintenanceService {
     runDecay?: () => { total: number; archived: number };
     /** 知识库过期无分类条目清理（铁律：3个月无分类视为垃圾） */
     runKnowledgeGc?: () => number;
+    /** 记事记忆过期清理 */
+    runNoteGc?: () => number;
     /** 砂金库→金库关联：压缩时查 M2 是否已存（提供 SQLite queryAll） */
     _sqliteGetter?: () => any | null;
     /** 家族图谱主库（双写人名抢救用） */
@@ -140,6 +142,7 @@ export class MaintenanceService {
     }
     if (deps.runDecay) this.runDecay = deps.runDecay;
     if (deps.runKnowledgeGc) this._runKnowledgeGc = deps.runKnowledgeGc;
+    if (deps.runNoteGc) this._runNoteGc = deps.runNoteGc;
     if (deps._sqliteGetter) this._sqliteGetter = deps._sqliteGetter;
     if (deps.familyGraph) {
       this.familyGraph = typeof deps.familyGraph === 'function' ? null : deps.familyGraph;
@@ -150,6 +153,7 @@ export class MaintenanceService {
   }
 
   private _runKnowledgeGc: () => number = () => 0;
+  private _runNoteGc: (() => number) | null = null;
 
   private _storageGetter: (() => AnyStorage) | null = null;
 
@@ -173,9 +177,13 @@ export class MaintenanceService {
     }, this.config.gcInterval);
 
     // 知识库未分类条目 GC（3个月无分类彻底删除 — 铁律）
+    // 记事记忆过期清理（365天）
     setInterval(() => {
-      try { const r = this._runKnowledgeGc(); if (r > 0) console.log('[Maintenance] 知识库GC: 清理 ' + r + ' 条过期未分类条目'); }
-      catch (e) { console.error('[Maintenance] 知识库GC失败:', e); }
+      try {
+        const r = this._runKnowledgeGc(); if (r > 0) console.log('[Maintenance] 知识库GC: 清理 ' + r + ' 条过期未分类条目');
+        // 清理过期记事记忆（调用 YuyaoMemoryService，通过注入的函数）
+        if (this._runNoteGc) { const n = this._runNoteGc(); if (n > 0) console.log('[Memory] 清理过期记事: ' + n + ' 条'); }
+      } catch (e) { console.error('[Maintenance] 知识库GC失败:', e); }
       // (v1.1) 同步清理 FG 过期 pending 条目（30天TTL）
       try {
         const fg = this.familyGraph ?? (this._fgGetter ? this._fgGetter() : null);
@@ -260,6 +268,29 @@ export class MaintenanceService {
    * 如果已经压缩过的摘要再次被压缩，会进一步合并。
    */
   async runCompaction(): Promise<void> {
+    // DB直接压缩：检查砂金库中未压缩的记录，超过阈值则标记
+    const sqlite = this._sqliteGetter ? this._sqliteGetter() : null;
+    if (sqlite) {
+      try {
+        const totalRaw = sqlite.queryAll("SELECT COUNT(*) as cnt FROM conversations WHERE is_compacted=0 AND is_test=0");
+        const rawCount = totalRaw[0]?.cnt || 0;
+        if (rawCount > this.config.compactionThreshold) {
+          // 标记最早的 half 为已压缩（只标记，不删除）
+          const toMark = rawCount - this.config.keepFullTurns;
+          if (toMark > 0) {
+            sqlite.writeRaw(
+              "UPDATE conversations SET is_compacted=1 WHERE id IN (SELECT id FROM conversations WHERE is_compacted=0 AND is_test=0 ORDER BY rowid ASC LIMIT ?)",
+              [toMark]
+            );
+            console.log(`[Maintenance] DB压缩: 标记 ${toMark} 条对话为已压缩 (砂金库共 ${rawCount} 条)`);
+          }
+        }
+      } catch (e) {
+        console.warn('[Maintenance] DB压缩失败:', e);
+      }
+    }
+
+    // 同时做内存压缩（原有逻辑）
     const history = this.getConversationHistory();
     if (history.length <= this.config.compactionThreshold) {
       return; // 未达阈值，无需压缩
@@ -269,8 +300,6 @@ export class MaintenanceService {
     const toCompact = history.slice(0, history.length - keep);
     const remaining = history.slice(history.length - keep);
 
-    // 获取 SQLite（用于检测 M2 中是否已存）
-    const sqlite = this._sqliteGetter ? this._sqliteGetter() : null;
 
     // 将旧对话压缩为摘要轮次（带 M2 关联检测）
     const summaries = await this.compressTurnsSmart(toCompact, sqlite);
