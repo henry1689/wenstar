@@ -229,10 +229,18 @@ export class DeepSeekLLMProvider implements LLMProvider {
       try { const { WorkingMemory } = await import('../m9/WorkingMemory.js'); WorkingMemory.currentTag = DeepSeekLLMProvider._currentRole; } catch {}
     } catch (_re) { /* 路由失败不阻塞 */ }
 
-    // 🔥 角色扮演：完全隔离路径
+    // 🔥 角色扮演：完全隔离路径（角色设定优先）
     if (kb.startsWith('【角色扮演】')) {
       const rpContent = kb.replace('【角色扮演】', '').trim();
-      const messages: DeepSeekMessage[] = [{ role: 'system', content: rpContent }];
+      // 从 rpContent 中拆出角色设定和扮演指令
+      const roleDetailMatch = rpContent.match(/【角色设定详细说明（以下是你必须严格遵循的设定）】\n([\s\S]*)/);
+      const roleDetail = roleDetailMatch ? roleDetailMatch[1].trim() : '';
+      const instruction = roleDetailMatch ? rpContent.substring(0, rpContent.indexOf('【角色设定详细说明')).trim() : rpContent;
+      // 角色设定作为核心指令（设定在先，扮演在后）
+      const systemContent = roleDetail
+        ? '你现在的身份和设定如下。你必须严格遵循这些设定来扮演，不要跳出角色。\n\n========== 角色设定 ==========\n' + roleDetail + '\n\n========== 扮演指令 ==========\n' + instruction
+        : rpContent;
+      const messages: DeepSeekMessage[] = [{ role: 'system', content: systemContent }];
       const memoryMsg = history.find(t => t.content?.startsWith('📕 【记忆】'));
       if (memoryMsg) messages.push({ role: 'user', content: memoryMsg.content });
       const sanitize = (t: string) => t.replaceAll('妙玉', '玉儿').replaceAll('宝玉', '宝二爷').replaceAll('红楼逸事', '桃花源记');

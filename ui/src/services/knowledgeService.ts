@@ -32,6 +32,45 @@ export async function searchKnowledge(keyword: string): Promise<KnowledgeItem[]>
   return data.items || [];
 }
 
+/** 获取单条知识详情 */
+export async function fetchKnowledgeItem(id: string): Promise<KnowledgeItem | null> {
+  try {
+    const res = await fetch(`${API_BASE}/knowledge/${id}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+/** 新增知识条目 */
+export async function addKnowledge(params: {
+  title: string; content: string; source_type?: string;
+  tags?: string[]; classification?: string;
+}): Promise<KnowledgeItem | null> {
+  try {
+    const res = await fetch(`${API_BASE}/knowledge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+/** 更新知识条目 */
+export async function updateKnowledge(id: string, params: {
+  title?: string; content?: string; tags?: string[];
+}): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/knowledge/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 /** 删除知识条目 */
 export async function deleteKnowledge(id: string): Promise<boolean> {
   const res = await fetch(`${API_BASE}/knowledge`, {

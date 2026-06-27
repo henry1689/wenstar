@@ -1203,6 +1203,22 @@ html, body, #root {
   opacity: 1;
 }
 
+/* 上传提示通知 */
+.chat-notice {
+  font-size: 11px;
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.15);
+  border-radius: 8px;
+  padding: 6px 12px;
+  text-align: center;
+  animation: notice-fade 0.3s ease;
+}
+@keyframes notice-fade {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* 输入区 */
 .chat-input-area {
   display: flex;
@@ -1388,6 +1404,62 @@ html, body, #root {
   background: rgba(180, 195, 210, 0.05);
 }
 
+/* TTS 喇叭按钮 */
+.chat-tts-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 195, 210, 0.1);
+  background: transparent;
+  color: rgba(74, 222, 128, 0.6);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.chat-tts-btn:hover {
+  color: rgba(74, 222, 128, 0.9);
+  border-color: rgba(74, 222, 128, 0.3);
+  background: rgba(74, 222, 128, 0.06);
+}
+.chat-tts-btn.muted {
+  color: rgba(180, 195, 210, 0.3);
+}
+.chat-tts-btn.muted:hover {
+  color: rgba(180, 195, 210, 0.6);
+  border-color: rgba(180, 195, 210, 0.2);
+  background: rgba(180, 195, 210, 0.05);
+}
+
+/* 撤回按钮 */
+.chat-recall-btn {
+  font-size: 9px;
+  color: #ff6b6b;
+  background: transparent;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  line-height: 1.3;
+}
+.chat-recall-btn:hover {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.6);
+}
+.chat-msg.recalled {
+  opacity: 0.45;
+}
+.chat-msg.recalled .chat-msg-content {
+  text-decoration: line-through;
+  font-style: italic;
+  font-size: 11px;
+  color: #888;
+}
+
 /* ============================================================
    手机端响应式适配
    ============================================================ */
@@ -1444,4 +1516,251 @@ html, body, #root {
   .chat-input-area {
     gap: 4px;
   }
+}
+
+/* ============================================================
+   知识库面板 (KnowledgePanel)
+   ============================================================ */
+.kb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kb-panel {
+  width: min(90vw, 760px);
+  height: min(85vh, 600px);
+  background: #0c0e14;
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), inset 0 0 60px rgba(0, 255, 255, 0.02);
+}
+.kb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+.kb-title {
+  font-size: 13px;
+  color: #00ffff;
+  font-weight: 600;
+}
+.kb-count {
+  font-size: 11px;
+  color: #666;
+  font-weight: normal;
+}
+.kb-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.kb-btn {
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #aaa;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+.kb-btn:hover {
+  color: #fff;
+  border-color: rgba(0, 255, 255, 0.3);
+  background: rgba(0, 255, 255, 0.06);
+}
+.kb-btn-add {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.2);
+}
+.kb-btn-add:hover {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.08);
+}
+.kb-btn-close {
+  font-size: 14px;
+  padding: 2px 8px;
+}
+.kb-error {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.06);
+  border-bottom: 1px solid rgba(255, 107, 107, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.kb-error-dismiss {
+  background: none;
+  border: none;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-size: 12px;
+}
+.kb-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.kb-loading, .kb-empty {
+  text-align: center;
+  padding: 40px;
+  color: #555;
+  font-size: 12px;
+}
+.kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kb-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.kb-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.kb-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.kb-item-title {
+  font-size: 12px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-item-meta {
+  font-size: 10px;
+  color: #555;
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+.kb-item-class {
+  color: #ff6600;
+}
+.kb-item-time {
+  color: #444;
+}
+.kb-item-src {
+  color: #666;
+}
+.kb-item-del {
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.3;
+  padding: 2px 6px;
+  transition: opacity 0.2s;
+}
+.kb-item-del:hover {
+  opacity: 1;
+}
+.kb-view, .kb-add {
+  padding: 8px 12px;
+}
+.kb-back {
+  font-size: 11px;
+  color: #00ffff;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  margin-bottom: 12px;
+  font-family: inherit;
+}
+.kb-back:hover {
+  text-decoration: underline;
+}
+.kb-view-title {
+  font-size: 14px;
+  color: #fff;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.kb-view-meta {
+  font-size: 10px;
+  color: #555;
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.kb-view-content {
+  font-size: 12px;
+  color: #aaa;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.kb-add-title {
+  font-size: 14px;
+  color: #fff;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.kb-add-field {
+  margin-bottom: 12px;
+}
+.kb-add-field label {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.kb-add-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: #ccc;
+  font-family: inherit;
+  outline: none;
+}
+.kb-add-input:focus {
+  border-color: rgba(0, 255, 255, 0.2);
+}
+.kb-add-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: #ccc;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+  line-height: 1.6;
+}
+.kb-add-textarea:focus {
+  border-color: rgba(0, 255, 255, 0.2);
 }

@@ -27,7 +27,7 @@ if (fs.existsSync(envPath)) {
 const child = spawn('npx', ['tsx', 'src/webui/server.ts'], { shell: true,
   cwd: __dirname,
   stdio: 'inherit',
-  env: process.env,
+  env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=6144' },
 });
 
 child.on('exit', (code) => {

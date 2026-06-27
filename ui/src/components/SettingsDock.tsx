@@ -23,8 +23,7 @@ export default function SettingsDock() {
   const [newLabel, setNewLabel] = useState('DeepSeek API Key');
   const [newValue, setNewValue] = useState('');
   const [ttsVoices, setTtsVoices] = useState<{id:string;name:string;gender:string;locale:string;engine?:string}[]>([]);
-  const [ttsVoice, setTtsVoice] = useState('zh-CN-XiaoyiNeural');
-  const [ttsEngine, setTtsEngine] = useState('edge');
+  const [ttsVoice, setTtsVoice] = useState('zh-CN-XiaoxiaoNeural');
   const [ttsStatus, setTtsStatus] = useState('');
 
   const loadKeys = async () => {
@@ -36,15 +35,14 @@ export default function SettingsDock() {
 
   useEffect(() => { if (isOpen) loadKeys(); }, [isOpen]);
 
-  // 加载 TTS 声音列表
+  // 加载 TTS 声音列表（仅 Edge-TTS，其他引擎已移除）
   const loadVoices = async () => {
     try {
       const res = await fetch('http://localhost:8765/voices');
       if (!res.ok) { setTtsStatus('TTS 服务未连接'); return; }
       const data = await res.json();
       setTtsVoices(data.voices || []);
-      setTtsVoice(data.current || 'zh-CN-XiaoyiNeural');
-      setTtsEngine(data.engine || 'edge');
+      setTtsVoice(data.current || 'zh-CN-XiaoxiaoNeural');
       setTtsStatus('在线');
     } catch { setTtsStatus('TTS 服务未连接'); }
   };
@@ -59,42 +57,7 @@ export default function SettingsDock() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ voice: voiceId }),
       });
-      if (res.ok) {
-        const d = await res.json();
-        setTtsEngine(d.engine || 'edge');
-        setTtsStatus('已切换');
-      } else setTtsStatus('切换失败');
-    } catch { setTtsStatus('切换失败'); }
-    setTimeout(() => setTtsStatus('在线'), 2000);
-  };
-
-  const handleEngineChange = async (engine: string) => {
-    setTtsEngine(engine);
-    setTtsStatus('切换引擎...');
-    // 切引擎时自动选中并同步该引擎的第一个声音
-    const defaultVoice = ttsVoices.find(v => v.engine === engine);
-    if (defaultVoice) {
-      setTtsVoice(defaultVoice.id);
-      // 同时同步到服务端
-      try {
-        await fetch('http://localhost:8765/voice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ voice: defaultVoice.id }),
-        });
-      } catch {}
-    }
-    try {
-      const res = await fetch('http://localhost:8765/engine', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engine }),
-      });
-      if (res.ok) {
-        if (engine === 'chattts') setTtsStatus('本地模型已就绪');
-        else if (engine === 'moss') setTtsStatus('轻量模型已就绪');
-        else setTtsStatus('云端已就绪');
-      }
+      if (res.ok) setTtsStatus('已切换');
       else setTtsStatus('切换失败');
     } catch { setTtsStatus('切换失败'); }
     setTimeout(() => setTtsStatus('在线'), 2000);
@@ -300,48 +263,16 @@ export default function SettingsDock() {
               </button>
             )}
 
-            {/* ── TTS 引擎切换 ── */}
+            {/* ── TTS 语音设置（仅 Edge-TTS） ── */}
             <div style={{
               marginTop: 10, paddingTop: 8,
               borderTop: '1px solid rgba(255,255,255,0.04)',
             }}>
               <div style={{ fontSize: 9, color: 'rgba(180,195,210,0.5)', marginBottom: 6 }}>
-                🎤 TTS 引擎
-              </div>
-              <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-                <button
-                  onClick={() => handleEngineChange('edge')}
-                  style={{
-                    flex: 1, padding: '4px 0', borderRadius: 6, cursor: 'pointer',
-                    border: ttsEngine === 'edge' ? '1px solid rgba(96,165,250,0.4)' : '1px solid rgba(255,255,255,0.06)',
-                    background: ttsEngine === 'edge' ? 'rgba(96,165,250,0.1)' : 'transparent',
-                    color: ttsEngine === 'edge' ? '#60a5fa' : 'rgba(255,255,255,0.3)',
-                    fontSize: 9, fontFamily: 'inherit', transition: 'all 0.15s',
-                  }}
-                >☁️ Edge 云端</button>
-                <button
-                  onClick={() => handleEngineChange('chattts')}
-                  style={{
-                    flex: 1, padding: '4px 0', borderRadius: 6, cursor: 'pointer',
-                    border: ttsEngine === 'chattts' ? '1px solid rgba(74,222,128,0.4)' : '1px solid rgba(255,255,255,0.06)',
-                    background: ttsEngine === 'chattts' ? 'rgba(74,222,128,0.1)' : 'transparent',
-                    color: ttsEngine === 'chattts' ? '#4ade80' : 'rgba(255,255,255,0.3)',
-                    fontSize: 9, fontFamily: 'inherit', transition: 'all 0.15s',
-                  }}
-                >🖥️ ChatTTS 本地</button>
-                <button
-                  onClick={() => handleEngineChange('moss')}
-                  style={{
-                    flex: 1, padding: '4px 0', borderRadius: 6, cursor: 'pointer',
-                    border: ttsEngine === 'moss' ? '1px solid rgba(251,191,36,0.4)' : '1px solid rgba(255,255,255,0.06)',
-                    background: ttsEngine === 'moss' ? 'rgba(251,191,36,0.1)' : 'transparent',
-                    color: ttsEngine === 'moss' ? '#fbbf24' : 'rgba(255,255,255,0.3)',
-                    fontSize: 9, fontFamily: 'inherit', transition: 'all 0.15s',
-                  }}
-                >🌱 MOSS 轻量</button>
+                🎤 语音合成 · Edge-TTS
               </div>
               <div style={{ fontSize: 9, color: 'rgba(180,195,210,0.5)', marginBottom: 6 }}>
-                🎤 声音
+                音色
               </div>
               <select
                 value={ttsVoice}
@@ -353,19 +284,13 @@ export default function SettingsDock() {
                   fontSize: 9, outline: 'none', fontFamily: 'inherit',
                 }}
               >
-                {ttsVoices
-                  .filter(v =>
-                    ttsEngine === 'chattts' ? v.engine === 'chattts' :
-                    ttsEngine === 'moss' ? v.engine === 'moss' :
-                    v.engine === 'edge'
-                  )
-                  .map(v => (
+                {ttsVoices.map(v => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.gender} · {v.locale})
                   </option>
                 ))}
               </select>
-              <div style={{ fontSize: 8, color: ttsStatus, marginTop: 4 }}>
+              <div style={{ fontSize: 8, color: ttsStatus === '在线' ? '#4ade80' : '#f87171', marginTop: 4 }}>
                 {ttsStatus}
               </div>
             </div>

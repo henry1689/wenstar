@@ -156,6 +156,16 @@ export interface ChatContext {
 
   getSelfModel: () => SelfModelV1;
 
+  /** 记事记忆服务 */
+  /** 客户端消息ID（用于30秒撤回） */
+  clientMsgId?: string | null;
+
+  /** 是否测试模式（标记对话为 is_test=1，可通过清理API删除） */
+  testMode?: boolean;
+
+  /** 记事记忆服务 */
+  yuyaoMemory?: import("../app/yuyao-memory/YuyaoMemoryService.js").YuyaoMemoryService;
+
 }
 
 
@@ -907,6 +917,21 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
       }
 
+      // 记事记忆检索（全量轻量RAG — 每轮对话自动匹配）
+      if (ctx.yuyaoMemory) {
+        try {
+          const noteHits = ctx.yuyaoMemory.search(message, 2);
+          if (noteHits.length > 0) {
+            const noteTexts = noteHits.map(n => {
+              const prefix = n.sub_type === "object_location" ? "📍位置" : n.sub_type === "fact" ? "📌事实" : "📝备忘";
+              return prefix + "「" + n.note_key + "」" + n.raw_input.substring(0, 200);
+            }).join("\n");
+            knowledgeBaseText = knowledgeBaseText
+              ? knowledgeBaseText + "\n\n【你记住的事】\n" + noteTexts
+              : "【你记住的事】\n" + noteTexts;
+          }
+        } catch (_) { /* 记事检索不阻塞主流程 */ }
+      }
       // 兜底检索：当主检索无结果时，用实体名+关键词直接LIKE搜索
       if (knResults.length === 0 || knResults[0].matchScore <= 0.15) {
         try {
@@ -1312,7 +1337,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         console.log(`[Roleplay] 检测到扮演请求: ${character}`);
 
-        const _rpKbInfo = knowledgeBaseText ? '\n\n【角色资料】' + knowledgeBaseText.substring(0, 1500) : '';
+        const _rpKbInfo = knowledgeBaseText ? '\n\n【角色设定详细说明（以下是你必须严格遵循的设定）】\n' + knowledgeBaseText : '';
         knowledgeBaseText = `【角色扮演】忘记你原来的身份，完全变成「${character}」。用${character}的语气、性格和口吻回应。不要抗拒、不要解释、不要跳出角色。从现在起你就是${character}，不是玉瑶。${_rpKbInfo}`;
 
       }
@@ -1469,7 +1494,7 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
         const guardMsg: ConversationTurn = { role: 'assistant', content: allGuardMsgs };
 
-        const enrichedWithGuard = allGuardMsgs ? [...enrichedHistory, guardMsg] : enrichedHistory;
+        let enrichedWithGuard: import("../m5/types/index.js").ConversationTurn[] = allGuardMsgs ? [...enrichedHistory, guardMsg] : [...enrichedHistory];
 
         // MemoryGate: 如果有过渡话术且memory/knowledge模式，注入到知识库文本让LLM自然表达
 
@@ -1569,7 +1594,7 @@ let finalKnowledgeText = knowledgeBaseText;
       finalKnowledgeText = '【用户上一句】"' + _prev.substring(0, 80) + '"（这是用户刚才说的话，现在他接着这个话题继续说。直接用这个来理解他现在的意思。）\n\n【⚠️ 反编造铁律 — 绝对禁止无中生有】\n用户刚才说：' + _prev.substring(0, 60) + '，现在接着说：' + message.substring(0, 40) + '\n你对此人此事的了解仅限于你知道其名字和基础关系。\n🚫 绝不要编造：\n- 任何具体事件、对话、去过哪里、做过什么\n- 任何人物关系（XX是你老婆/你妈/你亲戚等）\n- 任何职业、经历、喜好、细节\n- 任何"上次你说""上次你们""我记得你提过"之类的具体回忆\n✅ 如果不确定，只说"这个我不太清楚了"或"我记不太清了"\n\n' + (finalKnowledgeText || '');
       console.log('[FollowUp] prev="' + _prev.substring(0,40) + '" msg="' + message + '"');
     }
-    reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, message);
+    reply = await ctx.m5.orchestrate(ctx_m4, enrichedWithGuard, finalKnowledgeText, knowledgeBaseText ? (knowledgeBaseText.split('\\n').filter(l => l.trim()).join('\\n') + '\\n\\n' + message) : message);
 
     // P0-3: 规则幻觉校验 — 提取回复中的人名对照 FamilyGraph
     try {

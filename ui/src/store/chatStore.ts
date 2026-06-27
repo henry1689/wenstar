@@ -10,6 +10,8 @@ export interface ChatMessage {
   timestamp: number;
   /** 候选回复（语气/深度变体，供用户选择偏好） */
   candidates?: { a: { text: string; label: string }; b: { text: string; label: string } } | null;
+  /** 30秒内撤回标记 */
+  recalled?: boolean;
 }
 
 interface ChatStore {
@@ -35,6 +37,7 @@ interface ChatStore {
   setM3Data: (data: any) => void;
   setLastMessageCandidates: (candidates: any) => void;
   clearMessages: () => void;
+  recallMessage: (id: string) => void;
   triggerFlash: (memoryId?: string) => void;
   /** SSE 流式操作 */
   appendStreamMessage: (chunk: string) => void;
@@ -73,6 +76,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setError: (error) => set({ error }),
   setTurnCount: (count) => set({ turnCount: count }),
   clearMessages: () => set({ messages: [], turnCount: 0, emotionalFlash: false, triggeredMemoryId: null }),
+  recallMessage: (id: string) =>
+    set((s) => ({
+      messages: s.messages.map(m => m.id === id ? { ...m, recalled: true } : m),
+    })),
   setLastMessageCandidates: (candidates) =>
     set((s) => {
       const msgs = [...s.messages];

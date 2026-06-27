@@ -165,9 +165,9 @@ export function buildRoleSystemPrompt(role: RoleType, level: -2|-1|0|1|2, knowle
     prompt = prompt.replace('{level_instruction}', buildLevelInstruction(level));
   }
 
-  // 追加知识库
+  // 追加知识库（优先使用，自然地融入回答）
   if (knowledge) {
-    prompt += `\n\n[参考信息]\n${knowledge}\n`;
+    prompt += `\n\n${knowledge}\n`;
   }
 
   return prompt;

@@ -1,4 +1,13 @@
+---
+name: test-data-discipline
+description: 测试数据清理铁律（已自动常驻）
+---
+
 # 测试数据清理 · Test Data Discipline
+
+## 状态：🟢 已自动常驻（无需调用）
+
+此规则已写入 `CLAUDE.md` 永久行为规则第 4 条，测试结束后自动提醒。**不再需要手动调用。**
 
 ## 铁律
 

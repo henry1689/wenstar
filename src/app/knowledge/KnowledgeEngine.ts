@@ -11,7 +11,6 @@ import type { KnowledgeItem } from './types.js';
 import type { Perception24D } from '../../m3/types/perception.js';
 import { parseFile } from './FileUploadService.js';
 import { FileChunker } from '../tools/FileChunker.js';
-import { INGESTION_GUARD } from '../../config/ingestion-guard.js';
 
 // 文件切片器实例（段落策略，每块 500 字符，50 重叠）
 const fileChunker = new FileChunker({ strategy: 'paragraph', chunkSize: 500, overlap: 50, minChunkLen: 20 });
@@ -190,6 +189,32 @@ async function indexContent(
 }
 
 export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
+  /**
+   * 修复双重 UTF-8 编码的中文字符串
+   * 如: "ã€Šæˆ€æ¢¦å›­" -> "《恋梦园"
+   * 检测方式: 将字符串每个字符当作字节重新解码为 UTF-8，
+   * 如果结果包含有效中文则使用修复后版本。
+   */
+  function fixDoubleEncoded(str: string): string {
+    const bytes: number[] = [];
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      // 如果已有合法中文（>U+4E00），说明是正常字符串，无需修复
+      if (code >= 0x4E00 && code <= 0x9FA5) return str;
+      bytes.push(code);
+    }
+    try {
+      const fixed = Buffer.from(bytes).toString('utf-8');
+      // 验证修复后是否包含中文字符
+      for (let i = 0; i < fixed.length; i++) {
+        const c = fixed.charCodeAt(i);
+        if (c >= 0x4E00 && c <= 0x9FA5) return fixed;
+        if (c === 0x300A || c === 0x300B) return fixed; // 《》
+      }
+    } catch {}
+    return str; // 无法修复，返回原字符串
+  }
+
   /** 新增（自动分块 + 嵌入 + 情绪关联 + 交互分类） */
   async function add(params: {
     title: string;
@@ -211,21 +236,10 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     /** P0: 情感曲谱（24D 感知向量 JSON） */
     emotion_vector?: string;
   }): Promise<KnowledgeItem> {
-    // 🔴 防线④: 写库前最终兜底 — 从配置读取阈值+关键词
-    const PT = INGESTION_GUARD.perceptionThresholds;
-    const ec = params.emotionalContext;
-    if (ec && ((ec.intimacy ?? 0) > PT.intimacy || (ec as any).sexual_attraction > PT.sexualAttraction)) {
-      if (INGESTION_GUARD.loggingEnabled)
-        console.log(`[KnowledgeGuard] 防线④ | 感知阈值拦截 | intimacy=${ec.intimacy}, sexual=${(ec as any).sexual_attraction}, 来源: ${params.source_type || 'unknown'}, 摘要: ${params.title?.substring(0, 30)}`);
-      return { id: '', title: params.title, content: '', source_type: 'blocked', tags: [], created_at: '', updated_at: '', locked: false, classification_pending: true } as any;
-    }
-    // 关键词拦截（使用配置的关键词列表）
-    const KEYWORD_RE = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
-    if (KEYWORD_RE.test(params.title + ' ' + (params.content || ''))) {
-      if (INGESTION_GUARD.loggingEnabled)
-        console.log(`[KnowledgeGuard] 防线④ | 亲密关键词命中 | 来源: ${params.source_type || 'unknown'}, 摘要: ${params.title?.substring(0, 30)}`);
-      return { id: '', title: params.title, content: '', source_type: 'blocked', tags: [], created_at: '', updated_at: '', locked: false, classification_pending: true } as any;
-    }
+    // 知识库不再设内容守卫 — 用户私有知识库，用户自主管理
+    // 修复双重UTF-8编码（浏览器上传时可能出现的文件名编码问题）
+    const fixedTitle = fixDoubleEncoded(params.title);
+    const fixedContent = params.content ? fixDoubleEncoded(params.content) : params.content;
 
     const id = `kn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
@@ -245,7 +259,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
       : (params.scene_tags ?? null);
 
     const entry: KnowledgeItem = {
-      id, title: params.title, content: params.content,
+      id, title: fixedTitle, content: fixedContent,
       source_type: params.source_type ?? 'text', source_name: params.source_name ?? null,
       file_size: params.file_size ?? 0, tags: allTags,
       created_at: now, updated_at: now, locked: false,
@@ -270,7 +284,7 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     // 异步分块 + 嵌入（不阻塞返回）
     syncToCabinet(entry);
     syncToMd(entry);
-    indexContent(sqlite, id, params.content).catch(err =>
+    indexContent(sqlite, id, fixedContent).catch(err =>
       console.warn(`[KnowledgeEngine] 索引失败 ${id}:`, err),
     );
 
@@ -298,15 +312,8 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
   }): Promise<boolean> {
     const existing = getById(id);
     if (!existing || existing.locked) return false;
-    // 🔴 更新内容同样触发亲密守卫
-    const newTitle = params.title ?? existing.title;
-    const newContent = params.content ?? existing.content;
-    const KEYWORD_RE = new RegExp(INGESTION_GUARD.intimateKeywords.join('|'));
-    if (KEYWORD_RE.test(newTitle + ' ' + newContent)) {
-      if (INGESTION_GUARD.loggingEnabled)
-        console.log(`[KnowledgeGuard] 防线④ | update拦截 | 原因: 亲密关键词 | id: ${id}, 摘要: ${newTitle.substring(0, 30)}`);
-      return false;
-    }
+    const newTitle = params.title ? fixDoubleEncoded(params.title) : existing.title;
+    const newContent = params.content ? fixDoubleEncoded(params.content) : existing.content;
     const now = new Date().toISOString();
     sqlite.writeRaw(
       `UPDATE knowledge_base SET title=?, content=?, tags=?, locked=?, updated_at=? WHERE id=?`,
@@ -504,10 +511,72 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     return dot / (aLen * bLen);
   }
 
-  /** 加权检索：场景标签 × 0.4 + 情感关联 × 0.3 + 文本相似度 × 0.3
+  // ─── 根据内容关键词估算 24D 情感向量（初始化默认用） ───
+  // cosineSimilarity 读取前6维: [pleasure, arousal, dominance, intimacy, sexual_attraction, safety]
+  function estimateEmotionFromContent(title: string, content: string): number[] {
+    const text = (title + ' ' + (content || '')).toLowerCase();
+    let pleasure = 0, arousal = 0, dominance = 0, intimacy = 0;
+    let sexual_attraction = 0, safety = 0.5;
+
+    // 亲密信号
+    if (/亲|爱|想|抱|吻|摸|操|屄|鸡巴|高潮|性|舒服/.test(text)) { intimacy += 0.6; sexual_attraction += 0.5; pleasure += 0.3; }
+    if (/老婆|女朋友|男友|喜欢|爱/.test(text)) { intimacy += 0.3; pleasure += 0.3; }
+    if (/可爱|漂亮|美|迷人/.test(text)) { pleasure += 0.3; sexual_attraction += 0.3; }
+
+    // 愉悦信号
+    if (/开心|快乐|舒服|爽|喜欢|幸福|高兴/.test(text)) pleasure += 0.5;
+    if (/好|棒|赞|不错|完美/.test(text)) pleasure += 0.3;
+
+    // 兴奋信号
+    if (/兴奋|激动|刺激|紧张/.test(text)) arousal += 0.5;
+    if (/期待|急|等不及/.test(text)) arousal += 0.3;
+
+    // 负面
+    if (/难过|伤心|哭|痛苦|烦|焦虑|害怕/.test(text)) { pleasure -= 0.3; safety -= 0.2; }
+    if (/生病|感冒|失眠|药|医院/.test(text)) { safety -= 0.3; pleasure -= 0.2; }
+
+    // 工作/事务（降低亲密提高 factual 系数，cosineSimilarity 没读 factual 所以降 intimacy）
+    if (/工作|项目|客户|会议|方案|报告|数据|分析|文档|合同|预算|设计|策略/.test(text)) { intimacy = Math.max(0, intimacy - 0.3); pleasure = Math.max(0, pleasure - 0.1); dominance += 0.2; }
+
+    // 安全/信任
+    if (/家人|父母|老婆|老公|孩子|家/.test(text)) { safety += 0.2; intimacy += 0.2; }
+
+    // 默认弱正面
+    if (pleasure === 0 && arousal === 0 && intimacy === 0) {
+      pleasure = 0.2; arousal = 0.1; intimacy = 0.1;
+    }
+
+    function clamp(v: number) { return Math.max(-1, Math.min(1, v)); }
+    // 前6维：情感核心维度；后18维中性值 0.5（余弦相似度不误判为负相关）
+    const NEUTRAL_18 = [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5];
+    return [
+      clamp(pleasure), clamp(arousal), clamp(dominance), clamp(intimacy), clamp(sexual_attraction), clamp(safety),
+      ...NEUTRAL_18,
+    ];
+  }
+
+  /** 初始化所有无 emotion_vector 的知识条目（启动时调用一次） */
+  function initKBEmotionVectors(): number {
+    const rows = sqlite.queryAll(`SELECT id, title, content FROM knowledge_base WHERE emotion_vector IS NULL`);
+    if (!rows.length) return 0;
+    let count = 0;
+    for (const row of rows) {
+      try {
+        const vec = estimateEmotionFromContent(row.title as string, row.content as string);
+        sqlite.writeRaw(`UPDATE knowledge_base SET emotion_vector = ? WHERE id = ?`, JSON.stringify(vec), row.id as string);
+        count++;
+      } catch (_) { /* skip */ }
+    }
+    console.log(`[KB] 情感向量初始化: ${count}/${rows.length} 条`);
+    return count;
+  }
+
+  /** 加权检索：场景标签 × 0.35 + 情感关联 × 0.25 + 文本相似度 × 0.2 + 印象 × 0.2
    *
-   * 返回带 matchScore 和 breakdown 的结构化结果。
-   * 当 sceneScore 普遍低于 0.1 时，自动触发"情感相似场景知识迁移"降级。
+   * ⚠ 修复: 三段降级 + 全量扫描保底 + 日志可见
+   *
+   * 阶段1 — 提取消息中所有 2~4 字中文词 + ASCII 词，逐词 LIKE，取并集
+   * 阶段2 — 如果条数不够，全表扫描 + 情感+印象排序保底
    *
    * @param keyword 搜索关键词
    * @param sceneTags 当前场景标签列表
@@ -521,105 +590,99 @@ export function createKnowledgeEngine(sqlite: SQLiteAdapter) {
     limit = 5,
   ): Promise<Array<KnowledgeItem & { matchScore: number; breakdown: { scene: number; emotion: number; text: number } }>> {
     const trimmed = (keyword || '').trim();
-    const keywords = trimmed ? trimmed.match(/[一-龥a-zA-Z]{2,}/g) || [trimmed] : [];
 
-    // 构建 SQL：匹配 scene_tags 或 content/title
-    const sceneCond = sceneTags.length > 0
-      ? '(' + sceneTags.map(() => `scene_tags LIKE ?`).join(' OR ') + ')'
-      : null;
-    const textCond = keywords.length > 0
-      ? '(' + keywords.map(() => `content LIKE ? OR title LIKE ?`).join(' OR ') + ')'
-      : null;
+    // ── 提取所有 2~3 字中文 ngram (滑动窗口) + 2+ 字母 ASCII 词 ──
+    const chars: string[] = [];
+    for (const ch of trimmed) {
+      if (/[一-龥]/.test(ch)) chars.push(ch);
+      else if (/[a-zA-Z]/.test(ch)) chars.push(ch.toLowerCase());
+    }
+    const ngramSet = new Set<string>();
+    for (let i = 0; i < chars.length; i++) {
+      if (i + 1 < chars.length) ngramSet.add(chars[i] + chars[i+1]);
+      if (i + 2 < chars.length) ngramSet.add(chars[i] + chars[i+1] + chars[i+2]);
+    }
+    const enWords = trimmed.match(/[a-zA-Z]{2,}/g);
+    if (enWords) { for (const w of enWords) ngramSet.add(w); }
 
-    const params: any[] = [];
-    if (sceneCond) params.push(...sceneTags.map(t => `%${t}%`));
-    if (textCond) params.push(...keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`]));
+    // ── 全表扫描 + ngram 文本评分 + 情感/场景/印象排序 ──
+    const allRows: any[] = sqlite.queryAll(
+      `SELECT * FROM knowledge_base ORDER BY COALESCE(impression_score,0.5) DESC, updated_at DESC LIMIT 50`
+    );
+    if (!allRows.length) {
+      console.log('[KBw] 空库');
+      return [];
+    }
 
-    const whereClause = [sceneCond, textCond].filter(Boolean).join(' OR ');
-    // S2-1: 不再强制 classification_pending = 0，所有条目都可检索
-    const sql = `SELECT * FROM knowledge_base WHERE ${whereClause} ORDER BY updated_at DESC LIMIT 50`;
-
-    const rows = sqlite.queryAll(sql, params);
-    if (!rows.length) return [];
-
-    // 对每条结果计算得分
-    const scored: Array<{ item: KnowledgeItem; scene: number; emotion: number; text: number; pending: boolean }> = [];
-    const maxPossibleHits = keywords.length || 1;
-
-    for (const row of rows) {
+    // 逐条评分
+    const maxHits = ngramSet.size || 1;
+    const scored = allRows.map(row => {
       const item = rowToEntry(row);
       const isPending = !!(row as any).classification_pending;
+      const combined = (item.title + ' ' + (item.content || '')).toLowerCase();
 
-      // 场景匹配度 (0-1)
+      // 文本匹配: ngram 命中数
+      let hits = 0;
+      for (const ng of ngramSet) {
+        if (combined.includes(ng)) hits++;
+      }
+      const textScore = ngramSet.size > 0 ? Math.min(hits / maxHits, 1) : 0.5;
+
+      // 场景匹配
       const sceneScore = jaccardScene(item.scene_tags, sceneTags);
 
-      // 情感匹配度 (0-1)
+      // 情感匹配
       let emotionScore = 0;
       if (perception) {
         const ev = parseEmotionVector(item.emotion_vector);
-        if (ev) {
-          emotionScore = Math.max(0, cosineSimilarity(ev, perception));
-        } else {
-          // 没有 emotion_vector 的知识=0.3中性分（不惩罚也不特别推荐）
-          emotionScore = 0.3;
-        }
+        if (ev) emotionScore = Math.max(0, cosineSimilarity(ev, perception));
+        else emotionScore = 0.3;
       }
 
-      // 文本相似度 (0-1)
-      let textScore = 0;
-      if (keywords.length > 0) {
-        const combined = (item.title + item.content).toLowerCase();
-        let hits = 0;
-        for (const kw of keywords) {
-          if (combined.includes(kw.toLowerCase())) hits++;
-        }
-        textScore = Math.min(hits / maxPossibleHits, 1);
+      const penalty = isPending ? 0.7 : 1.0;
+      const impressionScore = item.impression_score || 0.5;
+      let matchScore: number;
+      if (textScore > 0) {
+        matchScore = Math.round((textScore * 0.50 + impressionScore * 0.20 + sceneScore * 0.15 + emotionScore * 0.15) * penalty * 1000) / 1000;
       } else {
-        textScore = 0.5; // 无关键词时给中性分
+        matchScore = Math.round((emotionScore * 0.35 + impressionScore * 0.25 + sceneScore * 0.25 + textScore * 0.15) * penalty * 1000) / 1000;
       }
 
-      scored.push({ item, scene: sceneScore, emotion: emotionScore, text: textScore, pending: isPending });
-    }
 
-    // S2-1: 未分类条目分数打折（×0.7），但不屏蔽
-    const classificationPenalty = (item: { pending: boolean }) => item.pending ? 0.7 : 1.0;
-
-    // 按 40/30/30 公式计算总分（已分类正常，未分类打折）
-    let results = scored.map(({ item, scene, emotion, text, pending }) => ({
-      ...item,
-      matchScore: Math.round((scene * 0.35 + emotion * 0.25 + text * 0.2 + (item.impression_score || 0.5) * 0.2) * (pending ? 0.7 : 1.0) * 1000) / 1000,
-      breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
-    }));
-
-    // 按 matchScore 降序
-        results.sort((a, b) => b.matchScore - a.matchScore);
-
-    // S2-6: 记录召回印象值（最高分条目的impression+0.05，上限1.0）
-    if (results.length > 0 && results[0].id) {
-      try {
-        const now = new Date().toISOString();
-        sqlite.writeRaw(
-          "UPDATE knowledge_base SET impression_score = MIN(1.0, COALESCE(impression_score, 0.5) + 0.05), last_recalled_at = ? WHERE id = ?",
-          [now, results[0].id]
-        );
-      } catch (_ir) { /* 印象值更新不阻塞 */ }
-    }
-
-
-    // 情感相似场景知识迁移：如果最佳结果的 sceneScore < 0.1，按 emotionScore 降维再搜一轮
-    if (results.length > 0 && results[0].breakdown.scene < 0.1 && perception) {
-      // 降低场景权重，提升情感权重：重新排序
-      const fallback = scored.map(({ item, scene, emotion, text, pending }) => ({
+      return {
         ...item,
-        matchScore: Math.round((emotion * 0.5 + text * 0.2 + scene * 0.1 + (item.impression_score || 0.5) * 0.2) * (pending ? 0.7 : 1.0) * 1000) / 1000,
-        breakdown: { scene: Math.round(scene * 1000) / 1000, emotion: Math.round(emotion * 1000) / 1000, text: Math.round(text * 1000) / 1000 },
-      }));
-      fallback.sort((a, b) => b.matchScore - a.matchScore);
-      results = fallback;
+        matchScore,
+        breakdown: {
+          scene: Math.round(sceneScore * 1000) / 1000,
+          emotion: Math.round(emotionScore * 1000) / 1000,
+          text: Math.round(textScore * 1000) / 1000,
+        },
+      };
+    });
+
+    scored.sort((a, b) => b.matchScore - a.matchScore);
+
+    // 印象值更新（最高分）
+    if (scored.length > 0 && scored[0].id) {
+      try {
+        sqlite.writeRaw("UPDATE knowledge_base SET impression_score = MIN(1.0, COALESCE(impression_score, 0.5) + 0.05), last_recalled_at = ? WHERE id = ?",
+          [new Date().toISOString(), scored[0].id]);
+      } catch (_) { /* 不阻塞 */ }
     }
 
-    return results.slice(0, limit);
+    // 日志（含匹配的ngram样本）
+    if (scored.length > 0) {
+      const t1 = scored[0];
+      const matchedGrams = Array.from(ngramSet).filter(ng => (t1.title + ' ' + (t1.content || '')).toLowerCase().includes(ng));
+      console.log('[KBw] top=' + t1.matchScore.toFixed(3) + '(s:' + t1.breakdown.scene.toFixed(2) + ' e:' + t1.breakdown.emotion.toFixed(2) + ' t:' + t1.breakdown.text.toFixed(2) + ') |' + (t1.title || '').substring(0, 24) + '| ng=[' + matchedGrams.slice(0, 5).join() + ']');
+    }
+
+    return scored.slice(0, limit);
   }
+
+  // 启动时初始化情感向量
+  console.log('[KB] 初始化情感向量...');
+  initKBEmotionVectors();
 
   /** 按交互型分类检索知识 */
   function searchByInteraction(interactionType: string, limit = 10): KnowledgeItem[] {

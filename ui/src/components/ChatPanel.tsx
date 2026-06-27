@@ -7,7 +7,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { sendMessage, resetConversation, fetchConversation, setOnTTSAudioState, unlockAudio, stopTTS, isTTSPlaying } from '../services/chatService';
+import { sendMessage, resetConversation, fetchConversation, setOnTTSAudioState, unlockAudio, stopTTS, isTTSPlaying, recallMessage } from '../services/chatService';
+import KnowledgePanel from './KnowledgePanel';
 import * as pdfjs from 'pdfjs-dist';
 
 // 设置 PDF.js worker（使用内置的 worker 文件）
@@ -31,6 +32,8 @@ export default function ChatPanel({ inline }: Props) {
   const [showWelcome, setShowWelcome] = useState(true);
   const [voiceMode, setVoiceMode] = useState<'none' | 'mic' | 'phone'>('none');
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [showKB, setShowKB] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -53,6 +56,21 @@ export default function ChatPanel({ inline }: Props) {
   useEffect(() => {
     setOnTTSAudioState(() => {});
     return () => setOnTTSAudioState(null);
+  }, []);
+
+  // SSE 提醒事件监听
+  useEffect(() => {
+    let evtSource: EventSource | null = null;
+    try {
+      evtSource = new EventSource('/events');
+      evtSource.addEventListener('reminder', (e: any) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.text) setNotice('⏰ ' + data.text);
+        } catch {}
+      });
+    } catch {}
+    return () => { evtSource?.close(); };
   }, []);
 
   // ── 麦克风模式：语音转文字填入输入框 ──
@@ -186,6 +204,14 @@ export default function ChatPanel({ inline }: Props) {
         body: JSON.stringify({ chosen, tags }),
       });
     } catch {}
+  }, []);
+
+  /** 30秒内撤回已发送消息 */
+  const handleRecall = useCallback(async (msgId: string) => {
+    const ok = await recallMessage(msgId);
+    if (ok) {
+      useChatStore.getState().recallMessage(msgId);
+    }
   }, []);
 
   const togglePhone = useCallback(() => {
@@ -331,7 +357,7 @@ export default function ChatPanel({ inline }: Props) {
     // 存入知识库
     const title = file.name.replace(/\.[^.]+$/, '');
     try {
-      await fetch(`${API}/knowledge`, {
+      const res = await fetch(`${API}/knowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -339,15 +365,26 @@ export default function ChatPanel({ inline }: Props) {
           source_type: file.name.split('.').pop() || 'text',
           source_name: file.name,
           file_size: file.size,
+          classification: '文档资料',
         }),
       });
-    } catch {}
+      if (res.ok) {
+        setNotice('✅ 已上传到知识库: ' + title.substring(0, 30));
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setNotice('❌ 上传失败: ' + ((errData as any).error || '服务器错误'));
+      }
+    } catch (err) {
+      setNotice('❌ 上传失败: 网络错误');
+    }
+    setTimeout(() => setNotice(null), 4000);
     return content;
   };
 
   // ── 内嵌模式：无切换按钮，始终可见 ──
   if (inline) {
     return (
+      <>
       <div className="chat-panel-inline">
         {/* 标题栏 */}
         <div className="chat-header">
@@ -371,10 +408,22 @@ export default function ChatPanel({ inline }: Props) {
                 )}
               </svg>
             </button>
+            <button className="chat-icon-btn" onClick={() => setShowKB(true)} title="知识库">📚</button>
+            <button className="chat-icon-btn" onClick={async () => {
+              await fetch('/api/chat/purge-test', {method:'POST'});
+              useChatStore.getState().clearMessages();
+              setShowWelcome(true);
+              const turns = await fetchConversation();
+              if (turns.length > 0) {
+                setShowWelcome(false);
+                for (const t of turns) {
+                  useChatStore.getState().addMessage(t.role, t.content);
+                }
+              }
+            }} title="清除测试对话">🧹</button>
             <button className="chat-icon-btn" onClick={handleReset} title="重置对话">↺</button>
           </div>
         </div>
-
         <div className="chat-messages" ref={listRef}>
           {showWelcome && messages.length === 0 && (
             <div className="chat-msg assistant">
@@ -383,10 +432,13 @@ export default function ChatPanel({ inline }: Props) {
             </div>
           )}
           {messages.map((msg) => (
-            <div key={msg.id} className={`chat-msg ${msg.role}`}>
-              <div className="chat-msg-content">{msg.content}</div>
+            <div key={msg.id} className={`chat-msg ${msg.role}${msg.recalled ? ' recalled' : ''}`}>
+              <div className="chat-msg-content">{msg.recalled ? '⚠ 消息已撤回' : msg.content}</div>
               <div className="chat-msg-time">
                 {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {msg.role === 'user' && !msg.recalled && (Date.now() - msg.timestamp < 30000) && (
+                  <button className="chat-recall-btn" onClick={() => handleRecall(msg.id)} title="撤回消息">撤回</button>
+                )}
               </div>
               {msg.role === 'assistant' && (msg as any).candidates && (
                 <div className="chat-candidates">
@@ -413,6 +465,11 @@ export default function ChatPanel({ inline }: Props) {
             <div className="chat-error">
               ⚠ {error}
               <button onClick={() => setError(null)} className="chat-error-dismiss">✕</button>
+            </div>
+          )}
+          {notice && (
+            <div className="chat-notice">
+              {notice}
             </div>
           )}
         </div>
@@ -482,11 +539,23 @@ export default function ChatPanel({ inline }: Props) {
               {voiceMode === 'phone' ? <><line x1="22" y1="2" x2="2" y2="22" /><path d="M16 8a5 5 0 0 1 0 8" /><path d="M8 16a5 5 0 0 1 0-8" /></> : <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>}
             </svg>
           </button>
+          <button className={`chat-tts-btn${ttsEnabled ? '' : ' muted'}`} onClick={() => setTtsEnabled(!ttsEnabled)} title={ttsEnabled ? 'TTS 语音已开启' : 'TTS 语音已关闭'}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {ttsEnabled ? (
+                <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /></>
+              ) : (
+                <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>
+              )}
+            </svg>
+          </button>
+          <button className={`chat-tts-btn`} onClick={() => setShowKB(true)} title="知识库管理">📚</button>
           <button className="chat-refresh-btn" title="刷新页面" onClick={() => location.reload()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
           </button>
         </div>
       </div>
+      {showKB && <KnowledgePanel onClose={() => setShowKB(false)} />}
+      </>
     );
   }
 
@@ -533,6 +602,7 @@ export default function ChatPanel({ inline }: Props) {
                     )}
                   </svg>
                 </button>
+                <button className="chat-icon-btn" onClick={() => setShowKB(true)} title="知识库">📚</button>
                 <button className="chat-icon-btn" onClick={handleReset} title="重置对话">↺</button>
                 <button className="chat-icon-btn" onClick={toggleOpen} title="关闭">✕</button>
               </div>
@@ -545,9 +615,13 @@ export default function ChatPanel({ inline }: Props) {
                 </motion.div>
               )}
               {messages.map((msg) => (
-                <motion.div key={msg.id} className={`chat-msg ${msg.role}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} layout>
-                  <div className="chat-msg-content">{msg.content}</div>
-                  <div className="chat-msg-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                <motion.div key={msg.id} className={`chat-msg ${msg.role}${msg.recalled ? ' recalled' : ''}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} layout>
+                  <div className="chat-msg-content">{msg.recalled ? '⚠ 消息已撤回' : msg.content}</div>
+                  <div className="chat-msg-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {msg.role === 'user' && !msg.recalled && (Date.now() - msg.timestamp < 30000) && (
+                  <button className="chat-recall-btn" onClick={() => handleRecall(msg.id)} title="撤回消息">撤回</button>
+                )}
+                  </div>
               {msg.role === 'assistant' && (msg as any).candidates && (
                 <div className="chat-candidates">
                   <button className="chat-candidate-btn" onClick={() => handleCandidateSelect(msg.id, 'a', (msg as any).candidates)}
@@ -571,6 +645,9 @@ export default function ChatPanel({ inline }: Props) {
                 <motion.div className="chat-error" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                   ⚠ {error} <button onClick={() => setError(null)} className="chat-error-dismiss">✕</button>
                 </motion.div>
+              )}
+              {notice && (
+                <div className="chat-notice">{notice}</div>
               )}
             </div>
             <div className="chat-input-area">
@@ -621,6 +698,16 @@ export default function ChatPanel({ inline }: Props) {
                   {voiceMode === 'phone' ? <><line x1="22" y1="2" x2="2" y2="22" /><path d="M16 8a5 5 0 0 1 0 8" /><path d="M8 16a5 5 0 0 1 0-8" /></> : <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>}
                 </svg>
               </button>
+              <button className={`chat-tts-btn${ttsEnabled ? '' : ' muted'}`} onClick={() => setTtsEnabled(!ttsEnabled)} title={ttsEnabled ? 'TTS 语音已开启' : 'TTS 语音已关闭'}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {ttsEnabled ? (
+                    <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /></>
+                  ) : (
+                    <><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></>
+                  )}
+                </svg>
+              </button>
+              <button className={`chat-tts-btn`} onClick={() => setShowKB(true)} title="知识库管理">📚</button>
               <button className="chat-refresh-btn" title="刷新页面" onClick={() => location.reload()}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
               </button>
@@ -628,6 +715,7 @@ export default function ChatPanel({ inline }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
+      {showKB && <KnowledgePanel onClose={() => setShowKB(false)} />}
     </>
   );
 }

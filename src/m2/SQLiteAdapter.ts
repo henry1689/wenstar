@@ -161,6 +161,18 @@ export class SQLiteAdapter {
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN impression_score REAL DEFAULT 0.5"); } catch { /* 列已存在 */ }
     try { this.db.run("ALTER TABLE knowledge_base ADD COLUMN last_recalled_at TEXT"); } catch { /* 列已存在 */ }
 
+    // 记事记忆：复用 memories 表，新增 type 字段区分
+    try { this.db.run("ALTER TABLE memories ADD COLUMN memory_type TEXT DEFAULT 'dialog'"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN sub_type TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN note_key TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN is_valid INTEGER DEFAULT 1"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN remind_at TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN reminded INTEGER DEFAULT 0"); } catch { /* 列已存在 */ }
+    try { this.db.run("ALTER TABLE memories ADD COLUMN repeat_rule TEXT"); } catch { /* 列已存在 */ }
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_note_key ON memories(note_key)"); } catch {}
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_remind ON memories(remind_at)"); } catch {}
+    try { this.db.run("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type)"); } catch {}
+
     // 砂金库：原始对话表（三段存储③，与原设计合并回同库）
     try {
       this.db.run(`CREATE TABLE IF NOT EXISTS conversations (

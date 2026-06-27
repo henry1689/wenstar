@@ -67,6 +67,7 @@ import { syncFamilyGraphToKnowledgeBase, verifyFamilyGraphSync } from '../app/kn
 import { M5ClueAssistant } from '../m5/clue/M5ClueAssistant.js';
 import { ClueTracker } from '../m7/ClueTracker.js';
 import { TaskAgentEngine, ToolRegistry, calendarTool, reminderTool, noteTool, createSearchTool, startReminderChecker } from '../app/task-agent/index.js';
+import { YuyaoMemoryService } from '../app/yuyao-memory/YuyaoMemoryService.js';
 import { excelToJson, jsonToExcel, parseFile } from '../app/knowledge/FileUploadService.js';
 import { listKeys, setKey, deleteKey, getKeyValue } from '../app/shared/ApiKeyStorage.js';
 import { SomaticMemory } from '../app/somatic/SomaticMemory.js';
@@ -233,7 +234,20 @@ let topicTracker: TopicTracker;
 let m8: M8FusionAdapter;
 let somaticMemory: SomaticMemory;
 let taskAgent: TaskAgentEngine;
+let yuyaoMemory: YuyaoMemoryService;
 let memoryVault: MemoryVault;
+/** 计算下一次重复提醒时间 */
+function calcNextRepeat(currentRemindAt: string, rule: string): string | null {
+  const d = new Date(currentRemindAt);
+  switch (rule) {
+    case 'daily': d.setDate(d.getDate() + 1); break;
+    case 'weekly': d.setDate(d.getDate() + 7); break;
+    case 'monthly': d.setMonth(d.getMonth() + 1); break;
+    default: return null;
+  }
+  return d.toISOString();
+}
+
 async function initPipeline(): Promise<void> {
   for (const d of [DATA_DIR, path.join(DATA_DIR, 'uploads'), path.join(DATA_DIR, 'audio')]) {
     if (!existsSync(d)) mkdirSync(d, { recursive: true });
@@ -243,6 +257,7 @@ async function initPipeline(): Promise<void> {
   encoder = new DNAEncoder(getSelfModel());
   storage = new FusionStorageAdapter(DATA_DIR);
   await storage.initialize();
+  yuyaoMemory = new YuyaoMemoryService(storage.getSQLite());
   memoryVault = new MemoryVault();
   await memoryVault.initialize();
   familyGraph = new FamilyGraph(DB_PATH);
@@ -598,6 +613,8 @@ async function initPipeline(): Promise<void> {
   ));
   taskAgent = new TaskAgentEngine();
   startReminderChecker();
+  // 记事记忆启动自检
+  try { const logs = yuyaoMemory.checkMissedOnStartup(); for (const l of logs) console.log('[Memory]', l); } catch (e) { console.warn('[Memory] 启动自检失败:', e); }
   console.log('  任务代理已启动 ✓');
 
   clueTracker = new ClueTracker();
@@ -678,7 +695,7 @@ interface ChatResponse {
 }
 
 
-async function processChat(message: string): Promise<ChatResponse> {
+async function processChat(message: string, clientMsgId?: string | null, testMode?: boolean): Promise<ChatResponse> {
   return processChatNew(message, {
     encoder, storage, m3, m4, m5, m6, m7,
     masterProfile,
@@ -688,6 +705,9 @@ async function processChat(message: string): Promise<ChatResponse> {
     saveConversationHistory,
     getSelfModel,
     conversationDB,
+    yuyaoMemory,
+    clientMsgId: clientMsgId || null,
+    testMode: testMode || false,
   });
 }
 
@@ -723,11 +743,44 @@ function pushChatStage(stage: string, status: string): void {
 }
 
 
+// ── 简单速率限制（防调试时重复请求刷爆 API 额度） ──
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_WINDOW_MS = 1000;         // 1 秒窗口
+const RATE_LIMIT = 10;               // 每秒最多 10 次 POST
+
+function isRateLimited(clientIp: string, method: string): boolean {
+  if (method !== 'POST') return false;       // 只限 POST
+  const now = Date.now();
+  const entry = rateLimitMap.get(clientIp);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(clientIp, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return false;
+  }
+  entry.count++;
+  return entry.count > RATE_LIMIT;
+}
+
+// 每分钟清理过期条目（防止内存泄漏）
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(ip);
+  }
+}, 60_000);
+
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // 速率限制检查
+  const clientIp = req.socket.remoteAddress || 'unknown';
+  if (isRateLimited(clientIp, req.method || '')) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '请求太频繁，请稍后再试' }));
+    return;
+  }
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
@@ -804,7 +857,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       const body = JSON.parse(await readBody(req));
       if (!body.message || typeof body.message !== 'string') { res.writeHead(400); res.end(JSON.stringify({error:'message required'})); return; }
-      const result = await processChat(body.message.trim());
+      const result = await processChat(body.message.trim(), body.client_msg_id, body.test_mode === true);
 
       // TTS 同步生成：回复中含语音URL
       const tts = body.tts !== false;
@@ -832,6 +885,127 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 撤回消息（30秒内可撤回已发送的消息） ──
+    if (req.method === 'POST' && url.pathname === '/api/chat/recall') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const messageId = body.message_id;
+        if (!messageId) { res.writeHead(400); res.end(JSON.stringify({ error: 'message_id required', ok: false })); return; }
+
+        // 在 conversationHistory 中查找匹配的消息
+        const idx = (conversationHistory as any[]).findIndex((t: any) => t.id === messageId);
+        if (idx === -1) {
+          res.writeHead(404); res.end(JSON.stringify({ error: '消息不存在或已撤回', ok: false }));
+          return;
+        }
+
+        const entry = (conversationHistory as any)[idx];
+        // 检查30秒窗口（timestamp 是 ISO 字符串）
+        const msgTime = new Date(entry.timestamp).getTime();
+        const now = Date.now();
+        if (now - msgTime > 30000) {
+          res.writeHead(410); res.end(JSON.stringify({ error: '超过30秒，无法撤回', ok: false }));
+          return;
+        }
+
+        // 仅允许撤回用户消息
+        if (entry.role !== 'user') {
+          res.writeHead(400); res.end(JSON.stringify({ error: '只能撤回自己的消息', ok: false }));
+          return;
+        }
+
+        // 从历史中移除
+        conversationHistory.splice(idx, 1);
+
+        console.log(`[Recall] 用户撤回了消息: ${entry.content.substring(0, 50)}`);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message, ok: false }));
+      }
+      return;
+    }
+
+    // ── 清除测试对话（is_test=1 的自动清除） ──
+    if (req.method === 'POST' && url.pathname === '/api/chat/purge-test') {
+      try {
+        const sqlite = storage.getSQLite();
+        if (sqlite) {
+          sqlite.writeRaw("BEGIN");
+          sqlite.writeRaw("DELETE FROM conversations WHERE is_test=1");
+          const result = sqlite.queryAll("SELECT changes() as cnt");
+          const count = (result[0]?.cnt || 0) as number;
+          // 重新从DB加载真实对话（不含测试标记）
+          try {
+            const rows = sqlite.queryAll("SELECT role, content, timestamp FROM conversations WHERE is_test = 0 OR is_test IS NULL ORDER BY rowid DESC LIMIT 100");
+            sqlite.writeRaw("COMMIT");
+            if (rows.length > 0) {
+              conversationHistory = rows.reverse().map(r => ({ role: r.role as 'user' | 'assistant', content: r.content as string, timestamp: r.timestamp as string }));
+            }
+          } catch (e) {
+            sqlite.writeRaw("ROLLBACK");
+            throw e;
+          }
+          console.log('[Purge] 清除测试对话: ' + count + ' 条, 当前真实对话: ' + conversationHistory.length + ' 条');
+          res.writeHead(200); res.end(JSON.stringify({ ok: true, deleted: count }));
+        } else {
+          res.writeHead(200); res.end(JSON.stringify({ ok: true, deleted: 0 }));
+        }
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err), ok: false }));
+      }
+      return;
+    }
+
+    // ── 记事记忆 API ──
+    if (req.method === 'POST' && url.pathname === '/api/memory') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const { type, key, value, remind_at, repeat_rule } = body;
+        if (!type || !key || !value) { res.writeHead(400); res.end(JSON.stringify({ error: 'type, key, value required' })); return; }
+        switch (type) {
+          case 'object_location':
+            yuyaoMemory.storeObjectLocation(key, value);
+            break;
+          case 'fact':
+            yuyaoMemory.storeFact(key, value);
+            break;
+          case 'reminder':
+            yuyaoMemory.setReminder(value, remind_at || new Date(Date.now() + 3600000).toISOString(), repeat_rule);
+            break;
+          default:
+            res.writeHead(400); res.end(JSON.stringify({ error: 'unknown type' })); return;
+        }
+        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory') {
+      try {
+        const q = url.searchParams.get('q') || '';
+        const results = yuyaoMemory.search(q);
+        res.writeHead(200); res.end(JSON.stringify({ results }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory/reminders') {
+      try {
+        const reminders = yuyaoMemory.getPendingReminders();
+        res.writeHead(200); res.end(JSON.stringify({ reminders }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/memory/ack-reminder') {
+      try {
+        const body = JSON.parse(await readBody(req));
+        if (!body.id) { res.writeHead(400); res.end(JSON.stringify({ error: 'id required' })); return; }
+        yuyaoMemory.markReminded(body.id);
+        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: (err as Error).message })); }
+      return;
+    }
+
+    // ── 候选回复偏好记录
     // ── 候选回复偏好记录（用户选择了哪个候选，记录到 M6） ──
     if (req.method === 'POST' && url.pathname === '/api/chat/prefer-candidate') {
       try {
@@ -1093,15 +1267,20 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     // ── 对话历史 ──
     if (req.method === 'GET' && url.pathname === '/api/conversation') {
-      let turns = conversationHistory.slice(-100);
-      if (turns.length === 0 && conversationDB) {
-        try {
-          const sand = conversationDB.getRecentConversations(100);
-          if (sand.length > 0) {
-            turns = sand.map(r => ({ role: r.role as "user" | "assistant", content: r.content, timestamp: r.timestamp }));
+      try {
+        const sqlite = storage?.getSQLite();
+        if (sqlite) {
+          const rows = sqlite.queryAll("SELECT role, content, timestamp FROM conversations WHERE is_test = 0 OR is_test IS NULL ORDER BY rowid DESC LIMIT 200");
+          if (rows.length > 0) {
+            const turns = rows.reverse().map(r => ({ role: r.role, content: r.content, timestamp: r.timestamp }));
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ turns }));
+            return;
           }
-        } catch {}
-      }
+        }
+      } catch {}
+      // 兜底：从内存加载
+      const turns = conversationHistory.filter((t) => !(t as any)?.isTest).slice(-100);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ turns }));
       return;
@@ -1804,8 +1983,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       }
     }
 
-    // 知识库单条目操作（编辑）
+    // 知识库单条目操作（编辑+查看）
     const knMatch = url.pathname.match(/^\/api\/knowledge\/(kn_[a-z0-9_]+)$/);
+    if (knMatch && req.method === 'GET') {
+      const entry = knowledgeBase.getById(knMatch[1]);
+      if (!entry) { res.writeHead(404); res.end(JSON.stringify({ error: 'not found' })); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(entry));
+      return;
+    }
     if (knMatch && req.method === 'PUT') {
       const body = JSON.parse(await readBody(req));
       const ok = await knowledgeBase.update(knMatch[1], {

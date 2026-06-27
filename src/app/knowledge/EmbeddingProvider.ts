@@ -158,86 +158,27 @@ function charLevelEmbed(text: string): number[] {
 }
 
 /**
- * 创建双层策略嵌入提供者
- * - 首选 DeepSeek API (1536维)
- * - 降级 本地词级 TF-IDF (256维)
+ * 创建嵌入提供者
+ * - DeepSeek v4 无 embedding API（经测试 404），统一使用本地词级 TF-IDF (256维)
+ * - DEEPSEEK_API_KEY 已配置但仅用于聊天，不用于嵌入
+ *
+ * TF-IDF 256 维本地嵌入对于 ngram 关键词匹配效果足够，
+ * 配合 weightedSearch 的全表扫描 + 情感向量 + 印象值三重排序效果良好。
  */
 export function createLocalEmbedding(): EmbeddingProvider {
-  const API_DIMENSION = 1536;
+  const LOCAL_DIMENSION = 256;
+
+  // DeepSeek v4 无 embedding API（经测试 404），统一使用本地词级 TF-IDF (256维)
 
   async function embed(text: string): Promise<number[]> {
     _embeddingStats.totalCalls++;
-    // 首选：DeepSeek API
-    try {
-      const key = typeof process !== 'undefined' && process.env ? process.env['DEEPSEEK_API_KEY'] : undefined;
-      if (key) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch('https://api.deepseek.com/v1/embeddings', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'deepseek-embedding', input: text }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.data?.[0]?.embedding) {
-            _embeddingStats.apiSuccess++;
-            _embeddingStats.lastApiSuccess = Date.now();
-            _embeddingStats.currentProvider = 'api';
-            return data.data[0].embedding;
-          }
-        }
-        _embeddingStats.apiFail++;
-        _embeddingStats.lastApiFail = Date.now();
-      }
-    } catch {
-      _embeddingStats.apiFail++;
-      _embeddingStats.lastApiFail = Date.now();
-    }
-    // 降级：本地词级 TF-IDF
+    // 直接使用本地词级 TF-IDF（已验证 DeepSeek v4 无 embedding API）
     _embeddingStats.currentProvider = 'local';
     return localEmbed(text);
   }
 
   async function embedBatch(texts: string[]): Promise<number[][]> {
     const results: number[][] = [];
-    // DeepSeek API 批量
-    try {
-      const key = typeof process !== 'undefined' && process.env ? process.env['DEEPSEEK_API_KEY'] : undefined;
-      if (key && texts.length > 0) {
-        const BATCH_SIZE = 20;
-        for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-          const batch = texts.slice(i, i + BATCH_SIZE);
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 10000);
-          const res = await fetch('https://api.deepseek.com/v1/embeddings', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'deepseek-embedding', input: batch }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.data) {
-              for (const d of data.data) {
-                results.push(d.embedding);
-                _embeddingStats.apiSuccess++;
-              }
-              _embeddingStats.currentProvider = 'api';
-              continue;
-            }
-          }
-          // 批量失败，逐条降级
-          for (const t of batch) results.push(localEmbed(t));
-        }
-        _embeddingStats.lastApiSuccess = Date.now();
-        return results;
-      }
-    } catch { /* 批量失败 */ }
-    // 降级：逐条本地嵌入
     _embeddingStats.currentProvider = 'local';
     for (const t of texts) results.push(localEmbed(t));
     return results;
@@ -249,6 +190,6 @@ export function createLocalEmbedding(): EmbeddingProvider {
     embed,
     embedBatch,
     isAvailable,
-    dimension: API_DIMENSION,
+    dimension: LOCAL_DIMENSION,
   };
 }

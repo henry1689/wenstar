@@ -105,11 +105,15 @@ export async function sendMessage(message: string, ttsEnabled: boolean = true): 
   store.setTyping(true);
   store.setError(null);
 
+  // 获取刚添加的用户消息的ID，传给后端用于30秒撤回
+  const userMessages = store.messages.filter(m => m.role === 'user');
+  const clientMsgId = userMessages.length > 0 ? userMessages[userMessages.length - 1].id : null;
+
   try {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: message.trim(), tts: ttsEnabled }),
+      body: JSON.stringify({ message: message.trim(), tts: ttsEnabled, client_msg_id: clientMsgId }),
     });
 
     if (!res.ok) {
@@ -182,6 +186,22 @@ export async function checkBackend(): Promise<boolean> {
     const res = await fetch(`${API_BASE}/modules`, { signal: AbortSignal.timeout(3000) });
     return res.ok;
   } catch { return false; }
+}
+
+/** 撤回已发送的消息 */
+export async function recallMessage(messageId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/chat/recall`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.ok === true;
+  } catch {
+    return false;
+  }
 }
 
 /** 从后端加载对话历史（重启后恢复上一轮对话） */
