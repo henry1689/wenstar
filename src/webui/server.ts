@@ -1369,6 +1369,24 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
+    // ── 审计查询（只读SQL, 供审计脚本使用） ──
+    if (req.method === 'GET' && url.pathname === '/api/admin/query') {
+      try {
+        const sql = url.searchParams.get('sql') || '';
+        if (!sql) { res.writeHead(400); res.end(JSON.stringify({ error: 'sql required' })); return; }
+        if (!/^\s*SELECT\s/i.test(sql)) { res.writeHead(403); res.end(JSON.stringify({ error: 'only SELECT allowed' })); return; }
+        const sqlite = storage?.getSQLite();
+        if (!sqlite) { res.writeHead(503); res.end(JSON.stringify({ error: 'storage not ready' })); return; }
+        const rows = sqlite.queryAll(sql);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ rows }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
     // ── 搜索 ──
     if (req.method === 'POST' && url.pathname === '/api/search') {
       const body = JSON.parse(await readBody(req));
