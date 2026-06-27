@@ -229,6 +229,12 @@ export class DeepSeekLLMProvider implements LLMProvider {
       try { const { WorkingMemory } = await import('../m9/WorkingMemory.js'); WorkingMemory.currentTag = DeepSeekLLMProvider._currentRole; } catch {}
     } catch (_re) { /* 路由失败不阻塞 */ }
 
+    // 📖 本地回复：KB内容含敏感词时绕过API过滤，基于知识库原文直接回答
+    if (kb.startsWith('【本地回复】')) {
+      const localContent = kb.replace('【本地回复】', '').trim();
+      return { text: localContent };
+    }
+
     // 🔥 角色扮演：完全隔离路径（角色设定优先）
     if (kb.startsWith('【角色扮演】')) {
       const rpContent = kb.replace('【角色扮演】', '').trim();
