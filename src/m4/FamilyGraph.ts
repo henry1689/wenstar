@@ -557,11 +557,15 @@ export class FamilyGraph implements FamilyGraphInterface {
     const persons = entities.filter((e) => e.type === 'person');
     const places = entities.filter((e) => e.type === 'place');
 
+    // 🔴 长辈称谓列表（说话者是晚辈，关系方向需反转）
+    const SENIOR_KINSHIP = new Set(['妈妈','妈','母亲','爸爸','爸','父亲','爷爷','奶奶','外公','外婆','祖父','祖母']);
+
     for (const person of persons) {
       // 检查该人名是否在 kinship 词表中
       const kinshipWord = Object.keys(KINSHIP_MAP).find((kw) => rawInput.includes(kw));
       if (kinshipWord) {
         const relation = KINSHIP_MAP[kinshipWord];
+        const isSenior = SENIOR_KINSHIP.has(kinshipWord);
 
         // 创建或查找该人名的节点
         const existing = this.query('SELECT id FROM nodes WHERE name = ?', [person.name]);
@@ -581,41 +585,53 @@ export class FamilyGraph implements FamilyGraphInterface {
           personId = existing[0].id;
         }
 
+        // 长辈称谓反转方向：用户说"我妈妈"→ 妈妈--[mother_of]-->我 + 我--[child_of]-->妈妈
+        // 而非 我--[mother_of]-->妈妈（那意味着我是妈妈的妈）
+        const sourceId = isSenior ? personId : userId;
+        const targetId = isSenior ? userId : personId;
+
         // 检查是否已有此边（防止重复）
         const existingEdge = this.query(
           'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
-          [userId, personId, relation]
+          [sourceId, targetId, relation]
         );
         if (existingEdge.length === 0) {
           await this.addEdge({
             id: uid(),
-            source_id: userId,
-            target_id: personId,
+            source_id: sourceId,
+            target_id: targetId,
             relation,
           });
           edgesCreated++;
-          details.push(`创建边: ${userName} --${relation}--> ${person.name}`);
+          const fromName = isSenior ? person.name : userName;
+          const toName = isSenior ? userName : person.name;
+          details.push(`创建边: ${fromName} --${relation}--> ${toName}`);
 
           // 自动创建反向边
           const reverseRel = REVERSE_RELATION[relation];
           if (reverseRel && reverseRel !== relation) {
+            const revSrc = isSenior ? userId : personId;
+            const revTgt = isSenior ? personId : userId;
             const revEdge = this.query(
               'SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND relation = ?',
-              [personId, userId, reverseRel]
-            );
+              [revSrc, revTgt, reverseRel]);
             if (revEdge.length === 0) {
               await this.addEdge({
                 id: uid(),
-                source_id: personId,
-                target_id: userId,
+                source_id: revSrc,
+                target_id: revTgt,
                 relation: reverseRel,
               });
               edgesCreated++;
-              details.push(`创建反向边: ${person.name} --${reverseRel}--> ${userName}`);
+              const revFrom = isSenior ? userName : person.name;
+              const revTo = isSenior ? person.name : userName;
+              details.push(`创建反向边: ${revFrom} --${reverseRel}--> ${revTo}`);
             }
           }
         } else {
-          details.push(`边已存在: ${userName} --${relation}--> ${person.name}`);
+          const existFrom = isSenior ? person.name : userName;
+          const existTo = isSenior ? userName : person.name;
+          details.push(`边已存在: ${existFrom} --${relation}--> ${existTo}`);
         }
       } else {
         // 非亲属人名 → 社交关系记录（所有人名都入库，不丢弃）

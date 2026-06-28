@@ -386,15 +386,17 @@ export default function ChatPanel({ inline }: Props) {
     return (
       <>
       <div className="chat-panel-inline">
-        {/* 标题栏 */}
+        {/* 标题栏 — 两行布局 */}
         <div className="chat-header">
-          <div className="chat-header-info">
-            <span className="chat-avatar">💠</span>
-            <div>
-              <div className="chat-name">玉瑶</div>
-              <div className="chat-subtitle">
-                <span className="chat-status-dot" />
-                {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
+          <div className="chat-header-top">
+            <div className="chat-header-info">
+              <span className="chat-avatar">💠</span>
+              <div>
+                <div className="chat-name">玉瑶</div>
+                <div className="chat-subtitle">
+                  <span className="chat-status-dot" />
+                  {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
+                </div>
               </div>
             </div>
           </div>
@@ -423,7 +425,7 @@ export default function ChatPanel({ inline }: Props) {
             }} title="清除测试对话">🧹</button>
             <button className="chat-icon-btn" onClick={handleReset} title="重置对话">↺</button>
           </div>
-        </div>
+                  </div>
         <div className="chat-messages" ref={listRef}>
           {showWelcome && messages.length === 0 && (
             <div className="chat-msg assistant">
@@ -582,13 +584,15 @@ export default function ChatPanel({ inline }: Props) {
             transition={{ type: 'spring', stiffness: 300, damping: 28 }}
           >
             <div className="chat-header">
-              <div className="chat-header-info">
-                <span className="chat-avatar">💠</span>
-                <div>
-                  <div className="chat-name">玉瑶</div>
-                  <div className="chat-subtitle">
-                    <span className="chat-status-dot" />
-                    {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
+              <div className="chat-header-top">
+                <div className="chat-header-info">
+                  <span className="chat-avatar">💠</span>
+                  <div>
+                    <div className="chat-name">玉瑶</div>
+                    <div className="chat-subtitle">
+                      <span className="chat-status-dot" />
+                      {voiceMode === 'phone' ? '📞 通话中...' : (voiceMode === 'mic' ? '🎤 语音输入中...' : (isTyping ? '输入中...' : `太虚境 · ${turnCount} 次对话`))}
+                    </div>
                   </div>
                 </div>
               </div>

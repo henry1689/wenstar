@@ -889,7 +889,7 @@ html, body, #root {
 }
 
 .chat-panel-inline .chat-header {
-  padding: 10px 14px 8px;
+  padding: 8px 14px 6px;
   border-bottom: 1px solid rgba(180, 195, 210, 0.04);
   flex-shrink: 0;
 }
@@ -984,11 +984,17 @@ html, body, #root {
 /* 标题栏 */
 .chat-header {
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px 12px;
   border-bottom: 1px solid rgba(0, 255, 255, 0.06);
   background: linear-gradient(180deg, rgba(0, 255, 255, 0.03) 0%, transparent 100%);
+}
+
+.chat-header-top {
+  display: flex;
+  align-items: center;
 }
 
 .chat-header-info {
@@ -1029,6 +1035,9 @@ html, body, #root {
 .chat-header-actions {
   display: flex;
   gap: 4px;
+  padding: 2px 0 0;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  justify-content: center;
 }
 
 .chat-icon-btn {
