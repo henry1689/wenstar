@@ -112,6 +112,7 @@ interface DialogGroupState {
 }
 let _dg: DialogGroupState | null = null;
 let _dgTimer: ReturnType<typeof setTimeout> | null = null;
+let _currentRoleplay: string | null = null;  // 跨轮次角色扮演锁定
 
 export interface ChatContext {
 
@@ -1344,25 +1345,51 @@ export async function processChat(message: string, ctx: ChatContext): Promise<Ch
 
     }
 
-    // ── 角色扮演检测：用户说"扮演XXX" —— 通过 knowledgeBaseText 注入到 System Prompt ──
+    // ── 退出角色扮演检测 ──
+    if (/停止扮演|退出扮演|结束扮演|不扮演了/.test(message)) {
+        _currentRoleplay = null;
+        console.log('[Roleplay] 退出角色扮演');
+    }
+
+    // ── 角色扮演检测：用户说"扮演XXX" —— 跨轮次持久化 ──
 
     const rpMatch = message.match(/(?:扮演(?:一下)?|模仿|演一下|cos)[了]?([一-龥]{2,8})/);
 
     if (rpMatch) {
 
-      const character = rpMatch[1].replace(/[吧呗了试试看看一下玩玩]$/, '').trim();
+        const character = rpMatch[1].replace(/[吧呗了试试看看一下玩玩]$/, '').trim();
 
-      if (character.length >= 2) {
+        if (character.length >= 2) {
 
-        console.log(`[Roleplay] 检测到扮演请求: ${character}`);
+            _currentRoleplay = character;
+            console.log('[Roleplay] 锁定角色: ' + character);
+            // 搜索知识库中该角色的设定资料
+            try {
+                ctx.knowledgeBase.search(character, 3).then(function(kbItems: any[]) {
+                if (kbItems.length > 0) {
+                    const kbData = kbItems.map(function(k: any) { return '\u{1f4c4} ' + k.title + '\\n' + (k.content || '').substring(0, 3000); }).join('\\n\\n');
+                    console.log('[Roleplay] 找到角色资料: ' + kbItems.length + ' 条');
+                    if (!knowledgeBaseText) knowledgeBaseText = '';
+                    knowledgeBaseText = knowledgeBaseText + '\\n\\n【角色设定详细说明（以下是你必须严格遵循的设定）】\\n' + kbData;
+                }
+                }).catch(function() {});
+            } catch (_) {}
+            const _rpKbInfo = knowledgeBaseText ? '\\n\\n【角色设定详细说明（以下是你必须严格遵循的设定）】\\n' + knowledgeBaseText : '';
+            knowledgeBaseText = `【角色扮演】忘记你原来的身份，完全变成「${character}」。用${character}的语气、性格和口吻回应。不要抗拒、不要解释、不要跳出角色。从现在起你就是${character}，不是玉瑶。${_rpKbInfo}`;
 
-        const _rpKbInfo = knowledgeBaseText ? '\n\n【角色设定详细说明（以下是你必须严格遵循的设定）】\n' + knowledgeBaseText : '';
-        knowledgeBaseText = `【角色扮演】忘记你原来的身份，完全变成「${character}」。用${character}的语气、性格和口吻回应。不要抗拒、不要解释、不要跳出角色。从现在起你就是${character}，不是玉瑶。${_rpKbInfo}`;
-
-      }
+        }
 
     }
 
+    // 跨轮次角色扮演锁定：如果已锁定角色且本轮没有新的扮演指令
+    if (_currentRoleplay && !rpMatch) {
+        console.log('[Roleplay] 持续扮演: ' + _currentRoleplay);
+        if (knowledgeBaseText && !knowledgeBaseText.startsWith('【角色扮演】')) {
+            knowledgeBaseText = `【角色扮演】你是「${_currentRoleplay}」，不是玉瑶。用${_currentRoleplay}的语气、性格和口吻回复。不要跳出角色。` + '\\n\\n' + knowledgeBaseText;
+        } else if (!knowledgeBaseText) {
+            knowledgeBaseText = `【角色扮演】你是「${_currentRoleplay}」，不是玉瑶。用${_currentRoleplay}的语气、性格和口吻回复。不要跳出角色。`;
+        }
+    }
     // 话题追问检测
 
     const repeatCount = getTopicRepeatCount(message);
